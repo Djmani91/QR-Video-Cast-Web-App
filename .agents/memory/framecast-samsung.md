@@ -23,6 +23,12 @@ The user wants videos to show horizontally and fill the TV screen. Default to Fi
 
 **How to apply:** Treat orientation and aspect-ratio fill as separate controls. Explain that wide-screen filling of portrait footage crops the top/bottom; preserve the original media and make this display choice reversible.
 
+Keep the underlying video visible and full-sized when using a canvas overlay. If corrected-picture drawing is unsupported, keep standard video playback running and explain the presentation limitation instead of pausing the decoder.
+
+**Why:** The user reported previously playable video failing after the wide-screen drawing change. Offscreen/tiny video is unsafe for TV decoder compatibility, and failure of a display enhancement must not stop otherwise supported playback.
+
+**How to apply:** Never rely on desktop drawing checks as proof of Samsung playback. Distinguish actual playing, autoplay permission requiring the TV remote, and real decoder errors. Preserve specific TV feedback rather than replacing it with a generic format warning after a short timeout.
+
 Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
 
 **Why:** Loading and fullscreen transitions can temporarily clear intrinsic dimensions. Treating that as zero rotation can re-enable the TV's native overlay and bypass the intended correction, even when the original file's rotation metadata is correct.

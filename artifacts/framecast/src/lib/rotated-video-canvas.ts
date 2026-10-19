@@ -26,7 +26,6 @@ export function startRotatedVideoCanvas(
 ): () => void {
   const maybeContext = canvas.getContext('2d', { alpha: false });
   if (!maybeContext) {
-    video.pause();
     options.onError('This TV browser cannot draw the corrected video picture.');
     return () => {};
   }
@@ -91,7 +90,6 @@ export function startRotatedVideoCanvas(
     } catch (error) {
       failedDraws += 1;
       if ((error as { name?: string })?.name !== 'InvalidStateError' || failedDraws >= 30) {
-        video.pause();
         stop();
         options.onError('This TV browser could not draw the corrected video frames. Its video drawing mode may not be supported.');
       }

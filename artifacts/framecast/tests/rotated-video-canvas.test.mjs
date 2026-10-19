@@ -92,10 +92,18 @@ test('seeking while paused redraws the selected frame', () => {
   stop();
 });
 
-test('TV drawing failure pauses playback and reports an explicit error', () => {
+test('TV drawing failure reports a presentation error without pausing working playback', () => {
   const f = fixture();
   f.context.drawImage = () => { throw new Error('Decoder frame unavailable'); };
   startRotatedVideoCanvas(f.video, f.canvas, f.options);
-  assert.equal(f.video.paused, true);
+  assert.equal(f.video.paused, false);
   assert.match(f.errors[0], /could not draw/);
+});
+
+test('missing canvas support never stops the standard TV video player', () => {
+  const f = fixture();
+  f.canvas.getContext = () => null;
+  startRotatedVideoCanvas(f.video, f.canvas, f.options);
+  assert.equal(f.video.paused, false);
+  assert.match(f.errors[0], /cannot draw/);
 });

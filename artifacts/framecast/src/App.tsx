@@ -22,6 +22,7 @@ import { ROTATION_RENDERER_VERSION, verifyRotationRenderer } from './lib/rotatio
 import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
 import { needsVideoCanvas } from './lib/rotated-video-canvas';
 import { createConnectionGrace } from './lib/connection-grace';
+import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -497,6 +498,8 @@ function TvPage() {
   const videoFitModeRef = useRef<'cover' | 'contain'>('cover');
   const [canvasPlayback, setCanvasPlayback] = useState(false);
   const canvasPlaybackRef = useRef(false);
+  const canvasUnavailableRef = useRef(false);
+  const videoMediaChannelRef = useRef<RTCDataChannel | null>(null);
   const applyVideoOrientation = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -506,7 +509,7 @@ function TvPage() {
     const source = orientationSourceRef.current;
     const width = source?.orientationNormalized ? source.encodedWidth : video.videoWidth || source?.encodedWidth || 0;
     const height = source?.orientationNormalized ? source.encodedHeight : video.videoHeight || source?.encodedHeight || 0;
-    const canvas = needsVideoCanvas(rotation, videoFitModeRef.current, width, height, window.innerWidth, window.innerHeight);
+    const canvas = !canvasUnavailableRef.current && needsVideoCanvas(rotation, videoFitModeRef.current, width, height, window.innerWidth, window.innerHeight);
     canvasPlaybackRef.current = canvas;
     setCanvasPlayback(canvas);
     video.playsInline = canvas;
@@ -516,6 +519,22 @@ function TvPage() {
   const requestPlaybackFullscreen = useCallback((video: HTMLVideoElement) => {
     if (canvasPlaybackRef.current && playbackStageRef.current) return requestMediaFullscreen(playbackStageRef.current);
     return requestVideoFullscreen(video);
+  }, []);
+  const handleCanvasFailure = useCallback(() => {
+    // A presentation enhancement must never stop the underlying TV decoder.
+    canvasUnavailableRef.current = true;
+    canvasPlaybackRef.current = false;
+    setCanvasPlayback(false);
+    const video = videoRef.current;
+    if (video) {
+      video.playsInline = false;
+      video.removeAttribute('webkit-playsinline');
+    }
+    const channel = videoMediaChannelRef.current;
+    if (channel?.readyState === 'open') channel.send(JSON.stringify({
+      framecast: 'playback-warning',
+      message: 'The TV is using its standard video player because wide-screen drawing is unavailable. Rotation or cropping may be limited on this TV.',
+    }));
   }, []);
   const rotateCurrentVideo = useCallback(() => {
     manualRotationRef.current = normalizeRotation(manualRotationRef.current + 90);
@@ -599,6 +618,8 @@ function TvPage() {
 
   const stopPeer = useCallback(() => {
     connectionGrace.cancel();
+    canvasUnavailableRef.current = false;
+    videoMediaChannelRef.current = null;
     photoFullscreenAttemptedRef.current = false;
     setNeedsPhotoFullscreen(false);
     setPhotoReturnedInline(false);
@@ -731,6 +752,8 @@ function TvPage() {
     const video = videoRef.current;
     if (!video) return;
     const onPlaying = () => {
+      const channel = videoMediaChannelRef.current;
+      if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
       const source = video.srcObject || video.currentSrc || video.src;
       if (autoFullscreenSourceRef.current === source) return;
       autoFullscreenSourceRef.current = source;
@@ -989,6 +1012,7 @@ function TvPage() {
             peer.ondatachannel = (event) => {
               const channel = event.channel;
               if (channel.label === 'framecast-media') {
+                videoMediaChannelRef.current = channel;
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
@@ -1084,12 +1108,16 @@ function TvPage() {
                         failRemoteVideo('The TV could not load this video link. The source may block TV playback or require sign-in.');
                       }, { once: true });
                       video.addEventListener('canplay', () => {
-                        void video.play().then(() => {
-                          setPlaying(true);
-                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
-                        }).catch(() => {
-                          setError('The TV browser needs a tap to start this video. Use the Play button on the TV screen.');
-                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                        void startReceiverVideo(video, {
+                          onPlaying: () => {
+                            setPlaying(true);
+                            if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                          },
+                          onBlocked: () => {
+                            setError('Press Play with the TV remote to start the video.');
+                            if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'playback-blocked', message: 'Press Play with the TV remote to start the video. Your phone is still connected.' }));
+                          },
+                          onFailed: () => failRemoteVideo('The TV player could not start this video link. Check the source or try another video.'),
                         });
                       }, { once: true });
                       video.load();
@@ -1231,12 +1259,16 @@ function TvPage() {
                             sourceBuffer.addEventListener('updateend', () => drainVideoStream(session, video));
                             sourceBuffer.addEventListener('error', () => failVideoStream('The TV browser rejected part of the video stream. Try a standard H.264/AAC fragmented MP4.'));
                             video.addEventListener('canplay', () => {
-                              void video.play().then(() => {
-                                setPlaying(true);
-                                if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
-                              }).catch(() => {
-                                setError('The TV browser needs a tap to start this video. Use the Play button on the TV screen.');
-                                if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                              void startReceiverVideo(video, {
+                                onPlaying: () => {
+                                  setPlaying(true);
+                                  if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                                },
+                                onBlocked: () => {
+                                  setError('Press Play with the TV remote to start the video.');
+                                  if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'playback-blocked', message: 'Press Play with the TV remote to start the video. Your phone is still connected.' }));
+                                },
+                                onFailed: () => failVideoStream('The TV player could not start this video stream. Try another video or the standard TV player.'),
                               });
                             }, { once: true });
                             session.appendQueue.push(...session.initialChunks);
@@ -1340,8 +1372,14 @@ function TvPage() {
                         void videoRef.current.play().then(() => {
                           setPlaying(true);
                           if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'playing' }));
-                        }).catch(() => {
+                        }).catch((playError: unknown) => {
                           setPlaying(false);
+                          if ((playError as { name?: string })?.name === 'NotAllowedError') {
+                            const messageText = 'Press Play with the TV remote to start the video. Your phone is still connected.';
+                            setError(messageText);
+                            if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'playback-blocked', message: messageText }));
+                            return;
+                          }
                           setError('The TV received the video but could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
                           if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'failed' }));
                         });
@@ -1630,14 +1668,11 @@ function TvPage() {
                 </button>
               </div>
             </div>
-            <div className={!youtubeVideoId && status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'tv-video-stage' : 'sr-only'}>
+            <div className={!youtubeVideoId && status === 'connected' && mediaKind === 'video' ? 'tv-video-stage' : 'sr-only'}>
             <video
               ref={videoRef}
               className="video-preview"
-              style={canvasPlayback ? {
-                position: 'absolute', left: '-10000px', top: '0', right: 'auto', bottom: 'auto',
-                width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', transform: 'none',
-              } : undefined}
+              style={tvVideoPresentation(videoFitMode)}
               autoPlay
               controls={!canvasPlayback}
               playsInline={canvasPlayback}
@@ -1650,7 +1685,7 @@ function TvPage() {
               encodedWidth={orientationSourceRef.current?.encodedWidth}
               encodedHeight={orientationSourceRef.current?.encodedHeight}
               sourceKey={videoRef.current?.src || ''}
-              onFailure={setError}
+              onFailure={handleCanvasFailure}
             />}
             </div>
             {needsVideoFullscreen && status === 'connected' && mediaKind === 'video' && (
@@ -1863,6 +1898,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const transferCompleteRef = useRef(false);
   const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
   const videoStreamingRef = useRef(false);
+  const videoStartupRef = useRef<VideoStartup>({ status: 'waiting' });
+  const videoWarningRef = useRef('');
   const fileQueueRef = useRef<File[]>([]);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
@@ -1877,6 +1914,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
     transferCompleteRef.current = true;
     urlCastActiveRef.current = false;
     videoStreamingRef.current = false;
+    videoStartupRef.current = { status: 'waiting' };
+    videoWarningRef.current = '';
     setVideoStreaming(false);
     setRemoteVideoState({ currentTime: 0, duration: 0, paused: true, volume: 0 });
     setVideoSeekDraft(null);
@@ -2119,12 +2158,22 @@ function PhonePage({ roomId }: { roomId?: string }) {
           if (packet.framecast === 'streaming') {
             videoStreamingRef.current = true;
             setVideoStreaming(true);
-            setTransferNotice('');
+            setTransferNotice(videoWarningRef.current);
             if (urlCastActiveRef.current) {
               transferCompleteRef.current = true;
               setProgress(100);
               setSentToTv(true);
             }
+          }
+          if (packet.framecast === 'playback-blocked') {
+            videoStartupRef.current = { status: 'blocked', message: packet.message };
+            setTransferNotice(packet.message || 'Press Play with the TV remote. Your phone is still connected.');
+            return;
+          }
+          if (packet.framecast === 'playback-warning') {
+            videoWarningRef.current = packet.message || 'The TV is using its standard video player.';
+            setTransferNotice(videoWarningRef.current);
+            return;
           }
           if (packet.framecast === 'stream-error') {
             setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
@@ -2138,12 +2187,14 @@ function PhonePage({ roomId }: { roomId?: string }) {
           }
           if (packet.framecast === 'received') {
             if (packet.playback === 'failed') {
-              setError('The video reached the TV, but its browser could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
+              const messageText = 'The video reached the TV, but its player reported that it could not play it. Try another video or check the TV screen for details.';
+              videoStartupRef.current = { status: 'failed', message: messageText };
+              setError(messageText);
             }
             if (packet.playback === 'playing') {
               videoStreamingRef.current = true;
               setVideoStreaming(true);
-              setTransferNotice('The TV started the video after the full transfer.');
+              setTransferNotice(videoWarningRef.current || 'The TV started the video after the full transfer.');
             }
             const resolve = mediaAckResolverRef.current;
             mediaAckResolverRef.current = null;
@@ -2168,6 +2219,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
             }
             for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
+              videoStartupRef.current = { status: 'waiting' };
+              videoStreamingRef.current = false;
+              setVideoStreaming(false);
               const selected = queuedFiles[index];
               const kind: MediaKind = selected.type.startsWith('video/') ? 'video' : 'image';
               setQueueIndex(index);
@@ -2261,14 +2315,11 @@ function PhonePage({ roomId }: { roomId?: string }) {
                  mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
                }
               if (kind === 'video') {
-                const startDeadline = Date.now() + 20_000;
-                while (!videoStreamingRef.current && transferRun === transferRunRef.current && Date.now() < startDeadline) {
-                  await new Promise((resolve) => window.setTimeout(resolve, 150));
-                }
-                if (transferRun !== transferRunRef.current) return;
-                if (!videoStreamingRef.current) {
-                  throw new Error('The TV did not start the video. Check the format and keep both devices awake.');
-                }
+                const startup = await waitForVideoStartup({
+                  state: () => videoStreamingRef.current ? { status: 'playing' } : videoStartupRef.current,
+                  active: () => transferRun === transferRunRef.current,
+                });
+                if (startup.status === 'interrupted' || transferRun !== transferRunRef.current) return;
               } else {
                 const playback = await acknowledgement;
                 if (transferRun !== transferRunRef.current) return;
