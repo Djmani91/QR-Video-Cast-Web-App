@@ -79,7 +79,8 @@ type VideoStreamSession = {
   initTimer: number;
   fail: (message: string) => void;
 };
-const rtcConfig: RTCConfiguration = { iceServers: [] };
+// STUN helps peers discover a direct route; no TURN server is configured, so media is never relayed.
+const rtcConfig: RTCConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 function BrandHeader({ phone = false }: { phone?: boolean }) {
   return (

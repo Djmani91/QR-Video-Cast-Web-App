@@ -69,7 +69,8 @@ type SignalMessage = {
   payload: Record<string, unknown>;
 };
 
-const rtcConfig = { iceServers: [] };
+// STUN helps peers discover a direct route; no TURN server is configured, so media is never relayed.
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const FILE_CHUNK_SIZE = 32 * 1024;
 const MAX_TRANSFER_BYTES = 256 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 8 * 1024 * 1024 * 1024;
