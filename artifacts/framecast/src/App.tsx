@@ -470,6 +470,9 @@ function TvPage() {
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
+  const tvControlsIntervalRef = useRef<number | null>(null);
+  const tvControlsVisibleRef = useRef(true);
+  const lastTvActivityRef = useRef(0);
   const mediaObjectUrlsRef = useRef<string[]>([]);
   const mediaTransferRef = useRef<{ name: string; itemId?: string; mimeType: string; kind: MediaKind; size: number; sizeUnknown?: boolean; received: number; chunks: ArrayBuffer[]; streamMode?: boolean } | null>(null);
   const videoStreamRef = useRef<VideoStreamSession | null>(null);
@@ -478,11 +481,40 @@ function TvPage() {
   const receivedImagesRef = useRef<{ url: string; name: string; itemId?: string }[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageZoom, setImageZoom] = useState(1);
+  const [imageOffsetY, setImageOffsetY] = useState(0);
+  const [tvControlsVisible, setTvControlsVisible] = useState(true);
+  const [tvControlsCountdown, setTvControlsCountdown] = useState<number | null>(null);
   const [photoPreviewVisible, setPhotoPreviewVisible] = useState(false);
   const [transferProgress, setTransferProgress] = useState<number | null>(null);
+  useEffect(() => {
+    if (imageZoom === 1) setImageOffsetY(0);
+  }, [imageZoom]);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
   const roomId = room?.id ?? '';
+  const revealTvControls = useCallback(() => {
+    if (status !== 'connected') return;
+    const now = Date.now();
+    if (now - lastTvActivityRef.current < 120 && tvControlsVisibleRef.current) return;
+    lastTvActivityRef.current = now;
+    tvControlsVisibleRef.current = true;
+    setTvControlsVisible(true);
+    setTvControlsCountdown(5);
+    if (tvControlsIntervalRef.current !== null) window.clearInterval(tvControlsIntervalRef.current);
+    let seconds = 5;
+    tvControlsIntervalRef.current = window.setInterval(() => {
+      seconds -= 1;
+      if (seconds <= 0) {
+        if (tvControlsIntervalRef.current !== null) window.clearInterval(tvControlsIntervalRef.current);
+        tvControlsIntervalRef.current = null;
+        tvControlsVisibleRef.current = false;
+        setTvControlsVisible(false);
+        setTvControlsCountdown(null);
+      } else {
+        setTvControlsCountdown(seconds);
+      }
+    }, 1000);
+  }, [status]);
   const send = useSignalSender(roomId);
   const messagesQuery = useGetCastRoomMessages(roomId, {
     query: {
@@ -522,6 +554,7 @@ function TvPage() {
     setReceivedImages([]);
     setCurrentImageIndex(0);
     setImageZoom(1);
+    setImageOffsetY(0);
     setPhotoPreviewVisible(false);
     for (const objectUrl of mediaObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
     mediaObjectUrlsRef.current = [];
@@ -618,6 +651,43 @@ function TvPage() {
   }, [youtubeVideoId, sendVideoState]);
 
   useEffect(() => () => stopPeer(), [stopPeer]);
+  useEffect(() => {
+    if (status === 'connected') {
+      lastTvActivityRef.current = 0;
+      revealTvControls();
+    } else {
+      if (tvControlsIntervalRef.current !== null) window.clearInterval(tvControlsIntervalRef.current);
+      tvControlsIntervalRef.current = null;
+      tvControlsVisibleRef.current = true;
+      setTvControlsVisible(true);
+      setTvControlsCountdown(null);
+    }
+    return () => {
+      if (tvControlsIntervalRef.current !== null) window.clearInterval(tvControlsIntervalRef.current);
+      tvControlsIntervalRef.current = null;
+    };
+  }, [status, revealTvControls]);
+  useEffect(() => {
+    const onActivity = () => revealTvControls();
+    window.addEventListener('keydown', onActivity);
+    window.addEventListener('focus', onActivity);
+    document.addEventListener('pointerdown', onActivity, { passive: true });
+    document.addEventListener('pointermove', onActivity, { passive: true });
+    document.addEventListener('mousemove', onActivity, { passive: true });
+    document.addEventListener('touchstart', onActivity, { passive: true });
+    document.addEventListener('click', onActivity);
+    document.addEventListener('focusin', onActivity);
+    return () => {
+      window.removeEventListener('keydown', onActivity);
+      window.removeEventListener('focus', onActivity);
+      document.removeEventListener('pointerdown', onActivity);
+      document.removeEventListener('pointermove', onActivity);
+      document.removeEventListener('mousemove', onActivity);
+      document.removeEventListener('touchstart', onActivity);
+      document.removeEventListener('click', onActivity);
+      document.removeEventListener('focusin', onActivity);
+    };
+  }, [revealTvControls]);
   useEffect(() => {
     const updateFullscreenState = () => setBrowserFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', updateFullscreenState);
@@ -1118,6 +1188,11 @@ function TvPage() {
                         else youtube.unMute();
                         setMuted(normalized <= 0);
                       }
+                    } else if (command === 'video:mute') {
+                      const nextMuted = !youtube.isMuted();
+                      if (nextMuted) youtube.mute();
+                      else youtube.unMute();
+                      setMuted(nextMuted);
                     } else {
                       handled = false;
                     }
@@ -1129,14 +1204,17 @@ function TvPage() {
                   if (command === 'photo:next') {
                     setCurrentImageIndex((index) => Math.min(receivedImagesRef.current.length - 1, index + 1));
                     setImageZoom(1);
+                    setImageOffsetY(0);
                   } else if (command === 'photo:previous') {
                     setCurrentImageIndex((index) => Math.max(0, index - 1));
                     setImageZoom(1);
+                    setImageOffsetY(0);
                   } else if (command.startsWith('photo:show:')) {
                     const index = Number(command.slice('photo:show:'.length));
                     if (Number.isInteger(index) && index >= 0 && index < receivedImagesRef.current.length) {
                       setCurrentImageIndex(index);
                       setImageZoom(1);
+                      setImageOffsetY(0);
                     }
                   } else if (command === 'photo:zoom-in') {
                     setImageZoom((zoom) => Math.min(4, Number((zoom + 0.25).toFixed(2))));
@@ -1144,6 +1222,11 @@ function TvPage() {
                     setImageZoom((zoom) => Math.max(1, Number((zoom - 0.25).toFixed(2))));
                   } else if (command === 'photo:zoom-reset') {
                     setImageZoom(1);
+                    setImageOffsetY(0);
+                  } else if (command === 'photo:move-up') {
+                    setImageOffsetY((offset) => Math.max(-1600, offset - 70));
+                  } else if (command === 'photo:move-down') {
+                    setImageOffsetY((offset) => Math.min(1600, offset + 70));
                   } else if (command === 'pause' && videoRef.current) {
                     videoRef.current.pause();
                     setPlaying(false);
@@ -1173,6 +1256,9 @@ function TvPage() {
                       videoRef.current.muted = volume <= 0;
                       setMuted(volume <= 0);
                     }
+                  } else if (command === 'video:mute' && videoRef.current) {
+                    videoRef.current.muted = !videoRef.current.muted;
+                    setMuted(videoRef.current.muted);
                   }
                 };
               }
@@ -1304,7 +1390,7 @@ function TvPage() {
                   className="image-preview"
                   src={receivedImages[currentImageIndex].url}
                   alt={receivedImages[currentImageIndex].name}
-                  style={{ transform: `scale(${imageZoom})` }}
+                  style={{ transform: `translateY(${imageOffsetY}px) scale(${imageZoom})` }}
                   data-testid="image-tv-current"
                 />
                 {receivedImages.length > 1 && (
@@ -1335,7 +1421,8 @@ function TvPage() {
                 {creatingRoom ? 'Preparing your screen…' : status === 'failed' || roomExpired ? 'Create a fresh room' : 'Create pairing code'}
               </button>
             ) : status === 'connected' ? (
-              <div className="tv-controls">
+              <div className={`tv-controls${tvControlsVisible ? '' : ' tv-controls-hidden'}`} aria-hidden={!tvControlsVisible}>
+                {tvControlsCountdown !== null && <span className="tv-controls-countdown" aria-live="off">Hides in {tvControlsCountdown}</span>}
                 <button className="button-secondary" type="button" onClick={toggleBrowserFullscreen} data-testid="button-tv-fullscreen-playback" aria-label={browserFullscreen ? 'Exit browser full screen' : 'Enter browser full screen'}>
                   {browserFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                   {browserFullscreen ? 'Exit full screen' : 'Full screen'}
@@ -1344,14 +1431,16 @@ function TvPage() {
                   <button className="button-secondary" type="button" onClick={() => {
                     setCurrentImageIndex((index) => Math.max(0, index - 1));
                     setImageZoom(1);
+                    setImageOffsetY(0);
                   }} aria-label="Previous photo" data-testid="button-tv-photo-previous">Previous</button>
                   <span className="tv-photo-counter">{currentImageIndex + 1} / {receivedImages.length}</span>
                   <button className="button-secondary" type="button" onClick={() => {
                     setCurrentImageIndex((index) => Math.min(receivedImages.length - 1, index + 1));
                     setImageZoom(1);
+                    setImageOffsetY(0);
                   }} aria-label="Next photo" data-testid="button-tv-photo-next">Next</button>
                   <button className="button-secondary" type="button" onClick={() => setImageZoom((zoom) => Math.max(1, Number((zoom - 0.25).toFixed(2))))} aria-label="Zoom out" data-testid="button-tv-photo-zoom-out">−</button>
-                  <button className="button-secondary" type="button" onClick={() => setImageZoom(1)} aria-label="Reset zoom" data-testid="button-tv-photo-zoom-reset">Fit</button>
+                  <button className="button-secondary" type="button" onClick={() => { setImageZoom(1); setImageOffsetY(0); }} aria-label="Reset zoom" data-testid="button-tv-photo-zoom-reset">Fit</button>
                   <button className="button-secondary" type="button" onClick={() => setImageZoom((zoom) => Math.min(4, Number((zoom + 0.25).toFixed(2))))} aria-label="Zoom in" data-testid="button-tv-photo-zoom-in">+</button>
                 </>}
                 {mediaKind === 'video' && <>
@@ -2115,6 +2204,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-reset')} aria-label="Fit photo on TV" data-testid="button-phone-photo-zoom-reset">Fit</button>
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-in')} aria-label="Zoom in on TV" data-testid="button-phone-photo-zoom-in">+</button>
                 </div>
+                <div className="photo-remote-navigation" data-testid="photo-remote-pan">
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:move-up')} aria-label="Move photo up on TV" data-testid="button-phone-photo-move-up">↑ Move up</button>
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:move-down')} aria-label="Move photo down on TV" data-testid="button-phone-photo-move-down">↓ Move down</button>
+                </div>
               </div>
             )}
             {status === 'connected' && mediaKind === 'video' && (videoStreaming || sentToTv) && (
@@ -2150,6 +2243,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   <div className="video-volume-controls">
                     <button type="button" className="button-quiet" onClick={() => sendPhotoControl(`video:volume:${Math.max(0, remoteVideoState.volume - 0.1).toFixed(1)}`)} aria-label="Lower TV volume">Vol−</button>
                     <button type="button" className="button-quiet" onClick={() => sendPhotoControl(`video:volume:${Math.min(1, remoteVideoState.volume + 0.1).toFixed(1)}`)} aria-label="Raise TV volume">Vol+</button>
+                    <button type="button" className="button-quiet" onClick={() => sendPhotoControl('video:mute')} aria-label={remoteVideoState.volume <= 0 ? 'Unmute TV' : 'Mute TV'} data-testid="button-phone-video-mute">
+                      {remoteVideoState.volume <= 0 ? 'Unmute' : 'Mute'}
+                    </button>
                   </div>
                 </div>
               </div>

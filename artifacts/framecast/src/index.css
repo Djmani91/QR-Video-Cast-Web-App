@@ -218,6 +218,8 @@
 .waiting-panel { margin-top: 16px; min-height: 170px; border-radius: 16px; background: #18211d; display: grid; place-items: center; color: #f4f1e8; text-align: center; padding: 24px; }
 .waiting-panel p { color: #c2c9c1; font-size: 13px; line-height: 1.6; margin: 8px auto 0; max-width: 260px; }
 .tv-controls { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
+.tv-controls-hidden { display: none !important; }
+.tv-controls-countdown { align-self: center; padding: 0 8px; color: #f4f1e8; font: 600 11px/1 var(--app-font-mono); white-space: nowrap; }
 .photo-remote-controls { display: grid; gap: 8px; width: min(100%, 420px); margin: 12px auto; }
 .video-remote-controls { display: grid; gap: 8px; width: min(100%, 420px); margin: 12px auto; }
 .video-seek-slider { width: 100%; margin: 0; accent-color: hsl(var(--primary)); }

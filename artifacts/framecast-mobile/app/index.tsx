@@ -1228,6 +1228,10 @@ export default function HomeScreen() {
                     <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl(`video:volume:${Math.min(1, remoteVideoPosition.volume + 0.1).toFixed(1)}`)} accessibilityLabel="Raise TV volume">
                       <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Vol+</Text>
                     </Pressable>
+                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('video:mute')} accessibilityLabel={remoteVideoPosition.volume <= 0 ? 'Unmute TV' : 'Mute TV'} testID="button-phone-video-mute">
+                      <Ionicons name={remoteVideoPosition.volume <= 0 ? 'volume-mute' : 'volume-high'} size={18} color={activeColors.foreground} />
+                      <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>{remoteVideoPosition.volume <= 0 ? 'Unmute' : 'Mute'}</Text>
+                    </Pressable>
                     <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { cleanupTemporaryCopies(); setSelectedMedia(null); setMediaQueue([]); mediaQueueRef.current = []; setStage('paired'); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
                       <Ionicons name="stop" size={18} color={activeColors.foreground} />
                       <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Stop</Text>
@@ -1272,6 +1276,16 @@ export default function HomeScreen() {
                   </Pressable>
                   <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:zoom-in')} accessibilityLabel="Zoom in on TV" testID="button-phone-photo-zoom-in">
                     <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>+</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.playbackRow} testID="photo-remote-pan">
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:move-up')} accessibilityLabel="Move photo up on TV" testID="button-phone-photo-move-up">
+                    <Ionicons name="arrow-up" size={18} color={activeColors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Move up</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:move-down')} accessibilityLabel="Move photo down on TV" testID="button-phone-photo-move-down">
+                    <Ionicons name="arrow-down" size={18} color={activeColors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Move down</Text>
                   </Pressable>
                 </View>
               </>
