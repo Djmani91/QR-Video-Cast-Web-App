@@ -8,6 +8,8 @@
 
 export * from './castRole';
 export * from './castRoom';
+export * from './castRoomLookupInput';
+export * from './castRoomLookupResponse';
 export * from './castSignal';
 export * from './castSignalInput';
 export * from './castSignalPayload';

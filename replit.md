@@ -1,6 +1,6 @@
 # FrameCast
 
-FrameCast lets someone pair a smart-TV browser with a phone and stream a selected video directly between them.
+FrameCast lets someone pair a smart-TV browser with a phone and stream a selected video or photo directly between them.
 
 ## Run & Operate
 
@@ -27,14 +27,14 @@ FrameCast lets someone pair a smart-TV browser with a phone and stream a selecte
 
 ## Architecture decisions
 
-- Video files remain on the phone and are sent to the TV over a direct WebRTC connection; the API does not receive video bytes.
+- Video and photo files remain on the phone and are sent to the TV over a direct WebRTC connection; the API does not receive media bytes.
 - Pairing and WebRTC negotiation messages live only in API-server memory and expire after a short window. Do not add persistent storage for media or signaling.
-- No TURN relay is enabled in the initial version; some network combinations may fail to connect directly.
+- No STUN/TURN relay is enabled in the initial version; require both devices to use the same Wi-Fi, and explain that some networks may still block direct connections.
 
 ## Product
 
-- The TV opens the app in its browser and displays a QR code.
-- A phone scans the code, selects a local video, and streams it directly to the TV.
+- The TV opens the app in its browser and displays a QR code and five-digit pairing code.
+- A phone can scan the QR code or enter the five-digit code, then select a local photo or video and stream it directly to the TV.
 - The app must explain when direct casting is unsupported or blocked instead of silently uploading or relaying the video.
 
 ## User preferences

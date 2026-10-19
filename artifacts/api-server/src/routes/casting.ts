@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import {
   CreateCastRoomResponse,
   GetCastRoomMessagesParams,
   GetCastRoomMessagesResponse,
+  LookupCastRoomByCodeBody,
+  LookupCastRoomByCodeResponse,
   SendCastRoomMessageBody,
   SendCastRoomMessageParams,
   SendCastRoomMessageResponse,
@@ -27,19 +29,51 @@ type Signal = {
 
 type Room = {
   id: string;
+  code: string;
   expiresAt: number;
   nextSequence: number;
   messages: Signal[];
 };
 
 const rooms = new Map<string, Room>();
+const roomIdsByCode = new Map<string, string>();
+const lookupAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function clearExpiredRooms(now = Date.now()): void {
   for (const [id, room] of rooms) {
     if (room.expiresAt <= now) {
       rooms.delete(id);
+      roomIdsByCode.delete(room.code);
     }
   }
+  for (const [ip, attempt] of lookupAttempts) {
+    if (attempt.resetAt <= now) {
+      lookupAttempts.delete(ip);
+    }
+  }
+}
+
+function createUniqueCode(): string {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    const code = randomInt(0, 100_000).toString().padStart(5, "0");
+    if (!roomIdsByCode.has(code)) {
+      return code;
+    }
+  }
+  throw new Error("Unable to allocate a unique pairing code");
+}
+
+function allowCodeLookup(ip: string, now = Date.now()): boolean {
+  const current = lookupAttempts.get(ip);
+  if (!current || current.resetAt <= now) {
+    lookupAttempts.set(ip, { count: 1, resetAt: now + 60_000 });
+    return true;
+  }
+  if (current.count >= 10) {
+    return false;
+  }
+  current.count += 1;
+  return true;
 }
 
 const expirySweep = setInterval(() => clearExpiredRooms(), 60_000);
@@ -53,15 +87,40 @@ router.post("/cast/rooms", (_req, res): void => {
   }
 
   const id = randomUUID();
+  const code = createUniqueCode();
   const expiresAt = Date.now() + ROOM_TTL_MS;
-  rooms.set(id, { id, expiresAt, nextSequence: 1, messages: [] });
+  rooms.set(id, { id, code, expiresAt, nextSequence: 1, messages: [] });
+  roomIdsByCode.set(code, id);
 
   res.status(201).json(
     CreateCastRoomResponse.parse({
       id,
+      code,
       expiresAt: new Date(expiresAt).toISOString(),
     }),
   );
+});
+
+router.post("/cast/rooms/lookup", (req, res): void => {
+  clearExpiredRooms();
+  const parsed = LookupCastRoomByCodeBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Enter a valid five-digit code." });
+    return;
+  }
+
+  if (!allowCodeLookup(req.ip ?? req.socket.remoteAddress ?? "unknown")) {
+    res.status(429).json({ error: "Too many attempts. Wait a minute and try again." });
+    return;
+  }
+
+  const roomId = roomIdsByCode.get(parsed.data.code);
+  if (!roomId || !rooms.has(roomId)) {
+    res.status(404).json({ error: "That code is invalid or has expired." });
+    return;
+  }
+
+  res.json(LookupCastRoomByCodeResponse.parse({ roomId }));
 });
 
 router.get("/cast/rooms/:roomId/messages", (req, res): void => {

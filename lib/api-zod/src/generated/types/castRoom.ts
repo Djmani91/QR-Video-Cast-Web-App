@@ -8,5 +8,11 @@
 
 export interface CastRoom {
   id: string;
+  /**
+     * @minLength 5
+     * @maxLength 5
+     * @pattern ^[0-9]{5}$
+     */
+  code: string;
   expiresAt: Date;
 }

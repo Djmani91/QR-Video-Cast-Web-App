@@ -45,6 +45,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /cast/rooms/lookup:
+    post:
+      operationId: lookupCastRoomByCode
+      tags: [casting]
+      summary: Find an active room from its five-digit pairing code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CastRoomLookupInput"
+      responses:
+        "200":
+          description: Active room found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CastRoomLookupResponse"
+        "404":
+          description: Code is invalid or the room has expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          description: Too many code attempts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /cast/rooms/{roomId}/messages:
     get:
       operationId: getCastRoomMessages
@@ -125,14 +155,35 @@ components:
       enum: [offer, answer, ice, ready, close]
     CastRoom:
       type: object
-      required: [id, expiresAt]
+      required: [id, code, expiresAt]
       properties:
         id:
           type: string
           format: uuid
+        code:
+          type: string
+          minLength: 5
+          maxLength: 5
+          pattern: "^[0-9]{5}$"
         expiresAt:
           type: string
           format: date-time
+    CastRoomLookupInput:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          minLength: 5
+          maxLength: 5
+          pattern: "^[0-9]{5}$"
+    CastRoomLookupResponse:
+      type: object
+      required: [roomId]
+      properties:
+        roomId:
+          type: string
+          format: uuid
     CastSignalPayload:
       type: object
       additionalProperties: true
