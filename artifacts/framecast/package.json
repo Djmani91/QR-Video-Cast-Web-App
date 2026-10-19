@@ -77,6 +77,7 @@
   },
   "dependencies": {
     "@zxing/browser": "^0.2.1",
-    "@zxing/library": "^0.23.0"
+    "@zxing/library": "^0.23.0",
+    "mp4box": "^2.4.1"
   }
 }

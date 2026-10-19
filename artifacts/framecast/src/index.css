@@ -308,10 +308,10 @@
   object-fit: contain;
 }
 .tv-immersive-playback .tv-controls {
-  position: absolute;
+  position: fixed;
   left: 50%;
   bottom: clamp(14px, 3vh, 38px);
-  z-index: 4;
+  z-index: 10000;
   max-width: calc(100vw - 24px);
   margin: 0;
   padding: 8px;

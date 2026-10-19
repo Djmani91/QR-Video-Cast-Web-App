@@ -71,6 +71,7 @@ type SignalMessage = {
 const rtcConfig = { iceServers: [] };
 const FILE_CHUNK_SIZE = 32 * 1024;
 const MAX_TRANSFER_BYTES = 256 * 1024 * 1024;
+const MAX_VIDEO_SIZE_BYTES = 8 * 1024 * 1024 * 1024;
 
 function createPeerConnection(): PeerLike {
   if (Platform.OS === 'web') {
@@ -156,6 +157,7 @@ export default function HomeScreen() {
   const [sentQueueCount, setSentQueueCount] = useState(0);
   const [queueRunning, setQueueRunning] = useState(false);
   const [error, setError] = useState('');
+  const [videoStreaming, setVideoStreaming] = useState(false);
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
@@ -169,6 +171,7 @@ export default function HomeScreen() {
   const queueRunningRef = useRef(false);
   const transferRunRef = useRef(0);
   const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
+  const videoStreamingRef = useRef(false);
   const seenMessages = useRef(new Set<number>());
   const queuedIce = useRef<Record<string, unknown>[]>([]);
   const scanHandled = useRef(false);
@@ -194,6 +197,8 @@ export default function HomeScreen() {
     transferRunRef.current += 1;
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
+    videoStreamingRef.current = false;
+    setVideoStreaming(false);
     if (notifyTv && roomId) sendSignal('close', {});
     transferComplete.current = true;
     mediaChannelRef.current?.close();
@@ -409,14 +414,17 @@ export default function HomeScreen() {
         const queuedFile = new ExpoFile(media.uri);
         const queuedSize = queuedFile.size || media.size || 0;
         if (!queuedSize) throw new Error(`Could not read “${media.name}”. Choose it again and retry.`);
-        if (queuedSize > MAX_TRANSFER_BYTES) {
-          throw new Error('This version supports files up to 256 MB. Choose a shorter or smaller video.');
+        const sizeLimit = media.kind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_TRANSFER_BYTES;
+        if (queuedSize > sizeLimit) {
+          throw new Error(media.kind === 'video' ? 'Videos must be 8 GB or smaller to stream directly.' : 'Photos must be under 256 MB each.');
         }
         totalQueueBytes += queuedSize;
-        if (totalQueueBytes > MAX_TRANSFER_BYTES) {
+        if (media.kind === 'image' && totalQueueBytes > MAX_TRANSFER_BYTES) {
           throw new Error('The selected photos must total 256 MB or less. Choose fewer photos.');
         }
       }
+      videoStreamingRef.current = false;
+      setVideoStreaming(false);
       transferComplete.current = false;
 
       const peer = createPeerConnection();
@@ -426,7 +434,17 @@ export default function HomeScreen() {
       mediaChannel.onmessage = (event) => {
         if (typeof event.data !== 'string') return;
         try {
-          const packet = JSON.parse(event.data) as { framecast?: string; playback?: string };
+          const packet = JSON.parse(event.data) as { framecast?: string; playback?: string; message?: string };
+          if (packet.framecast === 'streaming') {
+            videoStreamingRef.current = true;
+            setVideoStreaming(true);
+          }
+          if (packet.framecast === 'stream-error') {
+            setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
+            setStage('paired');
+            closePeer();
+            return;
+          }
           if (packet.framecast === 'received') {
             const resolve = mediaAckResolverRef.current;
             mediaAckResolverRef.current = null;
@@ -455,8 +473,9 @@ export default function HomeScreen() {
               const file = new ExpoFile(media.uri);
               const fileSize = file.size || media.size || 0;
               if (!fileSize) throw new Error(`Could not read “${media.name}”. Choose it again and retry.`);
-              if (fileSize > MAX_TRANSFER_BYTES) {
-                throw new Error('This version supports files up to 256 MB. Choose a shorter or smaller video.');
+               const fileLimit = media.kind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_TRANSFER_BYTES;
+               if (fileSize > fileLimit) {
+                 throw new Error(media.kind === 'video' ? 'Videos must be 8 GB or smaller to stream directly.' : 'Photos must be under 256 MB each.');
               }
                const itemId = media.kind === 'image' ? `${Date.now()}-${index}` : undefined;
                if (media.kind === 'image') {
@@ -474,6 +493,8 @@ export default function HomeScreen() {
                }
               setTotalBytes(fileSize);
               setSentBytes(0);
+              const streamCandidate = media.kind === 'video'
+                && (media.mimeType === 'video/mp4' || media.mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(media.name));
               mediaChannel.send(JSON.stringify({
                 framecast: 'metadata',
                 name: media.name,
@@ -481,6 +502,7 @@ export default function HomeScreen() {
                 mimeType: media.mimeType,
                 kind: media.kind,
                 size: fileSize,
+                streamCandidate,
               }));
               for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
                 if (transferRun !== transferRunRef.current || mediaChannel.readyState !== 'open') return;
@@ -491,22 +513,36 @@ export default function HomeScreen() {
                 const count = Math.min(offset + part.byteLength, fileSize);
                 setSentBytes(count);
               }
-              const acknowledgement = new Promise<string>((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                  mediaAckResolverRef.current = null;
-                  reject(new Error('The TV did not confirm the photo. Check that its screen is awake and try again.'));
-                }, 60_000);
-                mediaAckResolverRef.current = (playback) => {
-                  clearTimeout(timeout);
-                  resolve(playback);
-                };
-              });
+              let acknowledgement: Promise<string> | undefined;
+              if (media.kind === 'image') {
+                acknowledgement = new Promise<string>((resolve, reject) => {
+                  const timeout = setTimeout(() => {
+                    mediaAckResolverRef.current = null;
+                    reject(new Error('The TV did not confirm the photo. Check that its screen is awake and try again.'));
+                  }, 60_000);
+                  mediaAckResolverRef.current = (playback) => {
+                    clearTimeout(timeout);
+                    resolve(playback);
+                  };
+                });
+              }
               await waitForBuffer(mediaChannel);
               mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
-              const playback = await acknowledgement;
-              if (transferRun !== transferRunRef.current) return;
-              if (playback === 'failed') {
-                throw new Error('The TV received the video but could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
+              if (media.kind === 'video') {
+                const startDeadline = Date.now() + 20_000;
+                while (!videoStreamingRef.current && transferRun === transferRunRef.current && Date.now() < startDeadline) {
+                  await new Promise((resolve) => setTimeout(resolve, 150));
+                }
+                if (transferRun !== transferRunRef.current) return;
+                if (!videoStreamingRef.current) {
+                  throw new Error('The TV did not start the video stream. Check its format and keep both devices awake.');
+                }
+              } else {
+                const playback = await acknowledgement;
+                if (transferRun !== transferRunRef.current) return;
+                if (playback === 'failed') {
+                  throw new Error('The TV could not display this photo. Choose it again and retry.');
+                }
               }
               setSentQueueCount(index + 1);
               setSentBytes(fileSize);
@@ -717,8 +753,10 @@ export default function HomeScreen() {
                   ? sentQueueCount === mediaQueue.length
                     ? `${mediaQueue.length} photos sent in order.`
                     : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
-                  : 'The TV starts playing automatically when the transfer finishes.'
-                : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
+                  : selectedMedia?.kind === 'video' ? 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
+                : selectedMedia?.kind === 'video'
+                  ? 'Instant playback needs a stream-ready H.264/AAC fragmented MP4.'
+                  : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
             {selectedMedia ? (
@@ -764,7 +802,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.scanButtonCopy}>
                     <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose a video</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Send one video to the TV</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Instant play needs H.264/AAC fragmented MP4</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -779,6 +817,7 @@ export default function HomeScreen() {
             {stage === 'sending' && totalBytes ? (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
                 {mediaQueue.length > 1 ? `Photo ${queueIndex + 1} of ${mediaQueue.length} · ` : ''}
+                {videoStreaming ? 'The TV is playing while transfer continues · ' : ''}
                 {formatBytes(sentBytes)} of {formatBytes(totalBytes)} sent · keep this app open
               </Text>
             ) : null}
@@ -806,9 +845,10 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {stage === 'sent' && selectedMedia?.kind === 'image' && sentQueueCount > 1 && (
+            {(stage === 'sending' || stage === 'sent') && selectedMedia?.kind === 'image' && sentQueueCount > 0 && (
               <>
-                <View style={styles.playbackRow} testID="photo-remote-navigation">
+                <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>Browse and zoom the photos on the TV from here.</Text>
+                {sentQueueCount > 1 && <View style={styles.playbackRow} testID="photo-remote-navigation">
                   <Pressable
                     style={[styles.secondaryButton, { backgroundColor: activeColors.secondary, opacity: queueIndex === 0 ? 0.45 : 1 }]}
                     onPress={() => showQueuePhoto(queueIndex - 1)}
@@ -830,7 +870,7 @@ export default function HomeScreen() {
                     <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Next</Text>
                     <Ionicons name="chevron-forward" size={18} color={activeColors.foreground} />
                   </Pressable>
-                </View>
+                </View>}
                 <View style={styles.playbackRow} testID="photo-remote-zoom">
                   <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:zoom-out')} accessibilityLabel="Zoom out on TV" testID="button-phone-photo-zoom-out">
                     <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>−</Text>

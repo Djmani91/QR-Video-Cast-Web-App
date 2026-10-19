@@ -13,6 +13,7 @@ import {
   type CastSignalType,
 } from '@workspace/api-client-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { createFile } from 'mp4box';
 import { BrowserQRCodeReader } from '@zxing/browser';
 import {
   ArrowLeft,
@@ -48,6 +49,27 @@ const queryClient = new QueryClient();
 
 type PeerStatus = 'idle' | 'paired' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 type MediaKind = 'video' | 'image';
+type Mp4TrackInfo = { codec?: string; video?: unknown; audio?: unknown };
+type Mp4ParserLike = {
+  onReady: ((info: { isFragmented: boolean; tracks: Mp4TrackInfo[] }) => void) | null;
+  onError: ((message: string) => void) | null;
+  appendBuffer: (buffer: ArrayBuffer & { fileStart: number }) => number;
+};
+type VideoStreamSession = {
+  mediaSource: MediaSource;
+  url: string;
+  parser: Mp4ParserLike;
+  info?: { isFragmented: boolean; tracks: Mp4TrackInfo[] };
+  sourceBuffer: SourceBuffer | null;
+  initialChunks: ArrayBuffer[];
+  appendQueue: ArrayBuffer[];
+  fileOffset: number;
+  initialized: boolean;
+  complete: boolean;
+  failed: boolean;
+  initTimer: number;
+  fail: (message: string) => void;
+};
 const rtcConfig: RTCConfiguration = { iceServers: [] };
 
 function BrandHeader({ phone = false }: { phone?: boolean }) {
@@ -197,6 +219,7 @@ function useSignalSender(roomId: string) {
 
 const MAX_MEDIA_SIZE_BYTES = 256 * 1024 * 1024;
 const MAX_MEDIA_QUEUE_SIZE_BYTES = 256 * 1024 * 1024;
+const MAX_VIDEO_SIZE_BYTES = 8 * 1024 * 1024 * 1024;
 const MEDIA_CHUNK_SIZE_BYTES = 32 * 1024;
 const DATA_CHANNEL_BUFFER_LIMIT_BYTES = 512 * 1024;
 
@@ -290,6 +313,52 @@ function photoPreviewBlob(dataUrl: string): Blob | undefined {
   }
 }
 
+function drainVideoStream(session: VideoStreamSession, video: HTMLVideoElement) {
+  const sourceBuffer = session.sourceBuffer;
+  if (!sourceBuffer || sourceBuffer.updating || session.failed) return;
+  try {
+    if (video.currentTime > 45 && sourceBuffer.buffered.length > 0) {
+      const bufferedStart = sourceBuffer.buffered.start(0);
+      const removeBefore = video.currentTime - 30;
+      if (bufferedStart < removeBefore) {
+        sourceBuffer.remove(bufferedStart, removeBefore);
+        return;
+      }
+    }
+    const firstChunk = session.appendQueue[0];
+    const appendSizeLimit = 256 * 1024;
+    let chunkCount = 0;
+    let appendSize = 0;
+    while (chunkCount < session.appendQueue.length && appendSize < appendSizeLimit) {
+      appendSize += session.appendQueue[chunkCount].byteLength;
+      chunkCount += 1;
+    }
+    const nextChunks = session.appendQueue.splice(0, chunkCount);
+    const nextChunk = nextChunks.length === 1
+      ? firstChunk
+      : nextChunks.length > 1
+        ? (() => {
+          const combined = new Uint8Array(appendSize);
+          let offset = 0;
+          for (const part of nextChunks) {
+            combined.set(new Uint8Array(part), offset);
+            offset += part.byteLength;
+          }
+          return combined.buffer;
+        })()
+        : undefined;
+    if (nextChunk) {
+      sourceBuffer.appendBuffer(nextChunk);
+      return;
+    }
+    if (session.complete && session.mediaSource.readyState === 'open') {
+      session.mediaSource.endOfStream();
+    }
+  } catch {
+    session.fail('The TV browser could not buffer this stream. Choose a standard H.264/AAC fragmented MP4.');
+  }
+}
+
 async function waitForDataChannelBuffer(channel: RTCDataChannel) {
   while (channel.bufferedAmount > DATA_CHANNEL_BUFFER_LIMIT_BYTES) {
     if (channel.readyState !== 'open') {
@@ -319,7 +388,9 @@ function TvPage() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const mediaObjectUrlsRef = useRef<string[]>([]);
-  const mediaTransferRef = useRef<{ name: string; itemId?: string; mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[] } | null>(null);
+  const mediaTransferRef = useRef<{ name: string; itemId?: string; mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[]; streamMode?: boolean } | null>(null);
+  const videoStreamRef = useRef<VideoStreamSession | null>(null);
+  const [videoStreamActive, setVideoStreamActive] = useState(false);
   const [receivedImages, setReceivedImages] = useState<{ url: string; name: string; itemId?: string }[]>([]);
   const receivedImagesRef = useRef<{ url: string; name: string; itemId?: string }[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -345,6 +416,20 @@ function TvPage() {
     peerRef.current?.getReceivers().forEach((receiver) => receiver.track?.stop());
     peerRef.current?.close();
     peerRef.current = null;
+    const videoStream = videoStreamRef.current;
+    if (videoStream) {
+      window.clearTimeout(videoStream.initTimer);
+      try {
+        if (videoStream.sourceBuffer?.updating) videoStream.sourceBuffer.abort();
+        if (videoStream.mediaSource.readyState === 'open' && !videoStream.sourceBuffer?.updating) {
+          videoStream.mediaSource.endOfStream();
+        }
+      } catch {
+        // The TV browser may already have closed the MediaSource.
+      }
+    }
+    videoStreamRef.current = null;
+    setVideoStreamActive(false);
     mediaTransferRef.current = null;
     setTransferProgress(null);
     receivedImagesRef.current = [];
@@ -440,9 +525,9 @@ function TvPage() {
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
-                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean };
                     try {
-                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean };
                     } catch {
                       setError('The phone sent an unreadable media transfer message.');
                       return;
@@ -466,21 +551,125 @@ function TvPage() {
                       return;
                     }
                     if (packet.framecast === 'metadata') {
-                      if (!packet.size || packet.size > 256 * 1024 * 1024 || !packet.mimeType) {
+                      const kind: MediaKind = packet.kind === 'image' ? 'image' : 'video';
+                      const sizeLimit = kind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_MEDIA_SIZE_BYTES;
+                      if (!packet.size || packet.size > sizeLimit || !packet.mimeType) {
                         setError('This file is too large or has an unsupported format.');
                         channel.close();
                         return;
+                      }
+                      if (kind === 'video') {
+                        const streamError = 'For instant playback, choose a stream-ready H.264/AAC fragmented MP4. This video format cannot be played while it is arriving.';
+                        if (!packet.streamCandidate || typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported) {
+                          setError(streamError);
+                          setStatus('failed');
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: streamError }));
+                          window.setTimeout(() => stopPeer(), 1200);
+                          return;
+                        }
+                        const video = videoRef.current;
+                        if (!video) {
+                          setError('The TV browser could not open a streaming video player.');
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: 'The TV browser could not open a streaming video player.' }));
+                          return;
+                        }
+                        const mediaSource = new MediaSource();
+                        const url = URL.createObjectURL(mediaSource);
+                        mediaObjectUrlsRef.current.push(url);
+                        video.pause();
+                        video.srcObject = null;
+                        video.removeAttribute('src');
+                        video.muted = true;
+                        setMuted(true);
+                        video.src = url;
+                        video.load();
+                        const parser = createFile() as unknown as Mp4ParserLike;
+                        const failVideoStream = (messageText: string) => {
+                          const active = videoStreamRef.current;
+                          if (active) {
+                            active.failed = true;
+                            window.clearTimeout(active.initTimer);
+                          }
+                          setError(messageText);
+                          setStatus('failed');
+                          setVideoStreamActive(false);
+                          if (channel.readyState === 'open') {
+                            channel.send(JSON.stringify({ framecast: 'stream-error', message: messageText }));
+                          }
+                          window.setTimeout(() => stopPeer(), 1200);
+                        };
+                        const session: VideoStreamSession = {
+                          mediaSource,
+                          url,
+                          parser,
+                          sourceBuffer: null,
+                          initialChunks: [],
+                          appendQueue: [],
+                          fileOffset: 0,
+                          initialized: false,
+                          complete: false,
+                          failed: false,
+                          initTimer: 0,
+                          fail: failVideoStream,
+                        };
+                        videoStreamRef.current = session;
+                        setVideoStreamActive(true);
+                        video.addEventListener('error', () => failVideoStream('The TV browser rejected this video stream. Try a stream-ready H.264/AAC fragmented MP4.'), { once: true });
+                        const initializeSourceBuffer = () => {
+                          if (session.failed || session.initialized || !session.info || mediaSource.readyState !== 'open') return;
+                          if (!session.info.isFragmented) {
+                            failVideoStream('This video is not fragmented for streaming. Choose a stream-ready H.264/AAC MP4.');
+                            return;
+                          }
+                          const tracks = session.info.tracks.filter((track) => track.video || track.audio);
+                          const hasVideo = tracks.some((track) => track.video);
+                          const codecs = tracks.map((track) => track.codec).filter((codec): codec is string => Boolean(codec));
+                          const contentType = `video/mp4; codecs="${codecs.join(',')}"`;
+                          if (!hasVideo || codecs.length === 0 || !MediaSource.isTypeSupported(contentType)) {
+                            failVideoStream('The TV cannot stream this video codec. Use H.264 video with AAC audio in a fragmented MP4.');
+                            return;
+                          }
+                          try {
+                            const sourceBuffer = mediaSource.addSourceBuffer(contentType);
+                            session.sourceBuffer = sourceBuffer;
+                            session.initialized = true;
+                            window.clearTimeout(session.initTimer);
+                            sourceBuffer.addEventListener('updateend', () => drainVideoStream(session, video));
+                            sourceBuffer.addEventListener('error', () => failVideoStream('The TV browser rejected part of the video stream. Try a standard H.264/AAC fragmented MP4.'));
+                            session.appendQueue.push(...session.initialChunks);
+                            session.initialChunks = [];
+                            drainVideoStream(session, video);
+                            void video.play().then(() => {
+                              setPlaying(true);
+                              if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                            }).catch(() => failVideoStream('The TV could not start this live video stream. Check its video and audio format.'));
+                          } catch {
+                            failVideoStream('The TV browser cannot create a streaming video buffer for this format.');
+                          }
+                        };
+                        parser.onReady = (info) => {
+                          session.info = info;
+                          initializeSourceBuffer();
+                        };
+                        parser.onError = () => failVideoStream('The video file is not a valid stream-ready MP4.');
+                        mediaSource.addEventListener('sourceopen', initializeSourceBuffer, { once: true });
+                        if (mediaSource.readyState === 'open') initializeSourceBuffer();
+                        session.initTimer = window.setTimeout(
+                          () => failVideoStream('This video did not provide a playable stream quickly. Choose a stream-ready H.264/AAC fragmented MP4.'),
+                          12_000,
+                        );
                       }
                       mediaTransferRef.current = {
                         name: packet.name || `Photo ${receivedImagesRef.current.length + 1}`,
                         itemId: packet.itemId,
                         mimeType: packet.mimeType,
-                        kind: packet.kind === 'image' ? 'image' : 'video',
+                        kind,
                         size: packet.size,
                         received: 0,
                         chunks: [],
+                        streamMode: kind === 'video',
                       };
-                      setMediaKind(packet.kind === 'image' ? 'image' : 'video');
+                      setMediaKind(kind);
                       setTransferProgress(0);
                       return;
                     }
@@ -488,6 +677,18 @@ function TvPage() {
                       const transfer = mediaTransferRef.current;
                       if (!transfer || transfer.received !== transfer.size) {
                         setError('The media transfer was incomplete. Send the file again.');
+                        return;
+                      }
+                      if (transfer.kind === 'video' && transfer.streamMode) {
+                        const stream = videoStreamRef.current;
+                        if (!stream || !stream.initialized || stream.failed) {
+                          setError('The TV could not start this video as a live stream. Choose a stream-ready H.264/AAC fragmented MP4.');
+                          return;
+                        }
+                        stream.complete = true;
+                        mediaTransferRef.current = null;
+                        setTransferProgress(100);
+                        if (videoRef.current) drainVideoStream(stream, videoRef.current);
                         return;
                       }
                       const url = URL.createObjectURL(new Blob(transfer.chunks, { type: transfer.mimeType }));
@@ -547,7 +748,33 @@ function TvPage() {
                   const transfer = mediaTransferRef.current;
                   if (!transfer) return;
                   if (!(message.data instanceof ArrayBuffer)) return;
-                  transfer.chunks.push(message.data);
+                  if (transfer.kind === 'video' && transfer.streamMode) {
+                    const stream = videoStreamRef.current;
+                    if (!stream || stream.failed) return;
+                    const wasInitialized = stream.initialized;
+                    if (wasInitialized) {
+                      stream.appendQueue.push(message.data);
+                    } else {
+                      stream.initialChunks.push(message.data);
+                      const initialBytes = stream.initialChunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+                      if (initialBytes > 4 * 1024 * 1024) {
+                        stream.fail('The video has no small stream header at its start. Choose a stream-ready fragmented MP4.');
+                        return;
+                      }
+                      const parserChunk = message.data.slice(0) as ArrayBuffer & { fileStart: number };
+                      parserChunk.fileStart = stream.fileOffset;
+                      stream.fileOffset += message.data.byteLength;
+                      try {
+                        stream.parser.appendBuffer(parserChunk);
+                      } catch {
+                        stream.fail('The TV could not parse this video as a live fragmented MP4 stream.');
+                        return;
+                      }
+                    }
+                    if (stream.initialized && videoRef.current) drainVideoStream(stream, videoRef.current);
+                  } else {
+                    transfer.chunks.push(message.data);
+                  }
                   transfer.received += message.data.byteLength;
                   if (transfer.size > 0) {
                     setTransferProgress(Math.min(99, Math.round((transfer.received / transfer.size) * 100)));
@@ -693,7 +920,7 @@ function TvPage() {
             </div>
             <video
               ref={videoRef}
-              className={status === 'connected' && (transferProgress === null || (mediaKind === 'video' && transferProgress >= 100)) ? 'video-preview' : 'sr-only'}
+              className={status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'video-preview' : 'sr-only'}
               autoPlay
               playsInline
               muted={muted}
@@ -720,7 +947,7 @@ function TvPage() {
               <div className="tv-transfer-status" role="status" data-testid="status-tv-transfer">
                 <span className="tv-transfer-spinner" />
                 <strong>Receiving {mediaKind === 'image' ? 'photo' : 'video'}</strong>
-                <span>{transferProgress}% · keep your devices awake</span>
+                <span>{videoStreamActive ? `Playing while transfer continues · ${transferProgress}%` : `${transferProgress}% · keep your devices awake`}</span>
               </div>
             )}
             {status !== 'connected' && (
@@ -730,7 +957,7 @@ function TvPage() {
                   : <div className="qr-empty"><Smartphone size={28} /><span>{roomExpired ? 'This pairing code has expired' : 'Your pairing code will appear here'}</span></div>}
               </div>
             )}
-              <p className="pair-prompt">{status === 'connected' ? photoPreviewVisible && mediaKind === 'image' ? 'A quick preview is on screen. The complete photo is arriving directly from the phone.' : transferProgress !== null && transferProgress < 100 ? mediaKind === 'video' ? 'Receiving the video directly. Playback starts when the phone has sent a playable stream.' : 'Receiving the photo directly from the phone.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
+              <p className="pair-prompt">{status === 'connected' ? photoPreviewVisible && mediaKind === 'image' ? 'A quick preview is on screen. The complete photo is arriving directly from the phone.' : transferProgress !== null && transferProgress < 100 ? mediaKind === 'video' ? videoStreamActive ? 'The TV is playing this video while it continues to arrive.' : 'The TV is checking the video format and starting playback.' : 'Receiving the photo directly from the phone.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
             {!room || status === 'failed' || roomExpired ? (
               <button type="button" className="button-primary" onClick={startRoom} disabled={creatingRoom} data-testid="button-create-room">
                 {creatingRoom ? <RefreshCw size={16} className="animate-spin" /> : status === 'failed' || roomExpired ? <RefreshCw size={16} /> : <ArrowUpRight size={16} />}
@@ -838,6 +1065,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(0);
   const [sentToTv, setSentToTv] = useState(false);
+  const [videoStreaming, setVideoStreaming] = useState(false);
   const [muted, setMuted] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -846,6 +1074,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const transferRunRef = useRef(0);
   const transferCompleteRef = useRef(false);
   const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
+  const videoStreamingRef = useRef(false);
   const fileQueueRef = useRef<File[]>([]);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
@@ -855,6 +1084,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const stopPeer = useCallback((sendClose = false) => {
     transferRunRef.current += 1;
     transferCompleteRef.current = true;
+    videoStreamingRef.current = false;
+    setVideoStreaming(false);
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
     if (sendClose) send('phone', 'close', {});
@@ -943,11 +1174,15 @@ function PhonePage({ roomId }: { roomId?: string }) {
       setError('Choose up to 30 photos together, or choose one video.');
       return;
     }
-    if (chosen.reduce((total, item) => total + item.size, 0) > MAX_MEDIA_QUEUE_SIZE_BYTES) {
+    const selectedKind = selectedKinds[0] as MediaKind;
+    if (selectedKind === 'image' && chosen.reduce((total, item) => total + item.size, 0) > MAX_MEDIA_QUEUE_SIZE_BYTES) {
       setError('The selected photos must total 256 MB or less. Choose fewer photos.');
       return;
     }
-    const selectedKind = selectedKinds[0] as MediaKind;
+    if (selectedKind === 'video' && chosen[0].size > MAX_VIDEO_SIZE_BYTES) {
+      setError('Videos must be 8 GB or smaller to stream directly.');
+      return;
+    }
     stopPeer(Boolean(peerRef.current));
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     const nextUrl = URL.createObjectURL(chosen[0]);
@@ -961,6 +1196,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setStatus('paired');
     setProgress(0);
     setSentToTv(false);
+    videoStreamingRef.current = false;
+    setVideoStreaming(false);
     setError('');
   };
 
@@ -975,8 +1212,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
         setError('One of the selected files is empty. Choose it again and retry.');
         return;
       }
-      if (selected.size > MAX_MEDIA_SIZE_BYTES) {
-        setError('Files must be under 256 MB each. Choose a smaller video or photo.');
+      const selectedKind: MediaKind = selected.type.startsWith('video/') ? 'video' : 'image';
+      if (selected.size > (selectedKind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_MEDIA_SIZE_BYTES)) {
+        setError(selectedKind === 'video' ? 'Videos must be 8 GB or smaller to stream directly.' : 'Photos must be under 256 MB each.');
         return;
       }
     }
@@ -984,6 +1222,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setStatus('connecting');
     setProgress(0);
     setSentToTv(false);
+    videoStreamingRef.current = false;
+    setVideoStreaming(false);
     setQueueIndex(0);
     setSentQueueCount(0);
     stopPeer();
@@ -1002,7 +1242,17 @@ function PhonePage({ roomId }: { roomId?: string }) {
         if (transferRun !== transferRunRef.current) return;
         if (typeof event.data !== 'string') return;
         try {
-          const packet = JSON.parse(event.data) as { framecast?: string; playback?: string };
+          const packet = JSON.parse(event.data) as { framecast?: string; playback?: string; message?: string };
+          if (packet.framecast === 'streaming') {
+            videoStreamingRef.current = true;
+            setVideoStreaming(true);
+          }
+          if (packet.framecast === 'stream-error') {
+            setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
+            setStatus('failed');
+            stopPeer();
+            return;
+          }
           if (packet.framecast === 'received') {
             if (packet.playback === 'failed') {
               setError('The video reached the TV, but its browser could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
@@ -1047,6 +1297,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
               if (transferRun !== transferRunRef.current) return;
               setProgress(0);
               const mimeType = getMediaMimeType(outgoing, kind);
+               const streamCandidate = kind === 'video'
+                 && (mimeType === 'video/mp4' || mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(outgoing.name));
               mediaChannel.send(JSON.stringify({
                 framecast: 'metadata',
                 name: outgoing.name,
@@ -1054,6 +1306,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 mimeType,
                 kind,
                 size: outgoing.size,
+                 streamCandidate,
               }));
               let lastProgressUpdate = 0;
               for (let offset = 0; offset < outgoing.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
@@ -1069,22 +1322,36 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   lastProgressUpdate = now;
                 }
               }
-              const acknowledgement = new Promise<string>((resolve, reject) => {
-                const timeout = window.setTimeout(() => {
-                  mediaAckResolverRef.current = null;
-                  reject(new Error('The TV did not confirm the file. Check that its screen is awake and try again.'));
-                }, 60_000);
-                mediaAckResolverRef.current = (playback) => {
-                  window.clearTimeout(timeout);
-                  resolve(playback);
-                };
-              });
+              let acknowledgement: Promise<string> | undefined;
+              if (kind === 'image') {
+                acknowledgement = new Promise<string>((resolve, reject) => {
+                  const timeout = window.setTimeout(() => {
+                    mediaAckResolverRef.current = null;
+                    reject(new Error('The TV did not confirm the photo. Check that its screen is awake and try again.'));
+                  }, 60_000);
+                  mediaAckResolverRef.current = (playback) => {
+                    window.clearTimeout(timeout);
+                    resolve(playback);
+                  };
+                });
+              }
               await waitForDataChannelBuffer(mediaChannel);
               mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
-              const playback = await acknowledgement;
-              if (transferRun !== transferRunRef.current) return;
-              if (playback === 'failed') {
-                throw new Error('The TV browser cannot play this video format. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
+              if (kind === 'video') {
+                const startDeadline = Date.now() + 20_000;
+                while (!videoStreamingRef.current && transferRun === transferRunRef.current && Date.now() < startDeadline) {
+                  await new Promise((resolve) => window.setTimeout(resolve, 150));
+                }
+                if (transferRun !== transferRunRef.current) return;
+                if (!videoStreamingRef.current) {
+                  throw new Error('The TV did not start the video stream. Check the format and keep both devices awake.');
+                }
+              } else {
+                const playback = await acknowledgement;
+                if (transferRun !== transferRunRef.current) return;
+                if (playback === 'failed') {
+                  throw new Error('The TV could not display this photo. Choose it again and retry.');
+                }
               }
               setSentQueueCount(index + 1);
               setProgress(100);
@@ -1291,13 +1558,14 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{muted ? 'Preview muted' : 'Preview sound on'}
               </button>}
             </div>
-            {sentToTv && mediaKind === 'image' && sentQueueCount > 1 && (
+            {status === 'connected' && mediaKind === 'image' && sentQueueCount > 0 && (
               <div className="photo-remote-controls" data-testid="photo-remote-controls">
-                <div className="photo-remote-navigation">
+                <span className="support-note">Browse and zoom the photos on the TV from here.</span>
+                {sentQueueCount > 1 && <div className="photo-remote-navigation">
                   <button type="button" className="button-secondary" onClick={() => showQueuePhoto(queueIndex - 1)} disabled={queueIndex === 0} aria-label="Previous photo on TV" data-testid="button-phone-photo-previous">Back</button>
                   <span aria-live="polite">{queueIndex + 1} / {sentQueueCount}</span>
                   <button type="button" className="button-secondary" onClick={() => showQueuePhoto(queueIndex + 1)} disabled={queueIndex >= sentQueueCount - 1} aria-label="Next photo on TV" data-testid="button-phone-photo-next">Next</button>
-                </div>
+                </div>}
                 <div className="photo-remote-navigation">
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-out')} aria-label="Zoom out on TV" data-testid="button-phone-photo-zoom-out">−</button>
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-reset')} aria-label="Fit photo on TV" data-testid="button-phone-photo-zoom-reset">Fit</button>
@@ -1309,6 +1577,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
+            {mediaKind === 'video' && <p className="support-note">Instant playback needs a stream-ready H.264/AAC fragmented MP4. Other formats are stopped early with a warning.</p>}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
