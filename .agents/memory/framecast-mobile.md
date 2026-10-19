@@ -13,9 +13,9 @@ Keep phone media on a direct local-device transport; do not require an entire lo
 
 For the phone website, do not clear a populated file input while its selected files are still needed. Browser provider-backed files can become unreadable even though their filename and size remain available.
 
-**Why:** The user repeatedly encountered Android file-permission read failures, which must not be reported as Wi-Fi or video-codec failures. A bounded in-memory snapshot of small selections reduces dependence on provider grants without saving media; loading a whole long film into RAM would be unsafe.
+**Why:** The user repeatedly encountered Android file-permission read failures, which must not be reported as Wi-Fi or video-codec failures. Bounded snapshots help photo transfers, but copying even a short video or probing its tail can force a provider to retrieve the whole file before streaming starts.
 
-**How to apply:** Keep valid picker selections alive, check file readability before negotiation, and discard unusable references with an explicit reselect action. Keep any browser snapshot temporary and bounded across the entire queue, never persisted or uploaded.
+**How to apply:** Keep valid picker selections alive. For browser live video, let the media element read the original Blob on demand: do not take an eager whole-file snapshot or run redundant head/tail probes. Confirm an actual decoded phone frame with a bounded startup wait; surface decoder, autoplay, and cloud-only file problems separately. For photo transfers, keep readability checks and any temporary snapshots bounded across the whole queue. Discard unusable references with an explicit reselect action, never persist or upload media.
 
 The user wants at least a one-minute recovery grace period when switching away from the phone app or browser, instead of treating a roughly five-second interruption as a lost connection.
 

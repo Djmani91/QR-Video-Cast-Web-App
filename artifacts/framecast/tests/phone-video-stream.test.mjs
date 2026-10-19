@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { phoneFrameGeometry, startPhoneVideoStream } from '../src/lib/phone-video-stream.ts';
+import { phoneFrameGeometry, startPhoneVideoStream, waitForPhoneVideoFrame } from '../src/lib/phone-video-stream.ts';
 
 function setup() {
   const original = { document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame };
@@ -119,4 +119,38 @@ test('disconnect releases the single frame and both outgoing tracks', async () =
     assert.equal(f.video.paused, true);
     assert.ok(f.events.some(event => event[0] === 'suspend'));
   } finally { f.restore(); }
+});
+
+test('phone startup requires a decoded picture, not just resolved audio playback', async () => {
+  const video = Object.assign(new EventTarget(), { readyState: 2, videoWidth: 0, videoHeight: 0 });
+  let resolved = false;
+  const ready = waitForPhoneVideoFrame(video, Promise.resolve(), new AbortController().signal).then(() => { resolved = true; });
+  await Promise.resolve();
+  assert.equal(resolved, false);
+  video.videoWidth = 1920;
+  video.videoHeight = 1080;
+  video.dispatchEvent(new Event('resize'));
+  await ready;
+  assert.equal(resolved, true);
+});
+
+test('a phone decoder that never opens a frame gets bounded, actionable cloud-file guidance', async () => {
+  const video = Object.assign(new EventTarget(), { readyState: 0, videoWidth: 0, videoHeight: 0 });
+  await assert.rejects(waitForPhoneVideoFrame(video, new Promise(() => {}), new AbortController().signal, 5), /download it onto the phone first/i);
+});
+
+test('an unsupported phone codec is reported immediately, not as a Wi-Fi or MP4-index error', async () => {
+  const video = Object.assign(new EventTarget(), { readyState: 0, videoWidth: 0, videoHeight: 0, error: null });
+  const ready = waitForPhoneVideoFrame(video, new Promise(() => {}), new AbortController().signal);
+  video.error = { code: 4 };
+  video.dispatchEvent(new Event('error'));
+  await assert.rejects(ready, /phone browser could not decode/i);
+});
+
+test('disconnect cancels a pending phone startup and its deadline', async () => {
+  const video = Object.assign(new EventTarget(), { readyState: 0, videoWidth: 0, videoHeight: 0 });
+  const controller = new AbortController();
+  const ready = waitForPhoneVideoFrame(video, new Promise(() => {}), controller.signal);
+  controller.abort();
+  await assert.rejects(ready, { name: 'AbortError' });
 });

@@ -35,6 +35,12 @@ The user reports that TV-side Rotate can produce a black picture while audio con
 
 **How to apply:** For phone-browser files, rotate and crop on the phone with a stable outgoing media track, rather than changing the TV video surface. Relay seek/play/pause/Rotate/Fill commands to the phone's source file; the receiving live video's clock is not the file timeline. Keep phone preview mute separate from TV audio. Confirm decoded video dimensions before reporting TV playback.
 
+Do not treat a fullscreen API call returning without an exception as proof that fullscreen was entered. Some native file-player APIs can silently do nothing for a WebRTC stream.
+
+**Why:** The user reports browser chrome still visible and no automatic fullscreen after the live-video change.
+
+**How to apply:** Prefer video-element fullscreen for live streams, retain native-player priority for ordinary files, and verify document/native fullscreen flags. Keep a separate fullscreen permission button visible while not fullscreen, outside the five-second controls timeout. Chrome can require a real click or TV-remote gesture on the receiving screen.
+
 Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
 
 **Why:** Loading and fullscreen transitions can temporarily clear intrinsic dimensions. Treating that as zero rotation can re-enable the TV's native overlay and bypass the intended correction, even when the original file's rotation metadata is correct.
