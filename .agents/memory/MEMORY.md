@@ -1,2 +1,3 @@
 - [FrameCast privacy](framecast-privacy.md) — video must remain peer-to-peer; do not persist user data or media.
 - [Samsung TV target](framecast-samsung.md) — start with Samsung's built-in browser, not a native Tizen app.
+- [FrameCast native companion](framecast-mobile.md) — iOS/Android should be a native companion and needs a custom WebRTC build, not Expo Go.

@@ -190,6 +190,12 @@
 .dropzone span { display: block; color: hsl(var(--muted-foreground)); font-size: 12px; margin-top: 5px; }
 .hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .video-preview { display: block; width: 100%; max-height: 300px; object-fit: contain; border-radius: 15px; background: #18211d; }
+.image-preview { display: block; width: 100%; max-height: 300px; object-fit: contain; border-radius: 15px; background: #18211d; }
+.tv-transfer-status { position: fixed; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: #f4f1e8; background: #101713; text-align: center; }
+.tv-transfer-status strong { font: 600 24px var(--app-font-sans); }
+.tv-transfer-status span:last-child { color: rgba(244, 241, 232, .72); font: 14px var(--app-font-sans); }
+.tv-transfer-spinner { width: 34px; height: 34px; border: 3px solid rgba(244, 241, 232, .25); border-top-color: #f4f1e8; border-radius: 50%; animation: tv-spin .8s linear infinite; }
+@keyframes tv-spin { to { transform: rotate(360deg); } }
 .file-details { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin: 12px 2px 18px; font-size: 12px; }
 .file-details strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-details span { color: hsl(var(--muted-foreground)); white-space: nowrap; font-family: var(--app-font-mono); font-size: 11px; }
@@ -261,6 +267,18 @@
 .tv-immersive-playback .pair-card .video-preview {
   position: absolute;
   inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  border-radius: 0;
+  background: #000;
+  object-fit: contain;
+}
+.tv-immersive-playback .pair-card .image-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   width: 100vw;
   height: 100vh;
   height: 100dvh;

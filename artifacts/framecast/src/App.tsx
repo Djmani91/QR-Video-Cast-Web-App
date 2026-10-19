@@ -217,6 +217,10 @@ function TvPage() {
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
+  const mediaObjectUrlRef = useRef('');
+  const mediaTransferRef = useRef<{ mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[] } | null>(null);
+  const [receivedImageUrl, setReceivedImageUrl] = useState('');
+  const [transferProgress, setTransferProgress] = useState<number | null>(null);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
   const roomId = room?.id ?? '';
@@ -236,7 +240,16 @@ function TvPage() {
     peerRef.current?.getReceivers().forEach((receiver) => receiver.track?.stop());
     peerRef.current?.close();
     peerRef.current = null;
-    if (videoRef.current) videoRef.current.srcObject = null;
+    mediaTransferRef.current = null;
+    setTransferProgress(null);
+    setReceivedImageUrl('');
+    if (mediaObjectUrlRef.current) URL.revokeObjectURL(mediaObjectUrlRef.current);
+    mediaObjectUrlRef.current = '';
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+      videoRef.current.removeAttribute('src');
+      videoRef.current.load();
+    }
   }, []);
 
   useEffect(() => () => stopPeer(), [stopPeer]);
@@ -297,7 +310,95 @@ function TvPage() {
             const peer = new RTCPeerConnection(rtcConfig);
             peerRef.current = peer;
             peer.ondatachannel = (event) => {
-              controlChannelRef.current = event.channel;
+              const channel = event.channel;
+              if (channel.label === 'framecast-media') {
+                channel.binaryType = 'arraybuffer';
+                channel.onmessage = (message) => {
+                  if (typeof message.data === 'string') {
+                    let packet: { framecast?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                    try {
+                      packet = JSON.parse(message.data) as { framecast?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                    } catch {
+                      setError('The phone sent an unreadable media transfer message.');
+                      return;
+                    }
+                    if (packet.framecast === 'metadata') {
+                      if (!packet.size || packet.size > 256 * 1024 * 1024 || !packet.mimeType) {
+                        setError('This file is too large or has an unsupported format.');
+                        channel.close();
+                        return;
+                      }
+                      mediaTransferRef.current = {
+                        mimeType: packet.mimeType,
+                        kind: packet.kind === 'image' ? 'image' : 'video',
+                        size: packet.size,
+                        received: 0,
+                        chunks: [],
+                      };
+                      setMediaKind(packet.kind === 'image' ? 'image' : 'video');
+                      setTransferProgress(0);
+                      return;
+                    }
+                    if (packet.framecast === 'complete') {
+                      const transfer = mediaTransferRef.current;
+                      if (!transfer || transfer.received !== transfer.size) {
+                        setError('The media transfer was incomplete. Send the file again.');
+                        return;
+                      }
+                      const url = URL.createObjectURL(new Blob(transfer.chunks, { type: transfer.mimeType }));
+                      if (mediaObjectUrlRef.current) URL.revokeObjectURL(mediaObjectUrlRef.current);
+                      mediaObjectUrlRef.current = url;
+                      if (transfer.kind === 'image') {
+                        if (videoRef.current) {
+                          videoRef.current.srcObject = null;
+                          videoRef.current.removeAttribute('src');
+                          videoRef.current.load();
+                        }
+                        setReceivedImageUrl(url);
+                        if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received' }));
+                      } else if (videoRef.current) {
+                        setReceivedImageUrl('');
+                        videoRef.current.srcObject = null;
+                        videoRef.current.src = url;
+                        videoRef.current.load();
+                        void videoRef.current.play().then(() => {
+                          setPlaying(true);
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received' }));
+                        }).catch(() => {
+                          setPlaying(false);
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received' }));
+                        });
+                      }
+                      mediaTransferRef.current = null;
+                      setTransferProgress(100);
+                    }
+                    return;
+                  }
+                  const transfer = mediaTransferRef.current;
+                  if (!transfer) return;
+                  if (!(message.data instanceof ArrayBuffer)) return;
+                  transfer.chunks.push(message.data);
+                  transfer.received += message.data.byteLength;
+                  if (transfer.size > 0) {
+                    setTransferProgress(Math.min(99, Math.round((transfer.received / transfer.size) * 100)));
+                  }
+                };
+              } else {
+                controlChannelRef.current = channel;
+                channel.onmessage = (message) => {
+                  if (message.data === 'pause' && videoRef.current) {
+                    videoRef.current.pause();
+                    setPlaying(false);
+                  } else if (message.data === 'play' && videoRef.current) {
+                    void videoRef.current.play().catch(() => setPlaying(false));
+                    setPlaying(true);
+                  } else if (message.data === 'stop' && videoRef.current) {
+                    videoRef.current.pause();
+                    videoRef.current.currentTime = 0;
+                    setPlaying(false);
+                  }
+                };
+              }
             };
             peer.ontrack = (event) => {
               if (videoRef.current) {
@@ -391,13 +492,23 @@ function TvPage() {
             </div>
             <video
               ref={videoRef}
-              className={status === 'connected' ? 'video-preview' : 'sr-only'}
+              className={status === 'connected' && (transferProgress === null || (mediaKind === 'video' && transferProgress >= 100)) ? 'video-preview' : 'sr-only'}
               autoPlay
               playsInline
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
             />
+            {status === 'connected' && mediaKind === 'image' && receivedImageUrl && (
+              <img className="image-preview" src={receivedImageUrl} alt="Photo shared from the guest phone" />
+            )}
+            {status === 'connected' && transferProgress !== null && transferProgress < 100 && (
+              <div className="tv-transfer-status" role="status" data-testid="status-tv-transfer">
+                <span className="tv-transfer-spinner" />
+                <strong>Receiving {mediaKind === 'image' ? 'photo' : 'video'}</strong>
+                <span>{transferProgress}% · keep your devices awake</span>
+              </div>
+            )}
             {status !== 'connected' && (
               <div className="qr-frame" data-testid="status-pairing-code" aria-label={room ? 'Scan the QR code to pair your phone' : 'Pairing code not created'}>
                 {room && !roomExpired
@@ -405,7 +516,7 @@ function TvPage() {
                   : <div className="qr-empty"><Smartphone size={28} /><span>{roomExpired ? 'This pairing code has expired' : 'Your pairing code will appear here'}</span></div>}
               </div>
             )}
-              <p className="pair-prompt">{status === 'connected' ? `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
+              <p className="pair-prompt">{status === 'connected' ? transferProgress !== null && transferProgress < 100 ? 'Receiving directly from the phone. Playback starts when the transfer is complete.' : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
             {!room || status === 'failed' || roomExpired ? (
               <button type="button" className="button-primary" onClick={startRoom} disabled={creatingRoom} data-testid="button-create-room">
                 {creatingRoom ? <RefreshCw size={16} className="animate-spin" /> : status === 'failed' || roomExpired ? <RefreshCw size={16} /> : <ArrowUpRight size={16} />}

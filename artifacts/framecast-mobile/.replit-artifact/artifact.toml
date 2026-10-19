@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/framecast-mobile/"
+title = "FrameCast Mobile"
+description = "A native iOS and Android companion for pairing with the FrameCast TV browser, selecting media, and sending it directly to the TV over a peer-to-peer connection."
+version = "1.0.0"
+id = "artifacts/framecast-mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/framecast-mobile/" ]
+localPort = 25062
+
+[services.development]
+run = "pnpm --filter @workspace/framecast-mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/framecast-mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/framecast-mobile", "run", "serve" ]
+
+[services.env]
+PORT = "25062"
+BASE_PATH = "/framecast-mobile/"
