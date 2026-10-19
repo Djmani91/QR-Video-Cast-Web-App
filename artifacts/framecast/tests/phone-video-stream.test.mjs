@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { phoneFrameGeometry, startPhoneVideoStream, waitForPhoneVideoFrame } from '../src/lib/phone-video-stream.ts';
 
-function setup({ decoderClock = false } = {}) {
+function setup({ decoderClock = false, manualFrames = true, zeroRejected = false } = {}) {
   const original = { document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame };
   const frames = new Map();
   let id = 0;
@@ -11,12 +11,21 @@ function setup({ decoderClock = false } = {}) {
   const track = kind => ({ kind, stopped: false, stop() { this.stopped = true; } });
   const videoTrack = track('video');
   videoTrack.contentHint = '';
+  if (manualFrames) videoTrack.requestFrame = () => events.push(['request-frame']);
   const audioTrack = track('audio');
   const tracks = [videoTrack];
   const output = { getTracks: () => tracks, getVideoTracks: () => [videoTrack], addTrack: item => tracks.push(item) };
   const context = Object.fromEntries(['save', 'restore', 'setTransform', 'fillRect', 'translate', 'rotate', 'drawImage']
     .map(name => [name, (...args) => calls.push([name, ...args])]));
-  const canvas = { width: 0, height: 0, getContext: () => context, captureStream: fps => { events.push(['capture', fps]); return output; } };
+  const canvas = { width: 0, height: 0, getContext: () => context, captureStream: fps => {
+    events.push(['capture', fps]);
+    if (zeroRejected && fps === 0) throw Error('Zero-fps capture unsupported');
+    if (!manualFrames && fps === 0) {
+      const probe = track('video');
+      return { getTracks: () => [probe], getVideoTracks: () => [probe] };
+    }
+    return output;
+  } };
   globalThis.document = { createElement: tag => { assert.equal(tag, 'canvas'); return canvas; } };
   globalThis.requestAnimationFrame = fn => { events.push(['raf']); frames.set(++id, fn); return id; };
   globalThis.cancelAnimationFrame = handle => frames.delete(handle);
@@ -47,10 +56,10 @@ function setup({ decoderClock = false } = {}) {
   const live = startPhoneVideoStream(video, graph, { previewMuted: true, onState: state => states.push(state), onError: message => errors.push(message) });
   return {
     live, video, canvas, calls, events, monitor, states, errors, tracks, frames,
-    step(now) {
+    step(now, mediaTime = now / 1000) {
       const pending = [...frames.values()];
       frames.clear();
-      for (const callback of pending) callback(now, { mediaTime: now / 1000 });
+      for (const callback of pending) callback(now, { mediaTime });
     },
     restore() { live.stop(); for (const [key, value] of Object.entries(original)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; } },
   };
@@ -180,7 +189,7 @@ test('60Hz fallback delivers thirty evenly spaced pictures per second, not twent
     }
     assert.equal(draws.length, 30);
     assert.ok(draws.slice(1).every((tick, index) => tick - draws[index] === 2));
-    assert.equal(f.events.find(event => event[0] === 'capture')[1], 30);
+    assert.equal(f.events.find(event => event[0] === 'capture')[1], 0);
     assert.equal(f.tracks[0].contentHint, 'motion');
   } finally { f.restore(); }
 });
@@ -212,7 +221,7 @@ test('paused video avoids re-encoding the same picture over and over', async () 
   } finally { f.restore(); }
 });
 
-test('HD dimensions arriving after startup produce a Full HD canvas without 4K phone processing', async () => {
+test('4K dimensions start at HD and can upgrade to bounded Full HD without replacing tracks', async () => {
   const f = setup();
   try {
     await f.live.ready;
@@ -220,11 +229,91 @@ test('HD dimensions arriving after startup produce a Full HD canvas without 4K p
     f.video.videoWidth = 3840;
     f.video.videoHeight = 2160;
     f.video.dispatchEvent(new Event('loadeddata'));
+    assert.equal(f.canvas.height, 720);
+    f.live.setResolutionCeiling(1080);
     assert.equal(f.canvas.width, 1920);
     assert.equal(f.canvas.height, 1080);
-    assert.equal(f.live.profile().maxBitrate, 8_000_000);
+    assert.equal(f.live.profile().maxBitrate, 6_000_000);
     assert.deepEqual(f.calls.filter(call => call[0] === 'drawImage').at(-1).slice(-2), [1920, 1080]);
     assert.deepEqual(f.live.stream.getTracks(), originalTracks);
+  } finally { f.restore(); }
+});
+
+test('decoded timestamps preserve every 30fps picture despite jittery JS callback delivery', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    f.calls.length = 0;
+    f.events.length = 0;
+    const delivery = [0, 35, 62, 113, 114, 170];
+    delivery.forEach((now, index) => f.step(now, index / 30));
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, delivery.length);
+    assert.equal(f.events.filter(event => event[0] === 'request-frame').length, delivery.length);
+  } finally { f.restore(); }
+});
+
+test('backward seeks reset the decoder clock rather than freezing until the old timestamp', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    f.step(1000, 1);
+    f.video.currentTime = 0;
+    f.video.dispatchEvent(new Event('seeked'));
+    f.calls.length = 0;
+    f.step(1016, 1 / 30);
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, 1);
+  } finally { f.restore(); }
+});
+
+test('ordinary variable-rate phone timestamps do not cause false skipped pictures', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    f.calls.length = 0;
+    const timestamps = [0, 0.031, 0.067, 0.099, 0.134, 0.166, 0.201];
+    timestamps.forEach((pts, index) => f.step(index * 35, pts));
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, timestamps.length);
+  } finally { f.restore(); }
+});
+
+test('a 60fps decoded source is capped evenly at thirty captured pictures', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    f.calls.length = 0;
+    const drawnAt = [];
+    for (let i = 0; i < 60; i++) {
+      const before = f.calls.filter(call => call[0] === 'drawImage').length;
+      f.step(i * 1000 / 60, i / 60);
+      if (f.calls.filter(call => call[0] === 'drawImage').length > before) drawnAt.push(i);
+    }
+    assert.equal(drawnAt.length, 30);
+    assert.ok(drawnAt.slice(1).every((value, index) => value - drawnAt[index] === 2));
+  } finally { f.restore(); }
+});
+
+test('a browser rejecting zero-fps capture retains its working automatic stream', async () => {
+  const f = setup({ decoderClock: true, zeroRejected: true });
+  try {
+    await f.live.ready;
+    assert.deepEqual(f.events.filter(event => event[0] === 'capture').map(event => event[1]), [0, 30]);
+    assert.ok(f.tracks.every(track => !track.stopped));
+  } finally { f.restore(); }
+});
+
+test('older capture implementations retain automatic frames instead of a silent zero-fps stream', async () => {
+  const f = setup({ decoderClock: true, manualFrames: false });
+  try {
+    await f.live.ready;
+    assert.deepEqual(f.events.filter(event => event[0] === 'capture').map(event => event[1]), [0, 30]);
+    assert.ok(f.tracks.every(track => !track.stopped));
+    await f.live.command('play');
+    f.step(100, 0.1);
+    assert.ok(f.calls.some(call => call[0] === 'drawImage'));
   } finally { f.restore(); }
 });
 

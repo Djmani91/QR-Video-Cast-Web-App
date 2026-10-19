@@ -82,13 +82,26 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   onError: (message: string) => void;
 }) {
   const canvas = document.createElement('canvas');
-  let profile = phoneStreamProfile(video.videoWidth, video.videoHeight);
+  // Begin at HD, not at a phone's most expensive canvas/encoder setting.
+  // The health monitor can enable Full HD after sustained smooth delivery.
+  let resolutionCeiling = 720;
+  let profile = phoneStreamProfile(video.videoWidth, video.videoHeight, resolutionCeiling);
   canvas.width = profile.width;
   canvas.height = profile.height;
   if (typeof canvas.captureStream !== 'function') throw new Error('This phone browser cannot send an upright video stream. Please use a current Chrome or Safari browser.');
   const context = canvas.getContext('2d', { alpha: false });
   if (!context) throw new Error('This phone browser could not open its video correction engine.');
-  const output = canvas.captureStream(profile.frameRate);
+  let output: MediaStream;
+  let manualCapture = true;
+  try { output = canvas.captureStream(0); }
+  catch { manualCapture = false; output = canvas.captureStream(profile.frameRate); }
+  let captureTrack = manualCapture ? output.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined : undefined;
+  if (manualCapture && typeof captureTrack?.requestFrame !== 'function') {
+    // Older Safari supports canvas capture, but not explicit frame requests.
+    for (const track of output.getTracks()) track.stop();
+    output = canvas.captureStream(profile.frameRate);
+    captureTrack = undefined;
+  }
   for (const track of output.getVideoTracks?.() ?? []) {
     if ('contentHint' in track) track.contentHint = 'motion';
   }
@@ -116,6 +129,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
     && typeof video.cancelVideoFrameCallback === 'function';
   let lastDraw = -Infinity;
   let lastState = -Infinity;
+  let drawnFrames = 0;
   const state = (): PhoneVideoState => ({
     currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
     duration: Number.isFinite(video.duration) ? video.duration : 0,
@@ -124,7 +138,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   function emit() { if (!stopped) options.onState(state()); }
   function paint() {
     if (stopped || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-    profile = phoneStreamProfile(video.videoWidth, video.videoHeight);
+    profile = phoneStreamProfile(video.videoWidth, video.videoHeight, resolutionCeiling);
     if (canvas.width !== profile.width || canvas.height !== profile.height) {
       canvas.width = profile.width;
       canvas.height = profile.height;
@@ -138,6 +152,10 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
       context!.translate(canvas.width / 2, canvas.height / 2);
       context!.rotate(geometry.rotation * Math.PI / 180);
       context!.drawImage(video, -geometry.width / 2, -geometry.height / 2, geometry.width, geometry.height);
+      drawnFrames++;
+      // Capture the completed picture immediately, not on a second 30Hz timer
+      // which can sample between two decoded pictures and drop/repeat frames.
+      captureTrack?.requestFrame();
     } catch {
       stop();
       options.onError('The phone could not draw this video. Re-select the original file and try again.');
@@ -145,18 +163,24 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
       context!.restore();
     }
   }
-  function tick(now: number) {
+  function tick(now: number, mediaTime?: number) {
     if (stopped) return;
     const generation = drawingGeneration;
     const interval = 1000 / profile.frameRate;
-    if (!video.paused && !video.ended && now - lastDraw >= interval - 0.5) {
+    // Decoder timestamps preserve 24/25/29.97fps cadence even when JS callback
+    // delivery is jittery. The display-clock fallback keeps phase as before.
+    const pictureTime = Number.isFinite(mediaTime) ? mediaTime! * 1000 : now;
+    // Phone recordings are often variable-rate: a 31ms/35ms pair is still
+    // ~30fps, not a reason to throw away the slightly early decoded picture.
+    const tolerance = Number.isFinite(mediaTime) ? interval * 0.2 : 0.5;
+    if (!video.paused && !video.ended && pictureTime - lastDraw >= interval - tolerance) {
       paint();
       // Preserve the clock's phase: resetting to `now` turned a 24fps target
       // into ~20fps on a 60Hz phone, causing uneven repeated/skipped frames.
-      const elapsed = now - lastDraw;
+      const elapsed = pictureTime - lastDraw;
       lastDraw = Number.isFinite(elapsed)
         ? lastDraw + Math.max(1, Math.floor((elapsed + 0.5) / interval)) * interval
-        : now;
+        : pictureTime;
     }
     if (now - lastState >= 500) { emit(); lastState = now; }
     if (generation === drawingGeneration) schedule();
@@ -164,14 +188,17 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   function schedule() {
     if (stopped) return;
     const generation = drawingGeneration;
-    const callback = (now: number) => {
-      if (generation === drawingGeneration) tick(now);
+    const callback = (now: number, metadata?: VideoFrameCallbackMetadata) => {
+      if (generation === drawingGeneration) tick(now, decoderClock ? metadata?.mediaTime : undefined);
     };
     // Draw actual decoded pictures rather than racing a second display timer.
     if (decoderClock) decoderFrame = video.requestVideoFrameCallback(callback);
     else frame = requestAnimationFrame(callback);
   }
-  function redraw() { paint(); emit(); }
+  function redraw(event?: Event) {
+    if (event?.type === 'seeked' || event?.type === 'loadeddata') lastDraw = -Infinity;
+    paint(); emit();
+  }
   const events = ['seeked', 'loadeddata', 'play', 'pause', 'ended'];
   for (const event of events) video.addEventListener(event, redraw);
   function stop() {
@@ -202,12 +229,23 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   schedule();
   return {
     stream: output, ready, state, stop, profile: () => ({ ...profile }),
+    sourceVersion: () => drawingGeneration,
+    maxHeight: () => phoneStreamProfile(video.videoWidth, video.videoHeight).height,
+    metrics: () => {
+      const quality = video.getVideoPlaybackQuality?.();
+      return { drawnFrames, droppedFrames: quality?.droppedVideoFrames ?? 0, totalFrames: quality?.totalVideoFrames ?? 0 };
+    },
+    setResolutionCeiling(height: number) {
+      resolutionCeiling = height;
+      paint();
+    },
     async replaceVideo(url: string) {
       if (stopped) return;
       sourceLoadAbort?.abort();
       const abort = new AbortController();
       sourceLoadAbort = abort;
       drawingGeneration++;
+      resolutionCeiling = 720;
       cancelAnimationFrame(frame);
       if (decoderClock) video.cancelVideoFrameCallback(decoderFrame);
       video.pause();

@@ -26,7 +26,8 @@ import { createAutoFullscreen } from './lib/auto-fullscreen';
 import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, type ScopedIceCandidate } from './lib/session-recovery';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
-import { configureVideoSender } from './lib/video-stream-quality';
+import { configureVideoSender, preferHardwareVideoCodec } from './lib/video-stream-quality';
+import { monitorVideoStream, readVideoStats, type StreamHealth } from './lib/video-stream-health';
 import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/video-playlist';
 import { VideoPlaylist } from './components/VideoPlaylist';
 import { getYouTubeVideoId } from './lib/youtube';
@@ -723,6 +724,30 @@ function TvPage() {
       volume: video.muted ? 0 : video.volume,
       fitMode: videoFitModeRef.current,
     }));
+  }, []);
+
+  useEffect(() => {
+    let active = true, busy = false;
+    let unavailableFor: RTCPeerConnection | null = null;
+    const reportDecoder = async () => {
+      const peer = peerRef.current;
+      const channel = controlChannelRef.current;
+      if (busy || !phoneRenderedVideoRef.current || !peer || peer === unavailableFor || channel?.readyState !== 'open') return;
+      busy = true;
+      try {
+        const report = await peer.getStats();
+        if (!active || peerRef.current !== peer || controlChannelRef.current !== channel || channel.readyState !== 'open') return;
+        const stats = readVideoStats(report, 'inbound');
+        if (stats) channel.send(JSON.stringify({ framecast: 'video-health', ...stats }));
+      } catch (error) {
+        if (active && peerRef.current === peer) {
+          console.warn('TV decoder statistics unavailable; playback remains active.', error);
+          unavailableFor = peer;
+        }
+      } finally { busy = false; }
+    };
+    const timer = window.setInterval(() => { void reportDecoder(); }, 2000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   const handleYouTubeReady = useCallback((player: YouTubePlayerApi) => {
@@ -2077,6 +2102,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [fullscreenNotice, setFullscreenNotice] = useState('');
   const fullscreenRequestRef = useRef<boolean | null>(null);
   const fullscreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [streamHealth, setStreamHealth] = useState<StreamHealth | null>(null);
+  const qualityMonitorRef = useRef<ReturnType<typeof monitorVideoStream> | null>(null);
   const [tvVideoFit, setTvVideoFit] = useState<'cover' | 'contain'>('cover');
   const [connectionGrace] = useState(createConnectionGrace);
   const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
@@ -2113,6 +2140,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
+    qualityMonitorRef.current?.stop();
+    qualityMonitorRef.current = null;
+    setStreamHealth(null);
     if (fullscreenTimerRef.current !== null) clearTimeout(fullscreenTimerRef.current);
     fullscreenTimerRef.current = null;
     fullscreenRequestRef.current = null;
@@ -2460,6 +2490,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
       peerRef.current = peer;
       const live = phoneVideoStreamRef.current;
       if (live) for (const track of live.stream.getTracks()) peer.addTrack(track, live.stream);
+      if (live) {
+        try { preferHardwareVideoCodec(peer); }
+        catch (error) { console.warn('Codec preference unavailable; using browser codec negotiation.', error); }
+      }
       const applyVideoQuality = () => {
         if (!live || peerRef.current !== peer) return;
         for (const sender of peer.getSenders()) {
@@ -2473,6 +2507,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
         }
       };
       applyVideoQuality();
+      if (live) {
+        qualityMonitorRef.current = monitorVideoStream(peer, live, {
+          onSample: sample => { if (peerRef.current === peer) setStreamHealth(sample); },
+          onProfileChanged: applyVideoQuality,
+        });
+      }
       let connectedOnce = false;
       const holdInterruptedConnection = () => {
         connectionGrace.hold(() => {
@@ -2493,6 +2533,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
         if (typeof event.data !== 'string') return;
         try {
           const packet = JSON.parse(event.data) as { framecast?: string; currentTime?: number; duration?: number; paused?: boolean; volume?: number; fitMode?: 'cover' | 'contain'; fullscreen?: boolean; needsGesture?: boolean };
+          if (packet.framecast === 'video-health') {
+            qualityMonitorRef.current?.receive(packet);
+            return;
+          }
           if ((packet.framecast === 'video-state' || packet.framecast === 'fullscreen-state') && typeof packet.fullscreen === 'boolean') {
             setTvFullscreen(packet.fullscreen);
             if (packet.framecast === 'fullscreen-state' || fullscreenRequestRef.current === packet.fullscreen) {
@@ -3308,7 +3352,15 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? `HD streaming targets ${phoneVideoStreamRef.current.profile().height}p at up to 30 fps. Actual quality depends on the original video, phone and Wi-Fi. Keep FrameCast visible during playback; video goes directly to the TV with no full-video upload.` : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
+            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? `Adaptive streaming targets ${phoneVideoStreamRef.current.profile().height}p at up to 30 fps, prioritizing smooth motion. Full HD is enabled when phone encoding and TV decoding stay healthy. Keep FrameCast visible; video goes directly to the TV with no full-video upload.` : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
+            {streamHealth && phoneVideoStreamRef.current && (
+              <p className="support-note" role="status" data-testid="text-stream-performance">
+                Phone encoding: {Math.round(streamHealth.encodedFps)} fps
+                {streamHealth.width > 0 && streamHealth.height > 0 ? ` at ${streamHealth.width}×${streamHealth.height}` : ''}.
+                {streamHealth.receivedFps !== null ? ` TV decoding: ${Math.round(streamHealth.receivedFps)} fps.` : ' Waiting for TV performance feedback.'}
+                {streamHealth.limitedBy ? ` Protecting smooth playback (${streamHealth.limitedBy}).` : ''}
+              </p>
+            )}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
