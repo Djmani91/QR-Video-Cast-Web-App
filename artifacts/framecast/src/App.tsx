@@ -58,6 +58,71 @@ function formatPlaybackTime(seconds: number) {
     ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
     : `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
+
+function normalizeVideoLink(input: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(input.trim());
+  } catch {
+    throw new Error('Paste a complete video or webpage link.');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('Use a link that starts with http:// or https://.');
+  }
+  return parsed.href;
+}
+
+function findVideoUrlInPage(html: string, pageUrl: string) {
+  const candidates: string[] = [];
+  for (const match of html.matchAll(/<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi)) {
+    candidates.push(match[1].replace(/&amp;/gi, '&').trim());
+  }
+  for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+    const name = tag.match(/(?:property|name)\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    if (!name || !['og:video', 'og:video:url', 'twitter:player:stream'].includes(name)) continue;
+    const content = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (content) candidates.push(content.replace(/&amp;/gi, '&').trim());
+  }
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate, pageUrl);
+      if (url.protocol === 'https:' || url.protocol === 'http:') return url.href;
+    } catch {
+      // Skip malformed source attributes.
+    }
+  }
+  return null;
+}
+
+async function resolveVideoLink(input: string) {
+  const url = normalizeVideoLink(input);
+  const parsed = new URL(url);
+  if (/\.(mp4|m4v|mov|webm|m3u8|mpd|ogv)$/i.test(parsed.pathname)) return url;
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'text/html,application/xhtml+xml,video/*,application/vnd.apple.mpegurl,*/*;q=0.8' },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`The link returned an error (${response.status}).`);
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    if (contentType.startsWith('video/') || contentType.includes('mpegurl') || contentType.includes('dash+xml')) return url;
+    if (contentType && !contentType.includes('html') && !contentType.includes('text/plain')) {
+      throw new Error('This link does not point to a video or a readable webpage.');
+    }
+    const contentLength = Number(response.headers.get('content-length') ?? 0);
+    if (contentLength > 5 * 1024 * 1024) throw new Error('This webpage is too large to inspect in the browser.');
+    const html = await response.text();
+    if (html.length > 5 * 1024 * 1024) throw new Error('This webpage is too large to inspect in the browser.');
+    const videoUrl = findVideoUrlInPage(html, url);
+    if (videoUrl) return videoUrl;
+    throw new Error('No directly playable video was found. Try a direct MP4/M3U8 link; sign-in or protected streams may not work.');
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 type Mp4TrackInfo = { codec?: string; video?: unknown; audio?: unknown };
 type Mp4ParserLike = {
   onReady: ((info: { isFragmented: boolean; tracks: Mp4TrackInfo[] }) => void) | null;
@@ -559,9 +624,9 @@ function TvPage() {
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
-                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean };
+                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean; url?: string };
                     try {
-                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean };
+                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean; url?: string };
                     } catch {
                       setError('The phone sent an unreadable media transfer message.');
                       return;
@@ -582,6 +647,57 @@ function TvPage() {
                         setPhotoPreviewVisible(true);
                         setTransferProgress(0);
                       }
+                      return;
+                    }
+                    if (packet.framecast === 'remote-video' && packet.url) {
+                      let videoUrl: URL;
+                      try {
+                        videoUrl = new URL(packet.url);
+                        if (videoUrl.protocol !== 'https:' && videoUrl.protocol !== 'http:') throw new Error('Unsupported URL protocol');
+                      } catch {
+                        const messageText = 'Use a video link that starts with http:// or https://.';
+                        setError(messageText);
+                        if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: messageText }));
+                        return;
+                      }
+                      const video = videoRef.current;
+                      if (!video) {
+                        const messageText = 'The TV browser could not open its video player.';
+                        setError(messageText);
+                        if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: messageText }));
+                        return;
+                      }
+                      const failRemoteVideo = (messageText: string) => {
+                        setError(messageText);
+                        setVideoStreamActive(false);
+                        if (channel.readyState === 'open') {
+                          channel.send(JSON.stringify({ framecast: 'stream-error', message: messageText }));
+                        }
+                      };
+                      setError('');
+                      setMediaKind('video');
+                      setTransferProgress(100);
+                      setPhotoPreviewVisible(false);
+                      setPlaying(false);
+                      setVideoStreamActive(true);
+                      video.pause();
+                      video.srcObject = null;
+                      video.removeAttribute('src');
+                      video.muted = true;
+                      video.src = videoUrl.href;
+                      video.addEventListener('error', () => {
+                        failRemoteVideo('The TV could not load this video link. The source may block TV playback or require sign-in.');
+                      }, { once: true });
+                      video.addEventListener('canplay', () => {
+                        void video.play().then(() => {
+                          setPlaying(true);
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                        }).catch(() => {
+                          setError('The TV browser needs a tap to start this video. Use the Play button on the TV screen.');
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                        });
+                      }, { once: true });
+                      video.load();
                       return;
                     }
                     if (packet.framecast === 'metadata') {
@@ -957,8 +1073,8 @@ function TvPage() {
           <section className="hero-copy">
             <span className="eyebrow">A better way to share the big screen</span>
             <h1 className="hero-title">Your photos &amp; videos.<br /><em>The big screen.</em></h1>
-            <p className="hero-intro">Send a photo or video from your phone to this TV browser. No account or video upload needed.</p>
-            <div className="trust-line"><ShieldCheck size={17} /> Your files stay on your phone. Content travels directly to this screen.</div>
+            <p className="hero-intro">Send a photo or video from your phone, or open a video link on this TV browser. No account or media upload needed.</p>
+            <div className="trust-line"><ShieldCheck size={17} /> Phone files go directly to this screen. Video links are fetched by the TV from their source.</div>
           </section>
 
           <section className="pair-card" aria-label="TV pairing and playback">
@@ -1090,7 +1206,7 @@ function TvPage() {
           </section>
           <aside className="privacy-note">
             <LockKeyhole size={18} />
-              <div><strong>Same Wi-Fi, direct connection.</strong><p>Both devices need to be on the same Wi-Fi network. The room stays active while in use and expires after 4 hours without activity. Photos and videos travel directly between devices.</p></div>
+              <div><strong>Private media transfer.</strong><p>Phone files travel directly to the TV. For a video link, the TV requests media from its original site. FrameCast does not store or relay media. The room expires after 4 hours without activity.</p></div>
           </aside>
         </div>
       </main>
@@ -1111,6 +1227,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
   });
   const [file, setFile] = useState<File | null>(null);
   const [fileQueue, setFileQueue] = useState<File[]>([]);
+  const [videoLink, setVideoLink] = useState('');
+  const [videoLinkError, setVideoLinkError] = useState('');
+  const [checkingVideoLink, setCheckingVideoLink] = useState(false);
+  const [isUrlPlayback, setIsUrlPlayback] = useState(false);
   const [queueIndex, setQueueIndex] = useState(0);
   const [sentQueueCount, setSentQueueCount] = useState(0);
   const [mediaKind, setMediaKind] = useState<MediaKind | null>(null);
@@ -1128,6 +1248,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const mediaChannelRef = useRef<RTCDataChannel | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const transferRunRef = useRef(0);
+  const urlCastActiveRef = useRef(false);
   const transferCompleteRef = useRef(false);
   const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
   const videoStreamingRef = useRef(false);
@@ -1140,6 +1261,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const stopPeer = useCallback((sendClose = false) => {
     transferRunRef.current += 1;
     transferCompleteRef.current = true;
+    urlCastActiveRef.current = false;
     videoStreamingRef.current = false;
     setVideoStreaming(false);
     setRemoteVideoState({ currentTime: 0, duration: 0, paused: true, volume: 0 });
@@ -1196,6 +1318,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
         }
       } else if (signal.type === 'close') {
         stopPeer();
+        setIsUrlPlayback(false);
         if (signal.payload.reason === 'new-room') {
           setLocation('/connect');
           return;
@@ -1242,6 +1365,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
       return;
     }
     stopPeer(Boolean(peerRef.current));
+    setIsUrlPlayback(false);
+    urlCastActiveRef.current = false;
+    setVideoLinkError('');
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     const nextUrl = URL.createObjectURL(chosen[0]);
     fileQueueRef.current = chosen;
@@ -1259,13 +1385,22 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setError('');
   };
 
-  const connect = async () => {
-    const queuedFiles = fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
-    if (!queuedFiles.length || !mediaKind) {
+  const connect = async (remoteUrl?: string) => {
+    const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
+    const queuedFiles = castUrl ? [] : fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
+    if (!castUrl && (!queuedFiles.length || !mediaKind)) {
       setError('Choose photos or a video first, then connect to the TV.');
       return;
     }
-    for (const selected of queuedFiles) {
+    if (castUrl) {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setFile(null);
+      setFileQueue([]);
+      fileQueueRef.current = [];
+      setObjectUrl('');
+      setMediaKind('video');
+    }
+    for (const selected of castUrl ? [] : queuedFiles) {
       if (selected.size <= 0) {
         setError('One of the selected files is empty. Choose it again and retry.');
         return;
@@ -1280,11 +1415,13 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setStatus('connecting');
     setProgress(0);
     setSentToTv(false);
+    setIsUrlPlayback(Boolean(castUrl));
     videoStreamingRef.current = false;
     setVideoStreaming(false);
     setQueueIndex(0);
     setSentQueueCount(0);
     stopPeer();
+    urlCastActiveRef.current = Boolean(castUrl);
     queuedCandidates.current = [];
     transferCompleteRef.current = false;
     const transferRun = transferRunRef.current;
@@ -1320,6 +1457,11 @@ function PhonePage({ roomId }: { roomId?: string }) {
           if (packet.framecast === 'streaming') {
             videoStreamingRef.current = true;
             setVideoStreaming(true);
+            if (urlCastActiveRef.current) {
+              transferCompleteRef.current = true;
+              setProgress(100);
+              setSentToTv(true);
+            }
           }
           if (packet.framecast === 'stream-error') {
             setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
@@ -1344,6 +1486,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
         setStatus('connected');
         void (async () => {
           try {
+            if (castUrl) {
+              mediaChannel.send(JSON.stringify({ framecast: 'remote-video', url: castUrl }));
+              return;
+            }
             for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
               const selected = queuedFiles[index];
@@ -1478,12 +1624,41 @@ function PhonePage({ roomId }: { roomId?: string }) {
       if (transferRun !== transferRunRef.current) return;
       await peer.setLocalDescription(offer);
       if (transferRun !== transferRunRef.current) return;
-      send('phone', 'offer', { type: offer.type, sdp: offer.sdp, mediaKind, transport: 'data-channel' });
+      send('phone', 'offer', { type: offer.type, sdp: offer.sdp, mediaKind: castUrl ? 'video' : mediaKind, transport: 'data-channel' });
     } catch (connectionError) {
       if (transferRun !== transferRunRef.current) return;
       stopPeer();
       setStatus('failed');
       setError(connectionError instanceof Error ? connectionError.message : 'Could not start a direct connection to the TV.');
+    }
+  };
+
+  const castVideoLink = async () => {
+    setVideoLinkError('');
+    setCheckingVideoLink(true);
+    try {
+      const resolvedUrl = await resolveVideoLink(videoLink);
+      await connect(resolvedUrl);
+    } catch (linkError) {
+      setVideoLinkError(linkError instanceof TypeError
+        ? 'This browser could not inspect that webpage. Try a direct video link, or use the native FrameCast app.'
+        : linkError instanceof Error && linkError.name === 'AbortError'
+          ? 'The webpage took too long to check. Try a direct video link.'
+          : linkError instanceof Error ? linkError.message : 'Could not find a playable video at that link.');
+    } finally {
+      setCheckingVideoLink(false);
+    }
+  };
+
+  const castVideoLinkDirectly = async () => {
+    setVideoLinkError('');
+    setCheckingVideoLink(true);
+    try {
+      await connect(normalizeVideoLink(videoLink));
+    } catch (linkError) {
+      setVideoLinkError(linkError instanceof Error ? linkError.message : 'Paste a complete video link.');
+    } finally {
+      setCheckingVideoLink(false);
     }
   };
 
@@ -1505,6 +1680,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
 
   const disconnect = () => {
     stopPeer(true);
+    setIsUrlPlayback(false);
+    urlCastActiveRef.current = false;
     fileQueueRef.current = [];
     setFileQueue([]);
     setFile(null);
@@ -1547,7 +1724,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
           <div className="phone-heading">
             <span className="eyebrow">You’re joining a FrameCast screen</span>
             <h1>Send it to the TV.</h1>
-          <p>Select up to 30 photos at once, or choose one video. Files go directly to the TV and stay on this phone. Keep both devices on the same Wi-Fi network.</p>
+          <p>Select photos or a video stored on this phone, or paste a video link. Local files go directly to the TV; for a link, the TV opens the source itself.</p>
           </div>
           <div className="phone-card">
             {file && objectUrl ? (
@@ -1596,6 +1773,39 @@ function PhonePage({ roomId }: { roomId?: string }) {
               aria-label="Choose up to 30 photos or one video"
               data-testid="input-content-file"
             />
+            <div className="video-link-card" data-testid="video-link-card">
+              <label htmlFor="video-link-input">Or paste a video or webpage link</label>
+              <div className="video-link-actions">
+                <input
+                  id="video-link-input"
+                  type="url"
+                  value={videoLink}
+                  onChange={(event) => {
+                    setVideoLink(event.currentTarget.value);
+                    setVideoLinkError('');
+                  }}
+                  placeholder="https://example.com/video.mp4"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  aria-label="Video or webpage link"
+                  data-testid="input-video-link"
+                />
+                <button
+                  type="button"
+                  className="button-primary"
+                  onClick={() => void castVideoLink()}
+                  disabled={!videoLink.trim() || checkingVideoLink || status === 'connecting'}
+                  data-testid="button-play-video-link"
+                >
+                  {checkingVideoLink ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
+                  {checkingVideoLink ? 'Finding video…' : 'Find and play'}
+                </button>
+              </div>
+              <p className="video-link-help">Direct MP4/M3U8 links work best. Webpage detection depends on the site allowing inspection; sign-in and protected streams may not work.</p>
+              {videoLinkError && <p className="video-link-error" role="alert" data-testid="text-video-link-error">{videoLinkError}</p>}
+              {videoLinkError && <button type="button" className="button-secondary video-link-direct" onClick={() => void castVideoLinkDirectly()} disabled={!videoLink.trim() || checkingVideoLink} data-testid="button-try-video-link-direct">Try this link directly</button>}
+            </div>
             {file && status === 'connected' && (
               <div className="status-row" aria-label={`Transfer progress ${Math.round(progress)} percent`} data-testid="status-video-progress">
                 <span className="status-dot live" />
@@ -1610,9 +1820,15 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 </span>
               </div>
             )}
+            {isUrlPlayback && status === 'connected' && (
+              <div className="status-row" role="status" data-testid="status-video-link">
+                <span className="status-dot live" />
+                <span className="status-text">{sentToTv ? 'The TV is streaming directly from the link.' : 'Opening the video source on the TV…'}</span>
+              </div>
+            )}
             <div className="phone-actions">
               {file && (
-                <button type="button" className="button-primary" onClick={connect} disabled={status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
+                <button type="button" className="button-primary" onClick={() => void connect()} disabled={status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
                   {status === 'connecting' ? <RefreshCw size={16} className="animate-spin" /> : status === 'connected' ? <Check size={16} /> : <ArrowUpRight size={16} />}
                   {status === 'connecting'
                     ? 'Connecting…'
@@ -1693,7 +1909,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
           </div>
-          <div className="phone-footer"><LockKeyhole size={14} /> Photos and videos are never uploaded. Pairing stays active while in use and expires after 4 hours without activity.</div>
+          <div className="phone-footer"><LockKeyhole size={14} /> Phone files are never uploaded. For a link, the TV fetches from the original site. Pairing expires after 4 hours without activity.</div>
         </section>
       </main>
     </div>

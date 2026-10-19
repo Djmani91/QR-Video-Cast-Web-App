@@ -152,6 +152,71 @@ function formatPlaybackTime(seconds: number) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`;
 }
 
+function normalizeVideoLink(input: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(input.trim());
+  } catch {
+    throw new Error('Paste a complete video or webpage link.');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('Use a link that starts with http:// or https://.');
+  }
+  return parsed.href;
+}
+
+function findVideoUrlInPage(html: string, pageUrl: string) {
+  const candidates: string[] = [];
+  for (const match of html.matchAll(/<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi)) {
+    candidates.push(match[1].replace(/&amp;/gi, '&').trim());
+  }
+  for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+    const name = tag.match(/(?:property|name)\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    if (!name || !['og:video', 'og:video:url', 'twitter:player:stream'].includes(name)) continue;
+    const content = tag.match(/\bcontent\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (content) candidates.push(content.replace(/&amp;/gi, '&').trim());
+  }
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate, pageUrl);
+      if (url.protocol === 'https:' || url.protocol === 'http:') return url.href;
+    } catch {
+      // Skip malformed source attributes.
+    }
+  }
+  return null;
+}
+
+async function resolveVideoLink(input: string) {
+  const url = normalizeVideoLink(input);
+  const parsed = new URL(url);
+  if (/\.(mp4|m4v|mov|webm|m3u8|mpd|ogv)$/i.test(parsed.pathname)) return url;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: 'text/html,application/xhtml+xml,video/*,application/vnd.apple.mpegurl,*/*;q=0.8' },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`The link returned an error (${response.status}).`);
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    if (contentType.startsWith('video/') || contentType.includes('mpegurl') || contentType.includes('dash+xml')) return url;
+    if (contentType && !contentType.includes('html') && !contentType.includes('text/plain')) {
+      throw new Error('This link does not point to a video or a readable webpage.');
+    }
+    const contentLength = Number(response.headers.get('content-length') ?? 0);
+    if (contentLength > 5 * 1024 * 1024) throw new Error('This webpage is too large to inspect in the app.');
+    const html = await response.text();
+    if (html.length > 5 * 1024 * 1024) throw new Error('This webpage is too large to inspect in the app.');
+    const videoUrl = findVideoUrlInPage(html, url);
+    if (videoUrl) return videoUrl;
+    throw new Error('No directly playable video was found. Try a direct MP4/M3U8 link; sign-in or protected streams may not work.');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -169,6 +234,10 @@ export default function HomeScreen() {
   const [sentQueueCount, setSentQueueCount] = useState(0);
   const [queueRunning, setQueueRunning] = useState(false);
   const [error, setError] = useState('');
+  const [videoLink, setVideoLink] = useState('');
+  const [videoLinkError, setVideoLinkError] = useState('');
+  const [checkingVideoLink, setCheckingVideoLink] = useState(false);
+  const [isUrlPlayback, setIsUrlPlayback] = useState(false);
   const [videoStreaming, setVideoStreaming] = useState(false);
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
   const [sentBytes, setSentBytes] = useState(0);
@@ -184,6 +253,7 @@ export default function HomeScreen() {
   const queueIndexRef = useRef(0);
   const queueRunningRef = useRef(false);
   const transferRunRef = useRef(0);
+  const urlCastActiveRef = useRef(false);
   const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
   const videoStreamingRef = useRef(false);
   const seenMessages = useRef(new Set<number>());
@@ -209,6 +279,7 @@ export default function HomeScreen() {
 
   const closePeer = useCallback((notifyTv = false) => {
     transferRunRef.current += 1;
+    urlCastActiveRef.current = false;
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
     videoStreamingRef.current = false;
@@ -268,6 +339,8 @@ export default function HomeScreen() {
         }
       } else if (signal.type === 'close') {
         closePeer();
+        setIsUrlPlayback(false);
+        urlCastActiveRef.current = false;
         if (signal.payload.reason === 'new-room') {
           setRoomId('');
           setSelectedMedia(null);
@@ -292,6 +365,8 @@ export default function HomeScreen() {
       return;
     }
     closePeer(Boolean(peerRef.current));
+    setIsUrlPlayback(false);
+    urlCastActiveRef.current = false;
     setRoomId(id);
     setSelectedMedia(null);
     setMediaQueue([]);
@@ -355,6 +430,9 @@ export default function HomeScreen() {
 
   const selectMedia = (queue: SelectedMedia[]) => {
     if (!queue.length) return;
+    setIsUrlPlayback(false);
+    urlCastActiveRef.current = false;
+    setVideoLinkError('');
     queueRunningRef.current = false;
     setQueueRunning(false);
     closePeer(true);
@@ -415,25 +493,68 @@ export default function HomeScreen() {
     }]);
   };
 
-  const startTransfer = async () => {
-    const queue = mediaQueueRef.current.length ? mediaQueueRef.current : selectedMedia ? [selectedMedia] : [];
-    if (!roomId || !queue.length) {
+  const castVideoLink = async () => {
+    setVideoLinkError('');
+    setCheckingVideoLink(true);
+    Keyboard.dismiss();
+    try {
+      const resolvedUrl = await resolveVideoLink(videoLink);
+      await startTransfer(resolvedUrl);
+    } catch (linkError) {
+      setVideoLinkError(linkError instanceof TypeError
+        ? 'The page could not be checked. Paste a direct video link, or try casting this link directly.'
+        : linkError instanceof Error && linkError.name === 'AbortError'
+          ? 'The webpage took too long to check. Try a direct video link.'
+          : linkError instanceof Error ? linkError.message : 'Could not find a playable video at that link.');
+    } finally {
+      setCheckingVideoLink(false);
+    }
+  };
+
+  const castVideoLinkDirectly = async () => {
+    setVideoLinkError('');
+    setCheckingVideoLink(true);
+    Keyboard.dismiss();
+    try {
+      await startTransfer(normalizeVideoLink(videoLink));
+    } catch (linkError) {
+      setVideoLinkError(linkError instanceof Error ? linkError.message : 'Paste a complete video link.');
+    } finally {
+      setCheckingVideoLink(false);
+    }
+  };
+
+  const startTransfer = async (remoteUrl?: string) => {
+    const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
+    const queue = castUrl ? [] : mediaQueueRef.current.length ? mediaQueueRef.current : selectedMedia ? [selectedMedia] : [];
+    if (!roomId || (!castUrl && !queue.length)) {
       setError('Choose photos or a video first.');
       return;
     }
+    if (castUrl) {
+      const hostname = new URL(castUrl).hostname;
+      setSelectedMedia({ uri: castUrl, name: hostname || 'Video link', mimeType: 'video/url', kind: 'video' });
+      setMediaQueue([]);
+      mediaQueueRef.current = [];
+      setIsUrlPlayback(true);
+    } else {
+      setIsUrlPlayback(false);
+    }
     setError('');
+    setVideoLinkError('');
     setStage('connecting');
     setSentBytes(0);
     setTotalBytes(0);
-    queueRunningRef.current = queue.length > 1;
+    queueRunningRef.current = !castUrl && queue.length > 1;
     setQueueRunning(queueRunningRef.current);
     setSentQueueCount(0);
     closePeer();
+    urlCastActiveRef.current = Boolean(castUrl);
     const transferRun = transferRunRef.current;
     queuedIce.current = [];
     try {
       let totalQueueBytes = 0;
-      for (const media of queue) {
+      for (const media of castUrl ? [] : queue) {
         const queuedFile = new ExpoFile(media.uri);
         const queuedSize = queuedFile.size || media.size || 0;
         if (!queuedSize) throw new Error(`Could not read “${media.name}”. Choose it again and retry.`);
@@ -461,9 +582,14 @@ export default function HomeScreen() {
           if (packet.framecast === 'streaming') {
             videoStreamingRef.current = true;
             setVideoStreaming(true);
+            if (urlCastActiveRef.current) {
+              transferComplete.current = true;
+              setStage('sent');
+            }
           }
           if (packet.framecast === 'stream-error') {
             setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
+            urlCastActiveRef.current = false;
             setStage('paired');
             closePeer();
             return;
@@ -508,6 +634,10 @@ export default function HomeScreen() {
         void (async () => {
           try {
             setStage('sending');
+            if (castUrl) {
+              mediaChannel.send(JSON.stringify({ framecast: 'remote-video', url: castUrl }));
+              return;
+            }
             for (let index = 0; index < queue.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
               const media = queue[index];
@@ -646,7 +776,7 @@ export default function HomeScreen() {
       sendSignal('offer', {
         type: offer.type,
         sdp: offer.sdp,
-        mediaKind: queue[0].kind,
+        mediaKind: castUrl ? 'video' : queue[0].kind,
         transport: 'data-channel',
       });
     } catch (transferError) {
@@ -676,6 +806,8 @@ export default function HomeScreen() {
 
   const leaveRoom = () => {
     closePeer(true);
+    setIsUrlPlayback(false);
+    urlCastActiveRef.current = false;
     setRoomId('');
     setSelectedMedia(null);
     setMediaQueue([]);
@@ -711,7 +843,7 @@ export default function HomeScreen() {
           <View style={styles.main}>
             <Text style={[styles.kicker, { color: activeColors.primary }]}>PHONE COMPANION</Text>
             <Text style={[styles.title, { color: activeColors.foreground }]}>Send it to the big screen.</Text>
-            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Pair with the FrameCast page open on your TV, then choose a photo or video.</Text>
+            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Pair with the FrameCast page open on your TV. Share photos or videos from this phone, or paste a video link for the TV to open directly.</Text>
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
               {scanning ? (
@@ -793,13 +925,15 @@ export default function HomeScreen() {
             <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
             <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>
               {stage === 'sent'
-                ? mediaQueue.length > 1
-                  ? sentQueueCount === mediaQueue.length
-                    ? `${mediaQueue.length} photos sent in order.`
-                    : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
-                  : selectedMedia?.kind === 'video' ? 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
+                ? isUrlPlayback
+                  ? 'The TV is playing directly from the video source.'
+                  : mediaQueue.length > 1
+                    ? sentQueueCount === mediaQueue.length
+                      ? `${mediaQueue.length} photos sent in order.`
+                      : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
+                    : selectedMedia?.kind === 'video' ? 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
                 : selectedMedia?.kind === 'video'
-                  ? 'Instant playback needs a stream-ready H.264/AAC fragmented MP4.'
+                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : 'Instant playback needs a stream-ready H.264/AAC fragmented MP4.'
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
@@ -861,6 +995,50 @@ export default function HomeScreen() {
                 </Pressable>
               </>
             )}
+            {stage !== 'connecting' && stage !== 'sending' && (
+              <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
+                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Play a video link</Text>
+                <TextInput
+                  value={videoLink}
+                  onChangeText={(value) => {
+                    setVideoLink(value);
+                    setVideoLinkError('');
+                  }}
+                  style={[styles.urlInput, { borderColor: activeColors.border, backgroundColor: activeColors.background, color: activeColors.foreground }]}
+                  placeholder="https://example.com/video.mp4"
+                  placeholderTextColor={activeColors.mutedForeground}
+                  keyboardType="url"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType="URL"
+                  accessibilityLabel="Video or webpage link"
+                  testID="input-video-link"
+                />
+                <Pressable
+                  onPress={() => void castVideoLink()}
+                  disabled={!videoLink.trim() || checkingVideoLink}
+                  style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !videoLink.trim() || checkingVideoLink ? 0.5 : pressed ? 0.86 : 1 }]}
+                  testID="button-play-video-link"
+                >
+                  {checkingVideoLink ? <ActivityIndicator color={activeColors.primaryForeground} /> : <Ionicons name="play-outline" size={18} color={activeColors.primaryForeground} />}
+                  <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>{checkingVideoLink ? 'Finding video…' : 'Find and play video'}</Text>
+                </Pressable>
+                {videoLinkError ? (
+                  <>
+                    <Text style={[styles.urlHelp, { color: activeColors.accent }]} accessibilityRole="alert">{videoLinkError}</Text>
+                    <Pressable
+                      style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]}
+                      onPress={() => void castVideoLinkDirectly()}
+                      disabled={!videoLink.trim() || checkingVideoLink}
+                      testID="button-try-video-link-direct"
+                    >
+                      <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Try this link directly</Text>
+                    </Pressable>
+                  </>
+                ) : null}
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>Direct MP4/M3U8 links work best. Public pages may be detected when they expose a video link; sign-in and protected streams may not work.</Text>
+              </View>
+            )}
             {selectedMedia?.kind === 'image' && stage !== 'sending' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
                 {mediaQueue.length > 1
@@ -869,7 +1047,7 @@ export default function HomeScreen() {
               </Text>
             )}
 
-            {(stage === 'sending' || stage === 'sent') && (selectedMedia?.kind === 'video' || mediaQueue.length > 1) && (
+            {(stage === 'sending' || stage === 'sent') && !isUrlPlayback && (selectedMedia?.kind === 'video' || mediaQueue.length > 1) && (
               <View style={[styles.progressTrack, { backgroundColor: activeColors.secondary }]} testID="transfer-progress">
                 <View style={[styles.progressFill, { backgroundColor: activeColors.primary, width: `${stage === 'sent' ? 100 : progress}%` }]} />
               </View>
@@ -983,7 +1161,7 @@ export default function HomeScreen() {
               </>
             )}
 
-            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && (stage !== 'sent' || mediaQueue.length > 1) && (
+            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && (stage !== 'sent' || mediaQueue.length > 1) && (
               <Pressable
                 onPress={() => void startTransfer()}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
@@ -1011,7 +1189,7 @@ export default function HomeScreen() {
         <View style={[styles.privacyNote, { borderTopColor: activeColors.border }]}>
           <Ionicons name="shield-checkmark-outline" size={18} color={activeColors.primary} />
           <Text style={[styles.privacyText, { color: activeColors.mutedForeground }]}>
-            Pairing stays active while in use and expires after 4 hours without activity. Photos and videos travel directly between devices and are not stored on the server. Keep both devices on the same Wi-Fi.
+            Pairing stays active while in use and expires after 4 hours without activity. Phone files travel directly to the TV and are not stored. For a video link, the TV requests playback from the original site.
           </Text>
         </View>
 
@@ -1042,6 +1220,7 @@ const styles = StyleSheet.create({
   title: { fontFamily: 'Inter_700Bold', fontSize: 32, lineHeight: 38, letterSpacing: -1.1 },
   subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 26 },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
+  videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },
   actionIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   scanButtonCopy: { flex: 1 },
@@ -1051,6 +1230,8 @@ const styles = StyleSheet.create({
   dividerLine: { flex: 1, height: 1 },
   dividerText: { fontFamily: 'Inter_600SemiBold', fontSize: 9, letterSpacing: 1.2 },
   codeInput: { height: 62, borderWidth: 1, borderRadius: 16, fontFamily: 'Inter_700Bold', fontSize: 25, letterSpacing: 8, textAlign: 'center', paddingLeft: 8 },
+  urlInput: { minHeight: 50, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, fontFamily: 'Inter_400Regular', fontSize: 14 },
+  urlHelp: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18 },
   primaryButton: { minHeight: 54, borderRadius: 17, marginTop: 12, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9, paddingHorizontal: 18 },
   primaryButtonText: { fontFamily: 'Inter_600SemiBold', fontSize: 15 },
   cameraFrame: { height: 275, borderRadius: 18, overflow: 'hidden' },

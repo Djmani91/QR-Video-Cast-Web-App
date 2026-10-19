@@ -183,6 +183,15 @@
 .phone-heading h1 { font: 800 clamp(36px, 8vw, 52px)/1.03 var(--app-font-serif); letter-spacing: -.06em; margin: 12px 0; }
 .phone-heading p { color: hsl(var(--muted-foreground)); font-size: 15px; line-height: 1.6; margin: 0 auto; max-width: 410px; }
 .phone-card { padding: 25px; }
+.video-link-card { margin-top: 18px; padding: 16px; border: 1px solid hsl(var(--border)); border-radius: 17px; background: hsl(var(--background) / .55); }
+.video-link-card > label { display: block; margin-bottom: 10px; color: hsl(var(--foreground)); font-size: 13px; font-weight: 700; }
+.video-link-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
+.video-link-actions input { min-width: 0; min-height: 48px; padding: 0 13px; border: 1px solid hsl(var(--border)); border-radius: 12px; background: hsl(var(--card)); color: hsl(var(--foreground)); font: 14px var(--app-font-sans); }
+.video-link-actions input:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
+.video-link-actions .button-primary { width: auto; white-space: nowrap; }
+.video-link-help { margin: 10px 0 0; color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.5; }
+.video-link-error { margin: 10px 0 0; color: hsl(0 54% 42%); font-size: 12px; line-height: 1.5; }
+.video-link-direct { width: 100%; margin-top: 9px; }
 .dropzone { border: 1.5px dashed hsl(var(--border)); border-radius: 17px; background: hsl(var(--background) / .65); padding: 25px 18px; text-align: center; cursor: pointer; transition: background .2s ease, border-color .2s ease; }
 .dropzone:hover { border-color: hsl(var(--primary)); background: hsl(var(--primary) / .04); }
 .drop-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: hsl(var(--primary) / .1); color: hsl(var(--primary)); border-radius: 15px; display: grid; place-items: center; }
@@ -413,6 +422,8 @@
   .steps { gap: 9px; }
   .step strong { font-size: 11px; }
   .phone-card { padding: 19px; }
+  .video-link-actions { grid-template-columns: 1fr; }
+  .video-link-actions .button-primary { width: 100%; }
   .join-card { padding: 19px; }
   .code-entry { grid-template-columns: 1fr; }
   .code-entry .button-primary { width: 100%; }
