@@ -14,3 +14,9 @@ Keep a phone-hosted HTTP receiver on the same origin as its local HTTP media, in
 **Why:** Browser mixed-content restrictions can otherwise block an apparently valid local video URL. The user's comparison recording demonstrates the desired browser playback experience, but does not prove universal codec support or zero buffering.
 
 **How to apply:** Pass only session/control metadata through cloud signaling. Keep local media and receiver on the phone; never add a cloud proxy to work around mixed content. A source-only change does not update an installed native app: rebuild it before claiming the new transport is available.
+
+Some automation Chromium builds cannot decode H.264/AAC even when an MP4 is valid; generated VP8/Opus WebM can exercise the browser casting/recovery journey instead.
+
+**Why:** A missing proprietary decoder can prevent peer creation entirely and must not be mistaken for an application reconnection defect.
+
+**How to apply:** Check actual phone-preview decoding first, then confirm received video frames rather than only connection labels. Use supported generated fixtures for transport tests, and do not infer MP4, physical Samsung, or mobile OS background compatibility from a successful desktop WebM simulation.

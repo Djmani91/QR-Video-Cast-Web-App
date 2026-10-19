@@ -21,6 +21,7 @@ import { ROTATION_RENDERER_VERSION, verifyRotationRenderer } from './lib/rotatio
 import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
 import { needsVideoCanvas } from './lib/rotated-video-canvas';
 import { createConnectionGrace } from './lib/connection-grace';
+import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, type ScopedIceCandidate } from './lib/session-recovery';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
 import { getYouTubeVideoId } from './lib/youtube';
@@ -595,7 +596,8 @@ function TvPage() {
     if (imageZoom === 1) setImageOffsetY(0);
   }, [imageZoom]);
   const seenRef = useRef(new Set<number>());
-  const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const queuedCandidates = useRef<ScopedIceCandidate[]>([]);
+  const activeSessionRef = useRef<string | null>(null);
   const roomId = room?.id ?? '';
   const revealTvControls = useCallback(() => {
     if (status !== 'connected') return;
@@ -632,6 +634,7 @@ function TvPage() {
 
   const stopPeer = useCallback(() => {
     connectionGrace.cancel();
+    activeSessionRef.current = null;
     canvasUnavailableRef.current = false;
     videoMediaChannelRef.current = null;
     phoneRenderedVideoRef.current = false;
@@ -1049,25 +1052,30 @@ function TvPage() {
         if (!peerRef.current || connectionState === 'failed' || connectionState === 'disconnected' || connectionState === 'closed') {
           if (peerRef.current) {
             stopPeer();
-            queuedCandidates.current = [];
           }
           setError('');
           setStatus('paired');
         }
       } else if (signal.type === 'offer') {
         void (async () => {
+          let offerPeer: RTCPeerConnection | null = null;
           try {
             setError('');
             setMediaKind(signal.payload.mediaKind === 'image' ? 'image' : 'video');
             stopPeer();
             const peer = new RTCPeerConnection(rtcConfig);
+            offerPeer = peer;
             peerRef.current = peer;
+            const sessionId = typeof signal.payload.sessionId === 'string' ? signal.payload.sessionId : undefined;
+            activeSessionRef.current = sessionId ?? null;
             peer.ondatachannel = (event) => {
+              if (peerRef.current !== peer) { event.channel.close(); return; }
               const channel = event.channel;
               if (channel.label === 'framecast-media') {
                 videoMediaChannelRef.current = channel;
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
+                  if (peerRef.current !== peer) return;
                   if (typeof message.data === 'string') {
                     let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; sizeUnknown?: boolean; streamCandidate?: boolean; url?: string; rotation?: number; encodedWidth?: number; encodedHeight?: number; orientationNormalized?: boolean };
                     try {
@@ -1497,7 +1505,20 @@ function TvPage() {
                 controlChannelRef.current = channel;
                 channel.onopen = sendVideoState;
                 channel.onmessage = (message) => {
+                  if (peerRef.current !== peer) return;
                   const command = String(message.data);
+                  if (command.startsWith('{')) {
+                    try {
+                      const packet = JSON.parse(command) as { framecast?: string; nonce?: string };
+                      if (packet.framecast === 'session-probe') {
+                        if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'session-alive', nonce: packet.nonce }));
+                        connectionGrace.cancel();
+                        setError('');
+                        setStatus('connected');
+                        return;
+                      }
+                    } catch { /* Non-probe commands use the existing handlers. */ }
+                  }
                   if (phoneRenderedVideoRef.current && command.startsWith('{')) {
                     try {
                       const packet = JSON.parse(command) as Partial<PhoneVideoState> & { framecast?: string };
@@ -1631,6 +1652,7 @@ function TvPage() {
               }
             };
             peer.ontrack = (event) => {
+              if (peerRef.current !== peer) return;
               if (videoRef.current) {
                 phoneRenderedVideoRef.current = true;
                 orientationSourceRef.current = null;
@@ -1650,7 +1672,7 @@ function TvPage() {
               }
             };
             peer.onicecandidate = (event) => {
-              if (event.candidate) send('tv', 'ice', { ...event.candidate.toJSON() });
+              if (peerRef.current === peer && event.candidate) send('tv', 'ice', { ...event.candidate.toJSON(), sessionId });
             };
             let connectedOnce = false;
             peer.onconnectionstatechange = () => {
@@ -1665,7 +1687,7 @@ function TvPage() {
                 connectionGrace.hold(() => {
                   if (peerRef.current !== peer || peer.connectionState === 'connected') return;
                   setStatus('disconnected');
-                  setError('The phone has been unavailable for a minute. Return to FrameCast on the phone and reconnect. You can keep this room.');
+                  setError('The phone is away. Pairing is kept; reopen FrameCast on the same phone to reconnect automatically.');
                 });
               }
               else if (peer.connectionState === 'failed') {
@@ -1673,7 +1695,7 @@ function TvPage() {
                   connectionGrace.hold(() => {
                     if (peerRef.current !== peer || peer.connectionState === 'connected') return;
                     setStatus('disconnected');
-                    setError('The phone has been unavailable for a minute. Return to FrameCast on the phone and reconnect. You can keep this room.');
+                    setError('The phone is away. Pairing is kept; reopen FrameCast on the same phone to reconnect automatically.');
                   });
                   return;
                 }
@@ -1683,29 +1705,36 @@ function TvPage() {
               } else if (peer.connectionState === 'connecting') setStatus('connecting');
             };
             await peer.setRemoteDescription(new RTCSessionDescription(signal.payload as unknown as RTCSessionDescriptionInit));
+            if (peerRef.current !== peer) return;
             for (const candidate of queuedCandidates.current.splice(0)) {
-              await peer.addIceCandidate(new RTCIceCandidate(candidate));
+              if (matchesSession(candidate.sessionId, sessionId ?? null)) await peer.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => undefined);
             }
+            if (peerRef.current !== peer) return;
             const answer = await peer.createAnswer();
+            if (peerRef.current !== peer) return;
             await peer.setLocalDescription(answer);
-            send('tv', 'answer', { type: answer.type, sdp: answer.sdp });
+            if (peerRef.current !== peer) return;
+            send('tv', 'answer', { type: answer.type, sdp: answer.sdp, sessionId });
             setStatus('connecting');
           } catch (negotiationError) {
+            if (offerPeer && peerRef.current !== offerPeer) return;
             console.error('FrameCast TV could not negotiate the direct connection:', negotiationError);
             stopPeer();
             queuedCandidates.current = [];
             setStatus('failed');
-            setError('The direct connection setup failed. Create a fresh room on the TV, then scan its new code from the phone.');
+            setError('Waiting for the phone to reconnect. This pairing room is kept; no new code is needed.');
           }
         })();
       } else if (signal.type === 'ice') {
-        const candidate = signal.payload as RTCIceCandidateInit;
-        if (peerRef.current?.remoteDescription) {
+        const candidate = signal.payload as ScopedIceCandidate;
+        if (peerRef.current?.remoteDescription && matchesSession(candidate.sessionId, activeSessionRef.current)) {
           void peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => undefined);
         } else {
           queuedCandidates.current.push(candidate);
+          if (queuedCandidates.current.length > 100) queuedCandidates.current.shift();
         }
       } else if (signal.type === 'close') {
+        if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
         stopPeer();
         setError('');
         setStatus('paired');
@@ -1744,9 +1773,9 @@ function TvPage() {
     : status === 'connecting'
       ? 'A guest is here. Making a direct connection…'
       : status === 'disconnected'
-        ? 'Connection paused. Waiting for the phone to come back online.'
+        ? 'Phone away. Pairing kept — it will reconnect when the phone returns.'
         : status === 'failed'
-          ? 'Connection failed. Create a fresh room, then scan the new code.'
+          ? 'Waiting for the phone to reconnect. Keep this room open; no new code is needed.'
           : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
 
   return (
@@ -2008,12 +2037,27 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const phoneAudioGraphRef = useRef<PhoneAudioGraph | null>(null);
   const fileQueueRef = useRef<File[]>([]);
   const seenRef = useRef(new Set<number>());
-  const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
+  const queuedCandidates = useRef<ScopedIceCandidate[]>([]);
+  const activeSessionRef = useRef<string | null>(null);
+  const pairingActiveRef = useRef(true);
+  const recoveryWantedRef = useRef(false);
+  const lastCastUrlRef = useRef<string | null>(null);
+  const hiddenPlaybackRef = useRef<PhoneVideoState | null>(null);
+  const connectionAttemptRef = useRef<number | null>(null);
+  const connectionStartedRef = useRef(0);
+  const [peerProbe] = useState(createPeerProbe);
+  const recoveryRef = useRef<ReturnType<typeof createSessionRecovery> | null>(null);
+  const reconnectRef = useRef<() => Promise<void>>(async () => {});
+  const refetchRoomRef = useRef(messagesQuery.refetch);
+  refetchRoomRef.current = messagesQuery.refetch;
   const messages = messagesQuery.data?.messages ?? [];
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
     connectionGrace.cancel();
+    peerProbe.cancel();
+    const sessionId = activeSessionRef.current;
+    activeSessionRef.current = null;
     phoneVideoStreamRef.current?.stop();
     phoneVideoStreamRef.current = null;
     selectionRunRef.current += 1;
@@ -2029,7 +2073,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setVideoSeekDraft(null);
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
-    if (sendClose) send('phone', 'close', {});
+    if (sendClose) send('phone', 'close', { sessionId: sessionId ?? undefined });
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
     mediaChannelRef.current = null;
@@ -2073,20 +2117,24 @@ function PhonePage({ roomId }: { roomId?: string }) {
       if (signal.from !== 'tv' || seenRef.current.has(signal.sequence)) continue;
       seenRef.current.add(signal.sequence);
       if (signal.type === 'answer') {
+        if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
+        const peer = peerRef.current;
+        if (!peer || peer.signalingState !== 'have-local-offer') continue;
         void (async () => {
           try {
-            const peer = peerRef.current;
-            if (!peer) return;
             await peer.setRemoteDescription(new RTCSessionDescription(signal.payload as unknown as RTCSessionDescriptionInit));
+            if (peerRef.current !== peer) return;
             for (const candidate of queuedCandidates.current.splice(0)) {
-              await peer.addIceCandidate(new RTCIceCandidate(candidate));
+              if (matchesSession(candidate.sessionId, activeSessionRef.current)) await peer.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => undefined);
             }
           } catch {
+            if (peerRef.current !== peer) return;
             setStatus('failed');
             setError('The TV could not complete the connection. Try connecting again.');
           }
         })();
       } else if (signal.type === 'ice') {
+        if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
         const candidate = signal.payload as RTCIceCandidateInit;
         if (peerRef.current?.remoteDescription) {
           void peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => undefined);
@@ -2094,6 +2142,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
           queuedCandidates.current.push(candidate);
         }
       } else if (signal.type === 'close') {
+        if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
+        pairingActiveRef.current = false;
+        recoveryWantedRef.current = false;
+        recoveryRef.current?.cancel();
         stopPeer();
         setIsUrlPlayback(false);
         if (signal.payload.reason === 'new-room') {
@@ -2117,6 +2169,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   }, [messages, setLocation, stopPeer]);
 
   const discardUnreadableSelection = () => {
+    recoveryWantedRef.current = false;
+    recoveryRef.current?.cancel();
     stopPeer(Boolean(peerRef.current));
     fileQueueRef.current = [];
     setFileQueue([]);
@@ -2160,6 +2214,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
       setError('Videos must be 8 GB or smaller to stream directly.');
       return;
     }
+    recoveryWantedRef.current = false;
+    recoveryRef.current?.cancel();
+    hiddenPlaybackRef.current = null;
     stopPeer(Boolean(peerRef.current));
     const selectionRun = selectionRunRef.current;
     setPreparingSelection(true);
@@ -2195,7 +2252,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
     }
   };
 
-  const connect = async (remoteUrl?: string) => {
+  const connect = async (remoteUrl?: string, options: { automatic?: boolean; resume?: PhoneVideoState } = {}) => {
     if (preparingSelection) return;
     const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
     const queuedFiles = castUrl ? [] : fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
@@ -2223,6 +2280,11 @@ function PhonePage({ roomId }: { roomId?: string }) {
       }
     }
     setError('');
+    pairingActiveRef.current = true;
+    recoveryWantedRef.current = true;
+    recoveryRef.current?.cancel();
+    lastCastUrlRef.current = castUrl;
+    if (!options.automatic) hiddenPlaybackRef.current = null;
     setTransferNotice('');
     setStatus('connecting');
     setProgress(0);
@@ -2237,6 +2299,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
     queuedCandidates.current = [];
     transferCompleteRef.current = false;
     const transferRun = transferRunRef.current;
+    connectionAttemptRef.current = transferRun;
+    connectionStartedRef.current = Date.now();
+    const sessionId = crypto.randomUUID();
+    activeSessionRef.current = sessionId;
     try {
       if (!castUrl && queuedFiles.length === 1 && queuedFiles[0].type.startsWith('video/')) {
         const video = videoRef.current;
@@ -2255,6 +2321,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
           },
           onError: (message) => {
             if (transferRun !== transferRunRef.current) return;
+            recoveryWantedRef.current = false;
+            recoveryRef.current?.cancel();
             setError(message);
             setStatus('failed');
             stopPeer(true);
@@ -2264,6 +2332,11 @@ function PhonePage({ roomId }: { roomId?: string }) {
         setTransferNotice('Opening the first video frame on this phone… No whole-video preparation or upload.');
         await live.ready;
         if (transferRun !== transferRunRef.current) return;
+        if (options.resume) {
+          await live.command(`video:seek:${options.resume.currentTime}`);
+          await live.command(`video:fit:${options.resume.fitMode}`);
+          for (let rotation = 0; rotation < options.resume.rotation; rotation += 90) await live.command('video:rotate');
+        }
         setTransferNotice('Phone video is ready. Connecting directly to the TV…');
       }
       // A successful phone decoder already proves video access. Head/tail
@@ -2283,7 +2356,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
         connectionGrace.hold(() => {
           if (transferRun !== transferRunRef.current || peerRef.current !== peer) return;
           setStatus('disconnected');
-          setError('The TV connection did not recover within one minute. Return to FrameCast and try again; your room and selection are kept.');
+          setError('Pairing and selection are kept. Return to this page to reconnect to the same TV automatically.');
+          recoveryRef.current?.wake();
         });
       };
       const controlChannel = peer.createDataChannel('framecast-control');
@@ -2293,9 +2367,17 @@ function PhonePage({ roomId }: { roomId?: string }) {
         if (live) controlChannel.send(JSON.stringify({ framecast: 'live-state', ...live.state() }));
       };
       controlChannel.onmessage = (event) => {
+        if (transferRun !== transferRunRef.current) return;
         if (typeof event.data !== 'string') return;
         try {
           const packet = JSON.parse(event.data) as { framecast?: string; currentTime?: number; duration?: number; paused?: boolean; volume?: number; fitMode?: 'cover' | 'contain' };
+          if (packet.framecast === 'session-alive') {
+            peerProbe.accept((JSON.parse(event.data) as { nonce?: unknown }).nonce);
+            connectionGrace.cancel();
+            setError('');
+            setStatus('connected');
+            return;
+          }
           if (packet.framecast === 'live-command') {
             const action = (JSON.parse(event.data) as { action?: unknown }).action;
             if (typeof action === 'string') void phoneVideoStreamRef.current?.command(action).catch(() => setError('Tap Play on the phone to resume this video.'));
@@ -2349,6 +2431,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
             return;
           }
           if (packet.framecast === 'stream-error') {
+            recoveryWantedRef.current = false;
+            recoveryRef.current?.cancel();
             setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
             setTransferNotice('');
             setStatus('failed');
@@ -2399,6 +2483,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 active: () => transferRun === transferRunRef.current,
               });
               if (startup.status === 'interrupted' || transferRun !== transferRunRef.current) return;
+              if (options.resume?.paused || options.resume?.ended) await live.command('pause');
               transferCompleteRef.current = true;
               setProgress(100);
               setSentToTv(startup.status === 'playing');
@@ -2539,7 +2624,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
       };
       peer.onicecandidate = (event) => {
         if (transferRun !== transferRunRef.current) return;
-        if (event.candidate) send('phone', 'ice', { ...event.candidate.toJSON() });
+        if (event.candidate) send('phone', 'ice', { ...event.candidate.toJSON(), sessionId });
       };
       peer.onconnectionstatechange = () => {
         if (transferRun !== transferRunRef.current) return;
@@ -2550,7 +2635,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
           setStatus('connected');
         } else if (peer.connectionState === 'disconnected') {
           holdInterruptedConnection();
+          recoveryRef.current?.wake();
         } else if (peer.connectionState === 'failed') {
+          recoveryRef.current?.wake();
           if (connectedOnce) {
             holdInterruptedConnection();
             return;
@@ -2565,18 +2652,83 @@ function PhonePage({ roomId }: { roomId?: string }) {
       if (transferRun !== transferRunRef.current) return;
       await peer.setLocalDescription(offer);
       if (transferRun !== transferRunRef.current) return;
-      send('phone', 'offer', { type: offer.type, sdp: offer.sdp, mediaKind: castUrl ? 'video' : mediaKind, transport: 'data-channel' });
+      send('phone', 'offer', { type: offer.type, sdp: offer.sdp, sessionId, mediaKind: castUrl ? 'video' : mediaKind, transport: 'data-channel' });
+      recoveryRef.current?.wake();
     } catch (connectionError) {
       if (transferRun !== transferRunRef.current) return;
       if (isSelectedMediaAccessError(connectionError)) {
         discardUnreadableSelection();
         return;
       }
+      recoveryWantedRef.current = false;
       stopPeer();
       setStatus('failed');
       setError(connectionError instanceof Error ? connectionError.message : 'Could not start a direct connection to the TV.');
+    } finally {
+      if (connectionAttemptRef.current === transferRun) connectionAttemptRef.current = null;
     }
   };
+
+  reconnectRef.current = async () => {
+    const liveState = phoneVideoStreamRef.current?.state();
+    const resume = liveState ? { ...liveState, paused: hiddenPlaybackRef.current?.paused ?? liveState.paused } : hiddenPlaybackRef.current ?? undefined;
+    setTransferNotice('Reconnecting to the same TV… Your pairing is kept.');
+    await connect(lastCastUrlRef.current ?? undefined, { automatic: true, resume });
+  };
+
+  useEffect(() => {
+    const recovery = createSessionRecovery({
+      active: () => pairingActiveRef.current && recoveryWantedRef.current,
+      visible: () => document.visibilityState !== 'hidden' && navigator.onLine,
+      healthy: async () => {
+        if (connectionAttemptRef.current !== null) return true;
+        const peer = peerRef.current;
+        if (peerIsOpening(peer?.connectionState, mediaChannelRef.current?.readyState, controlChannelRef.current?.readyState, Date.now() - connectionStartedRef.current)) return true;
+        if (peer?.connectionState !== 'connected' || mediaChannelRef.current?.readyState !== 'open') return false;
+        return peerProbe.check(controlChannelRef.current);
+      },
+      recover: () => reconnectRef.current(),
+      onError: () => {
+        setStatus('disconnected');
+        setTransferNotice('Pairing is kept. Automatic reconnect will try again; you can also tap Try again.');
+      },
+    });
+    recoveryRef.current = recovery;
+    const onReturn = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenPlaybackRef.current = phoneVideoStreamRef.current?.state() ?? hiddenPlaybackRef.current;
+        recovery.cancel();
+        return;
+      }
+      if (!pairingActiveRef.current) return;
+      void refetchRoomRef.current();
+      if (!recoveryWantedRef.current) {
+        send('phone', 'ready', {});
+        return;
+      }
+      const live = phoneVideoStreamRef.current;
+      if (live && hiddenPlaybackRef.current && !hiddenPlaybackRef.current.paused) {
+        const graph = phoneAudioGraphRef.current;
+        void graph?.context.resume().catch(() => setTransferNotice('Pairing is kept. Tap Play on the phone to resume sound.'));
+        void live.command('play').catch(() => setTransferNotice('Pairing is kept. Tap Play on the phone to resume video.'));
+      }
+      recovery.wake();
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('pageshow', onReturn);
+    window.addEventListener('focus', onReturn);
+    window.addEventListener('online', onReturn);
+    recovery.wake();
+    return () => {
+      recovery.dispose();
+      peerProbe.cancel();
+      if (recoveryRef.current === recovery) recoveryRef.current = null;
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('pageshow', onReturn);
+      window.removeEventListener('focus', onReturn);
+      window.removeEventListener('online', onReturn);
+    };
+  }, [validRoomId, send, peerProbe]);
 
   const castVideoLink = async () => {
     setVideoLinkError('');
@@ -2624,6 +2776,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
   };
 
   const disconnect = () => {
+    pairingActiveRef.current = false;
+    recoveryWantedRef.current = false;
+    recoveryRef.current?.cancel();
     stopPeer(true);
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
@@ -2654,7 +2809,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
       : status === 'paired'
         ? 'Paired with the TV. Choose a photo or video when you’re ready.'
         : status === 'disconnected'
-        ? 'Disconnected from the TV. Choose Send to reconnect.'
+        ? 'Pairing kept. Return to this page to reconnect to the same TV automatically.'
         : status === 'failed'
           ? 'Connection needs attention. Try again when ready.'
           : file ? `Your ${mediaKind === 'image' ? 'photo' : 'video'} is ready to share.` : 'Choose a video or photo stored on this phone.';
@@ -2793,7 +2948,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                         : mediaKind === 'image' ? 'Show photo on TV' : 'Play video on TV'}
                 </button>
               )}
-              {(status === 'connecting' || status === 'connected') && (
+              {pairingActiveRef.current && (
                 <button type="button" className="button-secondary" onClick={disconnect} data-testid="button-disconnect-tv">
                   <X size={16} /> Disconnect from TV
                 </button>

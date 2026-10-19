@@ -17,8 +17,8 @@ For the phone website, do not clear a populated file input while its selected fi
 
 **How to apply:** Keep valid picker selections alive. For browser live video, let the media element read the original Blob on demand: do not take an eager whole-file snapshot or run redundant head/tail probes. Confirm an actual decoded phone frame with a bounded startup wait; surface decoder, autoplay, and cloud-only file problems separately. For photo transfers, keep readability checks and any temporary snapshots bounded across the whole queue. Discard unusable references with an explicit reselect action, never persist or upload media.
 
-The user wants at least a one-minute recovery grace period when switching away from the phone app or browser, instead of treating a roughly five-second interruption as a lost connection.
+The user wants returning to the same phone browser to reconnect to the same TV automatically, without refreshing, re-entering the code, or rescanning. Keep pairing and selected media until the user explicitly disconnects; a one-minute transport grace window is not a pairing timeout.
 
-**Why:** Briefly viewing something else on the phone should not discard the pairing or immediately report failure.
+**Why:** The user reports that briefly leaving the browser made later video sends fail and required repeated TV refreshes and QR scanning.
 
-**How to apply:** Preserve the room and selected media during transient interruptions, cancel pending failure timers on recovery or deliberate disconnect, and let the phone-hosted TV player retry temporary network failures. Be clear that mobile operating systems can suspend background networking; a grace period is not a guarantee of uninterrupted background playback.
+**How to apply:** Separate pairing intent from an individual WebRTC peer. Probe the existing transport on return and recreate it automatically in the same room when stale. Preserve selected files and playback state in the live page; suppress overlapping repairs and ignore replies/candidates/closes from replaced sessions. An explicit Disconnect or TV room replacement must cancel recovery. Be clear that the OS can suspend playback/networking, closing the tab loses in-memory files, and server restarts or a genuinely expired room cannot be repaired from browser state alone.
