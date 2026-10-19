@@ -2491,19 +2491,26 @@ function PhonePage({ roomId }: { roomId?: string }) {
           if (transferRun !== transferRunRef.current) return;
         }
       }
-      videoSetupStage = phoneVideoStreamRef.current
-        ? 'adding the phone video stream to the direct TV connection'
-        : 'creating the direct TV connection';
+      videoSetupStage = 'creating the direct TV connection';
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
       const live = phoneVideoStreamRef.current;
-      if (live) for (const track of live.stream.getTracks()) peer.addTrack(track, live.stream);
       if (live) {
+        videoSetupStage = 'reading the phone video and audio tracks';
+        const tracks = live.stream.getTracks();
+        for (const track of tracks) {
+          videoSetupStage = `adding the phone ${track.kind} track to WebRTC`;
+          peer.addTrack(track, live.stream);
+        }
+      }
+      if (live) {
+        videoSetupStage = 'selecting a compatible video codec';
         try { preferHardwareVideoCodec(peer); }
         catch (error) { console.warn('Codec preference unavailable; using browser codec negotiation.', error); }
       }
       const applyVideoQuality = () => {
         if (!live || peerRef.current !== peer) return;
+        videoSetupStage = 'configuring the phone video encoder';
         for (const sender of peer.getSenders()) {
           if (sender.track?.kind === 'video') {
             void configureVideoSender(sender, live.profile()).catch((error) => {
@@ -2516,6 +2523,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
       };
       applyVideoQuality();
       if (live) {
+        videoSetupStage = 'starting video performance monitoring';
         qualityMonitorRef.current = monitorVideoStream(peer, live, {
           onSample: sample => { if (peerRef.current === peer) setStreamHealth(sample); },
           onProfileChanged: applyVideoQuality,

@@ -49,6 +49,45 @@ test('healthy encoder and TV decode counters allow Full HD only after sustained 
   f.monitor.stop();
 });
 
+test('default health-monitor timer calls browser timer methods with the Window receiver', () => {
+  const previousWindow = globalThis.window;
+  const intervals = [];
+  const cleared = [];
+  const windowStub = {
+    setInterval(callback, delay) {
+      assert.equal(this, windowStub);
+      intervals.push({ callback, delay });
+      return 73;
+    },
+    clearInterval(timer) {
+      assert.equal(this, windowStub);
+      cleared.push(timer);
+    },
+  };
+  globalThis.window = windowStub;
+  try {
+    const source = {
+      state: () => ({ paused: true, ended: false }),
+      sourceVersion: () => 0,
+      profile: () => phoneStreamProfile(1280, 720),
+      maxHeight: () => 720,
+      metrics: () => ({ drawnFrames: 0, droppedFrames: 0, totalFrames: 0 }),
+      setResolutionCeiling() {},
+    };
+    const monitor = monitorVideoStream({ getStats: async () => new Map() }, source, {
+      onSample() {},
+      onProfileChanged() {},
+    });
+    assert.equal(intervals.length, 1);
+    assert.equal(intervals[0].delay, 2000);
+    monitor.stop();
+    assert.deepEqual(cleared, [73]);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
 for (const [name, pressure, expected] of [
   ['CPU limitation', { reason: 'cpu' }, 'phone'],
   ['encoder falling behind captured frames', { encoded: 24, received: 24 }, 'phone'],

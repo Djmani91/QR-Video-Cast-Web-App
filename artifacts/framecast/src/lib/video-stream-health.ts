@@ -34,6 +34,12 @@ type Source = {
   setResolutionCeiling(height: number): void;
 };
 
+const browserClock = {
+  now: () => Date.now(),
+  setInterval: (callback: () => void, delay: number) => window.setInterval(callback, delay),
+  clearInterval: (timer: number) => window.clearInterval(timer),
+};
+
 /** Adapt from real cumulative counters, never from the file's playback clock.
  * Lower resolution before sacrificing motion; require sustained healthy TV
  * decoding before enabling 1080p. No peer/track replacement or media upload.
@@ -41,7 +47,7 @@ type Source = {
 export function monitorVideoStream(peer: Pick<RTCPeerConnection, 'getStats'>, source: Source, options: {
   onSample: (sample: StreamHealth) => void;
   onProfileChanged: () => void;
-}, clock = { setInterval, clearInterval, now: Date.now }) {
+}, clock = browserClock) {
   let active = true, busy = false, warned = false;
   let version = source.sourceVersion();
   let previous: { video: VideoStats; metrics: ReturnType<Source['metrics']> } | null = null;
