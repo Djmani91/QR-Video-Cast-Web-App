@@ -119,3 +119,17 @@ test('codec or network failure reports a useful error rather than successful pla
   assert.equal(states.at(-1).payload.playback, 'error');
   assert.match(states.at(-1).payload.message, /format.*not.*supported/);
 });
+
+test('remote Back exits fullscreen without leaving the room or stopping playback', async () => {
+  const r = receiver();
+  await flush();
+  let exited = false;
+  let prevented = false;
+  r.document.fullscreenElement = r.video;
+  r.document.exitFullscreen = () => { exited = true; r.document.fullscreenElement = null; };
+  r.document.onkeydown({ keyCode: 10009, preventDefault() { prevented = true; } });
+  assert.equal(exited, true);
+  assert.equal(prevented, true);
+  assert.equal(r.location.next, undefined);
+  assert.equal(r.video.paused, false);
+});

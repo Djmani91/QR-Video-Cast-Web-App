@@ -15,6 +15,8 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
 import { remuxAndSendMp4 } from './lib/mp4-remux';
+import { assertBrowserFileReadable, isSelectedMediaAccessError, preserveBrowserSelection, SelectedMediaAccessError } from './lib/browser-media';
+import { exitVideoFullscreen, isVideoFullscreen, requestVideoFullscreen } from './lib/video-fullscreen';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -475,6 +477,9 @@ function TvPage() {
   const youtubeMediaChannelRef = useRef<RTCDataChannel | null>(null);
   const [clock, setClock] = useState(Date.now());
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
+  const [needsVideoFullscreen, setNeedsVideoFullscreen] = useState(false);
+  const [videoReturnedInline, setVideoReturnedInline] = useState(false);
+  const autoFullscreenSourceRef = useRef<unknown>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const tvControlsIntervalRef = useRef<number | null>(null);
@@ -652,6 +657,74 @@ function TvPage() {
     };
   }, [sendVideoState]);
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onPlaying = () => {
+      const source = video.srcObject || video.currentSrc || video.src;
+      if (autoFullscreenSourceRef.current === source) return;
+      autoFullscreenSourceRef.current = source;
+      setVideoReturnedInline(false);
+      void requestVideoFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+    };
+    const onExit = () => {
+      const fullscreen = isVideoFullscreen(video);
+      setBrowserFullscreen(fullscreen);
+      if (!fullscreen) setVideoReturnedInline(true);
+      // Do not re-enter on pause/resume or buffering after the viewer presses Back.
+      setNeedsVideoFullscreen(false);
+      revealTvControls();
+    };
+    video.addEventListener('playing', onPlaying);
+    video.addEventListener('webkitendfullscreen', onExit);
+    document.addEventListener('fullscreenchange', onExit);
+    document.addEventListener('webkitfullscreenchange', onExit);
+    return () => {
+      video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('webkitendfullscreen', onExit);
+      document.removeEventListener('fullscreenchange', onExit);
+      document.removeEventListener('webkitfullscreenchange', onExit);
+    };
+  }, [revealTvControls]);
+  useEffect(() => {
+    if (status !== 'connected' || mediaKind !== 'video' || youtubeVideoId) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const onRemoteKey = (event: KeyboardEvent) => {
+      const back = ['Escape', 'Backspace', 'BrowserBack'].includes(event.key) || event.keyCode === 10009;
+      if (back && isVideoFullscreen(video)) {
+        event.preventDefault();
+        void exitVideoFullscreen(video);
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target && ['BUTTON', 'INPUT', 'A'].includes(target.tagName)) return;
+      const play = event.key === 'MediaPlay' || event.keyCode === 415;
+      const pause = event.key === 'MediaPause' || event.keyCode === 19;
+      const toggle = ['Enter', 'MediaPlayPause', ' '].includes(event.key) || event.keyCode === 10252;
+      if (play || pause || toggle) {
+        event.preventDefault();
+        if (pause || (toggle && !video.paused)) video.pause();
+        else {
+          void video.play().catch(() => setPlaying(false));
+          // This call is inside a real TV remote gesture, not a phone message.
+          if (needsVideoFullscreen) void requestVideoFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+        }
+      } else if (event.key === 'ArrowLeft' || event.keyCode === 412) {
+        event.preventDefault();
+        video.currentTime = Math.max(0, video.currentTime - 10);
+      } else if (event.key === 'ArrowRight' || event.keyCode === 417) {
+        event.preventDefault();
+        video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+      } else if (event.key === 'MediaStop' || event.keyCode === 413) {
+        event.preventDefault();
+        video.pause();
+        video.currentTime = 0;
+      }
+    };
+    document.addEventListener('keydown', onRemoteKey);
+    return () => document.removeEventListener('keydown', onRemoteKey);
+  }, [status, mediaKind, youtubeVideoId, needsVideoFullscreen]);
+  useEffect(() => {
     if (!youtubeVideoId) return;
     const timer = window.setInterval(sendVideoState, 750);
     return () => window.clearInterval(timer);
@@ -706,6 +779,12 @@ function TvPage() {
   }, []);
 
   const toggleBrowserFullscreen = () => {
+    const video = videoRef.current;
+    if (status === 'connected' && mediaKind === 'video' && !youtubeVideoId && video) {
+      if (isVideoFullscreen(video)) void exitVideoFullscreen(video);
+      else void requestVideoFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+      return;
+    }
     if (document.fullscreenElement) {
       void document.exitFullscreen().catch(() => {
         setError('This TV browser could not exit full screen. Use its Back or Exit key.');
@@ -1376,7 +1455,7 @@ function TvPage() {
           : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
 
   return (
-    <div className={`app-shell${status === 'connected' ? ' tv-immersive-playback' : ''}`}>
+    <div className={`app-shell${status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
       <BrandHeader />
       <main className="page-wrap fade-in">
         <div className="hero-grid">
@@ -1402,11 +1481,16 @@ function TvPage() {
               ref={videoRef}
               className={!youtubeVideoId && status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'video-preview' : 'sr-only'}
               autoPlay
-              playsInline
+              controls
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
             />
+            {needsVideoFullscreen && status === 'connected' && mediaKind === 'video' && (
+              <button type="button" className="button-secondary tv-video-fullscreen-permission" onClick={toggleBrowserFullscreen} data-testid="button-tv-video-fullscreen-permission">
+                <Maximize2 size={16} /> Press here with the TV remote for video full screen
+              </button>
+            )}
             {youtubeVideoId && status === 'connected' && (
               <YouTubePlayer
                 videoId={youtubeVideoId}
@@ -1566,6 +1650,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   });
   const [file, setFile] = useState<File | null>(null);
   const [fileQueue, setFileQueue] = useState<File[]>([]);
+  const [preparingSelection, setPreparingSelection] = useState(false);
+  const selectionRunRef = useRef(0);
   const [videoLink, setVideoLink] = useState('');
   const [videoLinkError, setVideoLinkError] = useState('');
   const [checkingVideoLink, setCheckingVideoLink] = useState(false);
@@ -1599,6 +1685,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
+    selectionRunRef.current += 1;
+    setPreparingSelection(false);
     transferRunRef.current += 1;
     transferCompleteRef.current = true;
     urlCastActiveRef.current = false;
@@ -1679,7 +1767,26 @@ function PhonePage({ roomId }: { roomId?: string }) {
     }
   }, [messages, setLocation, stopPeer]);
 
-  const chooseFiles = (selected?: FileList | File[]) => {
+  const discardUnreadableSelection = () => {
+    stopPeer(Boolean(peerRef.current));
+    fileQueueRef.current = [];
+    setFileQueue([]);
+    setFile(null);
+    setObjectUrl('');
+    setMediaKind(null);
+    setProgress(0);
+    setSentToTv(false);
+    setSentQueueCount(0);
+    setQueueIndex(0);
+    setTransferNotice('');
+    setStatus('paired');
+    setError(new SelectedMediaAccessError().message);
+    // Reset only after discarding invalid handles, so the same file can be reselected.
+    const picker = document.getElementById('video-file-input') as HTMLInputElement | null;
+    if (picker) picker.value = '';
+  };
+
+  const chooseFiles = async (selected?: FileList | File[]) => {
     if (!selected?.length) return;
     const chosen = Array.from(selected);
     if (chosen.length > 30) {
@@ -1705,27 +1812,42 @@ function PhonePage({ roomId }: { roomId?: string }) {
       return;
     }
     stopPeer(Boolean(peerRef.current));
-    setIsUrlPlayback(false);
-    urlCastActiveRef.current = false;
-    setVideoLinkError('');
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    const nextUrl = URL.createObjectURL(chosen[0]);
-    fileQueueRef.current = chosen;
-    setFileQueue(chosen);
-    setQueueIndex(0);
-    setSentQueueCount(0);
-    setFile(chosen[0]);
-    setMediaKind(selectedKind);
-    setObjectUrl(nextUrl);
+    const selectionRun = selectionRunRef.current;
+    setPreparingSelection(true);
     setStatus('paired');
-    setProgress(0);
     setSentToTv(false);
-    videoStreamingRef.current = false;
-    setVideoStreaming(false);
+    setTransferNotice('');
     setError('');
+    try {
+      const preserved = await preserveBrowserSelection(chosen, () => selectionRun !== selectionRunRef.current);
+      if (!preserved || selectionRun !== selectionRunRef.current) return;
+      setIsUrlPlayback(false);
+      urlCastActiveRef.current = false;
+      setVideoLinkError('');
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      const nextUrl = URL.createObjectURL(preserved[0]);
+      fileQueueRef.current = preserved;
+      setFileQueue(preserved);
+      setQueueIndex(0);
+      setSentQueueCount(0);
+      setFile(preserved[0]);
+      setMediaKind(selectedKind);
+      setObjectUrl(nextUrl);
+      setStatus('paired');
+      setProgress(0);
+      setSentToTv(false);
+      videoStreamingRef.current = false;
+      setVideoStreaming(false);
+      setError('');
+    } catch {
+      if (selectionRun === selectionRunRef.current) discardUnreadableSelection();
+    } finally {
+      if (selectionRun === selectionRunRef.current) setPreparingSelection(false);
+    }
   };
 
   const connect = async (remoteUrl?: string) => {
+    if (preparingSelection) return;
     const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
     const queuedFiles = castUrl ? [] : fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
     if (!castUrl && (!queuedFiles.length || !mediaKind)) {
@@ -1767,6 +1889,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
     transferCompleteRef.current = false;
     const transferRun = transferRunRef.current;
     try {
+      for (const selected of queuedFiles) {
+        await assertBrowserFileReadable(selected);
+        if (transferRun !== transferRunRef.current) return;
+      }
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
       const controlChannel = peer.createDataChannel('framecast-control');
@@ -1967,6 +2093,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
             setSentToTv(true);
           } catch (transferError) {
             if (transferRun !== transferRunRef.current) return;
+            if (isSelectedMediaAccessError(transferError)) {
+              discardUnreadableSelection();
+              return;
+            }
             setStatus('failed');
             setError(transferError instanceof Error ? transferError.message : 'The file could not be sent directly. Try again.');
           }
@@ -2002,6 +2132,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
       send('phone', 'offer', { type: offer.type, sdp: offer.sdp, mediaKind: castUrl ? 'video' : mediaKind, transport: 'data-channel' });
     } catch (connectionError) {
       if (transferRun !== transferRunRef.current) return;
+      if (isSelectedMediaAccessError(connectionError)) {
+        discardUnreadableSelection();
+        return;
+      }
       stopPeer();
       setStatus('failed');
       setError(connectionError instanceof Error ? connectionError.message : 'Could not start a direct connection to the TV.');
@@ -2142,12 +2276,13 @@ function PhonePage({ roomId }: { roomId?: string }) {
               accept="video/*,image/*"
               multiple
               onChange={(event) => {
-                chooseFiles(event.currentTarget.files ?? undefined);
-                event.currentTarget.value = '';
+                // Clearing here can revoke an Android picker grant before transfer.
+                void chooseFiles(Array.from(event.currentTarget.files ?? []));
               }}
               aria-label="Choose up to 30 photos or one video"
               data-testid="input-content-file"
             />
+            {preparingSelection && <p role="status" data-testid="status-reading-selection">Reading your selection on this phone… Nothing is uploaded.</p>}
             <div className="video-link-card" data-testid="video-link-card">
               <label htmlFor="video-link-input">Or paste a YouTube or video link</label>
               <div className="video-link-actions">
@@ -2170,7 +2305,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   type="button"
                   className="button-primary"
                   onClick={() => void castVideoLink()}
-                  disabled={!videoLink.trim() || checkingVideoLink || status === 'connecting'}
+                  disabled={!videoLink.trim() || checkingVideoLink || preparingSelection || status === 'connecting'}
                   data-testid="button-play-video-link"
                 >
                   {checkingVideoLink ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
@@ -2204,7 +2339,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
             )}
             <div className="phone-actions">
               {file && (
-                <button type="button" className="button-primary" onClick={() => void connect()} disabled={status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
+                <button type="button" className="button-primary" onClick={() => void connect()} disabled={preparingSelection || status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
                   {status === 'connecting' ? <RefreshCw size={16} className="animate-spin" /> : status === 'connected' ? <Check size={16} /> : <ArrowUpRight size={16} />}
                   {status === 'connecting'
                     ? 'Connecting…'

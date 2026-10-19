@@ -5,8 +5,14 @@ description: The selected iOS and Android companion-app direction and its native
 
 FrameCast's phone companion should be a true native iOS/Android app with QR scanning, five-digit room entry, and native photo/video selection. The user chose this over a browser wrapper. Native WebRTC requires a custom development build; Expo Go alone cannot run the casting transport.
 
-For native file sending, use a direct WebRTC data channel. The TV buffers the complete transfer in memory, then starts playback; this is not progressive playback during transfer. On Android, media pickers may return temporary `content://` access that can expire before a delayed transfer. Copy those URIs into the app's temporary cache immediately after selection, then remove the copies when the user replaces media, leaves the room, or closes the app. Keep media out of signaling and server storage, clear temporary buffers after use, and check the TV-side size limit on real devices.
+Keep phone media on a direct local-device transport; do not require an entire long video to reach the TV before starting. On Android, native media pickers may return temporary `content://` access that can expire before a delayed transfer. Stage those URIs in the app's temporary cache immediately after selection, then remove the copies at selection/session boundaries. Keep media out of signaling and server storage.
 
 **Why:** The user explicitly chose native iOS and Android with a separate build path while retaining direct phone-to-TV privacy. Android's picker URI access can lapse between selection and transfer, causing file-read failures.
 
 **How to apply:** Preserve the native companion and same-Wi-Fi peer-to-peer architecture. Use only app-cache staging for temporary Android picker copies; never upload them, and clean them at selection/session boundaries. Do not claim Expo Go or physical-device compatibility until tested with custom builds on both platforms.
+
+For the phone website, do not clear a populated file input while its selected files are still needed. Browser provider-backed files can become unreadable even though their filename and size remain available.
+
+**Why:** The user repeatedly encountered Android file-permission read failures, which must not be reported as Wi-Fi or video-codec failures. A bounded in-memory snapshot of small selections reduces dependence on provider grants without saving media; loading a whole long film into RAM would be unsafe.
+
+**How to apply:** Keep valid picker selections alive, check file readability before negotiation, and discard unusable references with an explicit reselect action. Keep any browser snapshot temporary and bounded across the entire queue, never persisted or uploaded.
