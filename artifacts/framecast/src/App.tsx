@@ -21,6 +21,7 @@ import { normalizeRotation, requiredVideoRotation, type VideoOrientation } from 
 import { ROTATION_RENDERER_VERSION, verifyRotationRenderer } from './lib/rotation-renderer';
 import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
 import { needsVideoCanvas } from './lib/rotated-video-canvas';
+import { createConnectionGrace } from './lib/connection-grace';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -492,6 +493,7 @@ function TvPage() {
   const orientationSourceRef = useRef<VideoOrientation | null>(null);
   const manualRotationRef = useRef(0);
   const [videoFitMode, setVideoFitMode] = useState<'cover' | 'contain'>('cover');
+  const [connectionGrace] = useState(createConnectionGrace);
   const videoFitModeRef = useRef<'cover' | 'contain'>('cover');
   const [canvasPlayback, setCanvasPlayback] = useState(false);
   const canvasPlaybackRef = useRef(false);
@@ -596,6 +598,7 @@ function TvPage() {
   const messages = messagesQuery.data?.messages ?? [];
 
   const stopPeer = useCallback(() => {
+    connectionGrace.cancel();
     photoFullscreenAttemptedRef.current = false;
     setNeedsPhotoFullscreen(false);
     setPhotoReturnedInline(false);
@@ -1507,10 +1510,32 @@ function TvPage() {
             peer.onicecandidate = (event) => {
               if (event.candidate) send('tv', 'ice', { ...event.candidate.toJSON() });
             };
+            let connectedOnce = false;
             peer.onconnectionstatechange = () => {
-              if (peer.connectionState === 'connected') setStatus('connected');
-              else if (peer.connectionState === 'disconnected') setStatus('disconnected');
+              if (peerRef.current !== peer) return;
+              if (peer.connectionState === 'connected') {
+                connectedOnce = true;
+                if (connectionGrace.interrupted) setError('');
+                connectionGrace.cancel();
+                setStatus('connected');
+              }
+              else if (peer.connectionState === 'disconnected') {
+                connectionGrace.hold(() => {
+                  if (peerRef.current !== peer || peer.connectionState === 'connected') return;
+                  setStatus('disconnected');
+                  setError('The phone has been unavailable for a minute. Return to FrameCast on the phone and reconnect. You can keep this room.');
+                });
+              }
               else if (peer.connectionState === 'failed') {
+                if (connectedOnce) {
+                  connectionGrace.hold(() => {
+                    if (peerRef.current !== peer || peer.connectionState === 'connected') return;
+                    setStatus('disconnected');
+                    setError('The phone has been unavailable for a minute. Return to FrameCast on the phone and reconnect. You can keep this room.');
+                  });
+                  return;
+                }
+                if (connectionGrace.pending) return;
                 setStatus('failed');
                 setError('The direct connection was interrupted. Ask the guest to reconnect.');
               } else if (peer.connectionState === 'connecting') setStatus('connecting');
@@ -1826,6 +1851,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [videoStreaming, setVideoStreaming] = useState(false);
   const [remoteVideoState, setRemoteVideoState] = useState({ currentTime: 0, duration: 0, paused: true, volume: 0 });
   const [tvVideoFit, setTvVideoFit] = useState<'cover' | 'contain'>('cover');
+  const [connectionGrace] = useState(createConnectionGrace);
   const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
   const [muted, setMuted] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1844,6 +1870,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
+    connectionGrace.cancel();
     selectionRunRef.current += 1;
     setPreparingSelection(false);
     transferRunRef.current += 1;
@@ -2054,6 +2081,14 @@ function PhonePage({ roomId }: { roomId?: string }) {
       }
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
+      let connectedOnce = false;
+      const holdInterruptedConnection = () => {
+        connectionGrace.hold(() => {
+          if (transferRun !== transferRunRef.current || peerRef.current !== peer) return;
+          setStatus('disconnected');
+          setError('The TV connection did not recover within one minute. Return to FrameCast and try again; your room and selection are kept.');
+        });
+      };
       const controlChannel = peer.createDataChannel('framecast-control');
       controlChannelRef.current = controlChannel;
       controlChannel.onmessage = (event) => {
@@ -2264,6 +2299,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
               discardUnreadableSelection();
               return;
             }
+            if (connectedOnce && (peer.connectionState === 'disconnected' || peer.connectionState === 'failed' || mediaChannel.readyState === 'closed')) {
+              holdInterruptedConnection();
+              return;
+            }
             setStatus('failed');
             setError(transferError instanceof Error ? transferError.message : 'The file could not be sent directly. Try again.');
           }
@@ -2271,6 +2310,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
       };
       mediaChannel.onclose = () => {
         if (transferRun !== transferRunRef.current || transferCompleteRef.current) return;
+        if (connectedOnce) {
+          holdInterruptedConnection();
+          return;
+        }
         setStatus((current) => current === 'failed' ? current : 'disconnected');
         setError((current) => current || 'The direct connection ended before the file reached the TV. Keep both devices awake and try again.');
       };
@@ -2281,11 +2324,17 @@ function PhonePage({ roomId }: { roomId?: string }) {
       peer.onconnectionstatechange = () => {
         if (transferRun !== transferRunRef.current) return;
         if (peer.connectionState === 'connected') {
+          connectedOnce = true;
+          if (connectionGrace.interrupted) setError('');
+          connectionGrace.cancel();
           setStatus('connected');
         } else if (peer.connectionState === 'disconnected') {
-          setStatus('disconnected');
-          setError('The direct connection was interrupted. Reconnect and try again.');
+          holdInterruptedConnection();
         } else if (peer.connectionState === 'failed') {
+          if (connectedOnce) {
+            holdInterruptedConnection();
+            return;
+          }
           setStatus('failed');
           setError('A direct connection failed. Your router may block devices from talking to each other. Check that neither device is on guest Wi-Fi or a VPN, and that Wi-Fi client isolation is off. FrameCast does not relay media.');
         } else if (peer.connectionState === 'connecting') {

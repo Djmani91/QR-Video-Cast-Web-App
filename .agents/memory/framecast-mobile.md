@@ -16,3 +16,9 @@ For the phone website, do not clear a populated file input while its selected fi
 **Why:** The user repeatedly encountered Android file-permission read failures, which must not be reported as Wi-Fi or video-codec failures. A bounded in-memory snapshot of small selections reduces dependence on provider grants without saving media; loading a whole long film into RAM would be unsafe.
 
 **How to apply:** Keep valid picker selections alive, check file readability before negotiation, and discard unusable references with an explicit reselect action. Keep any browser snapshot temporary and bounded across the entire queue, never persisted or uploaded.
+
+The user wants at least a one-minute recovery grace period when switching away from the phone app or browser, instead of treating a roughly five-second interruption as a lost connection.
+
+**Why:** Briefly viewing something else on the phone should not discard the pairing or immediately report failure.
+
+**How to apply:** Preserve the room and selected media during transient interruptions, cancel pending failure timers on recovery or deliberate disconnect, and let the phone-hosted TV player retry temporary network failures. Be clear that mobile operating systems can suspend background networking; a grace period is not a guarantee of uninterrupted background playback.

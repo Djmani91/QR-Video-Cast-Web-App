@@ -287,6 +287,7 @@ export default function HomeScreen() {
   const controlChannelRef = useRef<DataChannelLike | null>(null);
   const localSessionRef = useRef<string | null>(null);
   const localOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peerRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
   const temporaryMediaUrisRef = useRef(new Set<string>());
   const queueIndexRef = useRef(0);
@@ -330,6 +331,8 @@ export default function HomeScreen() {
   }, [roomId]);
 
   const closePeer = useCallback((notifyTv = false) => {
+    if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
+    peerRecoveryTimerRef.current = null;
     setLocalPlayback(false);
     localSessionRef.current = null;
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
@@ -354,6 +357,8 @@ export default function HomeScreen() {
   }, [roomId, sendSignal]);
 
   useEffect(() => () => {
+    transferRunRef.current += 1;
+    if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
     void stopLocalStream().catch(() => undefined);
     mediaChannelRef.current?.close();
@@ -723,6 +728,18 @@ export default function HomeScreen() {
 
       const peer = createPeerConnection();
       peerRef.current = peer;
+      let connectedOnce = false;
+      const holdInterruptedConnection = () => {
+        if (peerRecoveryTimerRef.current) return;
+        peerRecoveryTimerRef.current = setTimeout(() => {
+          peerRecoveryTimerRef.current = null;
+          if (transferRun !== transferRunRef.current || peerRef.current !== peer || (peer.connectionState === 'connected' && mediaChannelRef.current?.readyState === 'open')) return;
+          queueRunningRef.current = false;
+          setQueueRunning(false);
+          setStage('paired');
+          setError('The connection did not recover within one minute. Return to FrameCast and try again; the TV room is kept.');
+        }, 60_000);
+      };
       const mediaChannel = peer.createDataChannel('framecast-media');
       mediaChannelRef.current = mediaChannel;
       mediaChannel.onmessage = (event) => {
@@ -921,6 +938,10 @@ export default function HomeScreen() {
             setStage('sent');
           } catch (transferError) {
             if (transferRun !== transferRunRef.current) return;
+            if (connectedOnce && (peer.connectionState === 'disconnected' || peer.connectionState === 'failed' || mediaChannel.readyState === 'closed')) {
+              holdInterruptedConnection();
+              return;
+            }
             queueRunningRef.current = false;
             setQueueRunning(false);
             setStage('paired');
@@ -930,6 +951,10 @@ export default function HomeScreen() {
       };
       mediaChannel.onclose = () => {
         if (!transferComplete.current && transferRun === transferRunRef.current) {
+          if (connectedOnce) {
+            holdInterruptedConnection();
+            return;
+          }
           queueRunningRef.current = false;
           setQueueRunning(false);
           setStage('paired');
@@ -941,6 +966,17 @@ export default function HomeScreen() {
       };
       peer.onconnectionstatechange = () => {
         if (transferRun !== transferRunRef.current) return;
+        if (peer.connectionState === 'connected') {
+          connectedOnce = true;
+          if (peerRecoveryTimerRef.current) setError('');
+          if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
+          peerRecoveryTimerRef.current = null;
+          return;
+        }
+        if (connectedOnce && (peer.connectionState === 'disconnected' || peer.connectionState === 'failed')) {
+          holdInterruptedConnection();
+          return;
+        }
         if (peer.connectionState === 'failed') {
           queueRunningRef.current = false;
           setQueueRunning(false);

@@ -111,12 +111,24 @@ document.onkeydown=function(e){
 };
 document.onmousemove=reveal;document.onclick=reveal;document.ontouchstart=reveal;
 setInterval(function(){if(--seconds<=0)bar.style.display='none';else document.getElementById('timer').textContent=String(seconds);},1000);
-video.onplaying=function(){playback='playing';problem='';notice.textContent='';state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
+var networkRetryDeadline=0,networkRetryTimer=0,resumePosition=0,playedAtLeastOnce=false;
+video.onplaying=function(){playedAtLeastOnce=true;networkRetryDeadline=0;clearTimeout(networkRetryTimer);playback='playing';problem='';notice.textContent='';state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
+video.addEventListener('loadedmetadata',function(){if(resumePosition>0){video.currentTime=resumePosition;resumePosition=0;}});
 video.onwebkitendfullscreen=function(){fullscreenDenied=false;reveal();};
 video.onpause=function(){state();};
 video.onwaiting=function(){notice.textContent='Buffering from your phone…';};
 video.onended=function(){playback='ended';state();reveal();};
-video.onerror=function(){playback='error';problem='The TV could not play this video. Its format may not be supported, or the local Wi-Fi connection was blocked.';notice.textContent=problem;state();reveal();};
+video.onerror=function(){
+ if(video.error&&(video.error.code===2||(playedAtLeastOnce&&video.error.code===4))&&!exiting){
+  if(!networkRetryDeadline)networkRetryDeadline=Date.now()+60000;
+  if(Date.now()<networkRetryDeadline){
+   resumePosition=Math.max(resumePosition,video.currentTime||0);
+   playback='opening';problem='';notice.textContent='Waiting for your phone. Keeping the connection for one minute…';state();
+   clearTimeout(networkRetryTimer);networkRetryTimer=setTimeout(function(){if(!exiting){video.load();play();}},2000);return;
+  }
+ }
+ playback='error';problem='The TV could not play this video. Return to the phone app and retry; check the video format if the phone is already open.';notice.textContent=problem;state();reveal();
+};
 video.src='./media'+(config.extension||'.mp4');
 video.load();play();setInterval(poll,500);setInterval(state,3000);poll();state();
 })();
