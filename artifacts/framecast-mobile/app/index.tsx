@@ -17,6 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { File as ExpoFile } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
+import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { useColors } from '@/hooks/useColors';
 import {
   getGetCastRoomMessagesQueryKey,
@@ -74,6 +75,7 @@ const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const FILE_CHUNK_SIZE = 32 * 1024;
 const MAX_TRANSFER_BYTES = 256 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 8 * 1024 * 1024 * 1024;
+const BUFFERED_VIDEO_FALLBACK_MAX_BYTES = 128 * 1024 * 1024;
 
 function createPeerConnection(): PeerLike {
   if (Platform.OS === 'web') {
@@ -681,23 +683,45 @@ export default function HomeScreen() {
               setSentBytes(0);
               const streamCandidate = media.kind === 'video'
                 && (media.mimeType === 'video/mp4' || media.mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(media.name));
-              mediaChannel.send(JSON.stringify({
-                framecast: 'metadata',
-                name: media.name,
-                 itemId,
-                mimeType: media.mimeType,
-                kind: media.kind,
-                size: fileSize,
-                streamCandidate,
-              }));
-              for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
-                if (transferRun !== transferRunRef.current || mediaChannel.readyState !== 'open') return;
-                await waitForBuffer(mediaChannel);
-                const part = await file.slice(offset, Math.min(offset + FILE_CHUNK_SIZE, fileSize)).arrayBuffer();
-                if (transferRun !== transferRunRef.current) return;
-                mediaChannel.send(part);
-                const count = Math.min(offset + part.byteLength, fileSize);
-                setSentBytes(count);
+               let remuxedForStreaming = false;
+               if (streamCandidate) {
+                 setTransferNotice('Preparing this video for direct streaming on your phone…');
+                 const remuxResult = await remuxAndSendMp4({
+                   file,
+                   channel: mediaChannel,
+                   name: media.name,
+                   originalSize: fileSize,
+                   isCancelled: () => transferRun !== transferRunRef.current,
+                   waitForBuffer: () => waitForBuffer(mediaChannel),
+                   onProgress: setSentBytes,
+                 });
+                 if (remuxResult === 'cancelled') return;
+                 if (remuxResult === 'sent') {
+                   remuxedForStreaming = true;
+                   setTransferNotice('The phone prepared a streamable copy and is sending it directly to the TV.');
+                 } else if (remuxResult === 'unsupported' && fileSize > BUFFERED_VIDEO_FALLBACK_MAX_BYTES) {
+                   throw new Error('This large video could not be prepared for instant streaming. Try an MP4 or MOV with its playback index near the start of the file.');
+                 }
+               }
+               if (!remuxedForStreaming) {
+                 mediaChannel.send(JSON.stringify({
+                   framecast: 'metadata',
+                   name: media.name,
+                   itemId,
+                   mimeType: media.mimeType,
+                   kind: media.kind,
+                   size: fileSize,
+                   streamCandidate,
+                 }));
+                 for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
+                   if (transferRun !== transferRunRef.current || mediaChannel.readyState !== 'open') return;
+                   await waitForBuffer(mediaChannel);
+                   const part = await file.slice(offset, Math.min(offset + FILE_CHUNK_SIZE, fileSize)).arrayBuffer();
+                   if (transferRun !== transferRunRef.current) return;
+                   mediaChannel.send(part);
+                   const count = Math.min(offset + part.byteLength, fileSize);
+                   setSentBytes(count);
+                 }
               }
               let acknowledgement: Promise<string> | undefined;
               if (media.kind === 'image') {
@@ -712,8 +736,10 @@ export default function HomeScreen() {
                   };
                 });
               }
-              await waitForBuffer(mediaChannel);
-              mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+               if (!remuxedForStreaming) {
+                 await waitForBuffer(mediaChannel);
+                 mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+               }
               if (media.kind === 'video') {
                 const startDeadline = Date.now() + 20_000;
                 while (!videoStreamingRef.current && transferRun === transferRunRef.current && Date.now() < startDeadline) {
@@ -945,7 +971,7 @@ export default function HomeScreen() {
                       : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
                     : selectedMedia?.kind === 'video' ? transferNotice ? 'The TV started the video after it finished sending.' : 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
                 : selectedMedia?.kind === 'video'
-                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : 'Videos that cannot stream immediately transfer first, then play. Larger videos need a stream-ready format.'
+                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : 'MP4 and MOV videos are prepared on the phone for streaming. Other small videos transfer first; the TV must support their codec.'
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 

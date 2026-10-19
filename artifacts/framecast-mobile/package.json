@@ -61,6 +61,7 @@
     "expo-dev-client": "~57.0.20",
     "expo-file-system": "~57.0.7",
     "expo-image-manipulator": "~57.0.21",
+    "mp4box": "^2.4.1",
     "react-native-webrtc": "124.0.7"
   }
 }

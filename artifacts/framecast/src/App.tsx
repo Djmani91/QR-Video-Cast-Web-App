@@ -14,6 +14,7 @@ import {
 } from '@workspace/api-client-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
+import { remuxAndSendMp4 } from './lib/mp4-remux';
 import { BrowserQRCodeReader } from '@zxing/browser';
 import {
   ArrowLeft,
@@ -464,7 +465,7 @@ function TvPage() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const mediaObjectUrlsRef = useRef<string[]>([]);
-  const mediaTransferRef = useRef<{ name: string; itemId?: string; mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[]; streamMode?: boolean } | null>(null);
+  const mediaTransferRef = useRef<{ name: string; itemId?: string; mimeType: string; kind: MediaKind; size: number; sizeUnknown?: boolean; received: number; chunks: ArrayBuffer[]; streamMode?: boolean } | null>(null);
   const videoStreamRef = useRef<VideoStreamSession | null>(null);
   const [videoStreamActive, setVideoStreamActive] = useState(false);
   const [receivedImages, setReceivedImages] = useState<{ url: string; name: string; itemId?: string }[]>([]);
@@ -625,7 +626,7 @@ function TvPage() {
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
-                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean; url?: string };
+                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; sizeUnknown?: boolean; streamCandidate?: boolean; url?: string };
                     try {
                       packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean; url?: string };
                     } catch {
@@ -829,13 +830,18 @@ function TvPage() {
                             window.clearTimeout(session.initTimer);
                             sourceBuffer.addEventListener('updateend', () => drainVideoStream(session, video));
                             sourceBuffer.addEventListener('error', () => failVideoStream('The TV browser rejected part of the video stream. Try a standard H.264/AAC fragmented MP4.'));
+                            video.addEventListener('canplay', () => {
+                              void video.play().then(() => {
+                                setPlaying(true);
+                                if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                              }).catch(() => {
+                                setError('The TV browser needs a tap to start this video. Use the Play button on the TV screen.');
+                                if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+                              });
+                            }, { once: true });
                             session.appendQueue.push(...session.initialChunks);
                             session.initialChunks = [];
                             drainVideoStream(session, video);
-                            void video.play().then(() => {
-                              setPlaying(true);
-                              if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
-                            }).catch(() => failVideoStream('The TV could not start this live video stream. Check its video and audio format.'));
                           } catch {
                             fallbackToBufferedVideo('The TV browser cannot stream this video format immediately.');
                           }
@@ -859,6 +865,7 @@ function TvPage() {
                         mimeType: packet.mimeType,
                         kind,
                         size: packet.size,
+                        sizeUnknown: packet.sizeUnknown,
                         received: 0,
                         chunks: [],
                         streamMode,
@@ -869,7 +876,7 @@ function TvPage() {
                     }
                     if (packet.framecast === 'complete') {
                       const transfer = mediaTransferRef.current;
-                      if (!transfer || transfer.received !== transfer.size) {
+                      if (!transfer || (!transfer.sizeUnknown && transfer.received !== transfer.size) || (transfer.sizeUnknown && transfer.received === 0)) {
                         setError('The media transfer was incomplete. Send the file again.');
                         return;
                       }
@@ -1582,27 +1589,49 @@ function PhonePage({ roomId }: { roomId?: string }) {
               const mimeType = getMediaMimeType(outgoing, kind);
                const streamCandidate = kind === 'video'
                  && (mimeType === 'video/mp4' || mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(outgoing.name));
-              mediaChannel.send(JSON.stringify({
-                framecast: 'metadata',
-                name: outgoing.name,
-                 itemId,
-                mimeType,
-                kind,
-                size: outgoing.size,
-                 streamCandidate,
-              }));
               let lastProgressUpdate = 0;
-              for (let offset = 0; offset < outgoing.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
-                if (transferRun !== transferRunRef.current) return;
-                await waitForDataChannelBuffer(mediaChannel);
-                const chunk = await outgoing.slice(offset, Math.min(offset + MEDIA_CHUNK_SIZE_BYTES, outgoing.size)).arrayBuffer();
-                if (transferRun !== transferRunRef.current) return;
-                mediaChannel.send(chunk);
-                const sentBytes = Math.min(offset + chunk.byteLength, outgoing.size);
-                const now = Date.now();
-                if (now - lastProgressUpdate > 120 || sentBytes === outgoing.size) {
-                  setProgress(Math.min(99, Math.round((sentBytes / outgoing.size) * 100)));
-                  lastProgressUpdate = now;
+               let remuxedForStreaming = false;
+               if (streamCandidate) {
+                 setTransferNotice('Preparing this video for direct streaming on your phone…');
+                 const remuxResult = await remuxAndSendMp4({
+                   file: outgoing,
+                   channel: mediaChannel,
+                   name: outgoing.name,
+                   originalSize: outgoing.size,
+                   isCancelled: () => transferRun !== transferRunRef.current,
+                   waitForBuffer: () => waitForDataChannelBuffer(mediaChannel),
+                   onProgress: (bytes) => setProgress(Math.min(99, Math.round((bytes / outgoing.size) * 100))),
+                 });
+                 if (remuxResult === 'cancelled') return;
+                 if (remuxResult === 'sent') {
+                   remuxedForStreaming = true;
+                   setTransferNotice('The phone prepared a streamable copy and is sending it directly to the TV.');
+                 } else if (remuxResult === 'unsupported' && outgoing.size > BUFFERED_VIDEO_FALLBACK_MAX_BYTES) {
+                   throw new Error('This large video could not be prepared for instant streaming. Try an MP4 or MOV with its playback index near the start of the file.');
+                 }
+               }
+               if (!remuxedForStreaming) {
+                 mediaChannel.send(JSON.stringify({
+                   framecast: 'metadata',
+                   name: outgoing.name,
+                   itemId,
+                   mimeType,
+                   kind,
+                   size: outgoing.size,
+                   streamCandidate,
+                 }));
+                 for (let offset = 0; offset < outgoing.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
+                   if (transferRun !== transferRunRef.current) return;
+                   await waitForDataChannelBuffer(mediaChannel);
+                   const chunk = await outgoing.slice(offset, Math.min(offset + MEDIA_CHUNK_SIZE_BYTES, outgoing.size)).arrayBuffer();
+                   if (transferRun !== transferRunRef.current) return;
+                   mediaChannel.send(chunk);
+                   const sentBytes = Math.min(offset + chunk.byteLength, outgoing.size);
+                   const now = Date.now();
+                   if (now - lastProgressUpdate > 120 || sentBytes === outgoing.size) {
+                     setProgress(Math.min(99, Math.round((sentBytes / outgoing.size) * 100)));
+                     lastProgressUpdate = now;
+                   }
                 }
               }
               let acknowledgement: Promise<string> | undefined;
@@ -1618,8 +1647,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   };
                 });
               }
-              await waitForDataChannelBuffer(mediaChannel);
-              mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+               if (!remuxedForStreaming) {
+                 await waitForDataChannelBuffer(mediaChannel);
+                 mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+               }
               if (kind === 'video') {
                 const startDeadline = Date.now() + 20_000;
                 while (!videoStreamingRef.current && transferRun === transferRunRef.current && Date.now() < startDeadline) {
@@ -1627,7 +1658,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 }
                 if (transferRun !== transferRunRef.current) return;
                 if (!videoStreamingRef.current) {
-                  throw new Error('The TV did not start the video stream. Check the format and keep both devices awake.');
+                  throw new Error('The TV did not start the video. Check the format and keep both devices awake.');
                 }
               } else {
                 const playback = await acknowledgement;
@@ -1968,7 +1999,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {mediaKind === 'video' && <p className="support-note">Videos that cannot stream immediately transfer directly to the TV first, then play. Larger videos need a stream-ready format.</p>}
+            {mediaKind === 'video' && <p className="support-note">MP4/MOV files are prepared on the phone for streaming. Other small videos transfer first; the TV must support the codec.</p>}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
