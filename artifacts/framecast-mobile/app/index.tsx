@@ -13,6 +13,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { File as ExpoFile } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
@@ -98,6 +99,28 @@ function waitForBuffer(channel: DataChannelLike) {
     };
     channel.addEventListener('bufferedamountlow', onLow);
   });
+}
+
+async function createPhotoPreviewDataUrl(uri: string): Promise<string | undefined> {
+  try {
+    let result = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: 480 } }],
+      { compress: 0.3, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+    );
+    if (!result.base64 || result.base64.length > 58_000) {
+      result = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: 320 } }],
+        { compress: 0.2, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+      );
+    }
+    return result.base64 && result.base64.length <= 58_000
+      ? `data:image/jpeg;base64,${result.base64}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function getRoomIdFromQr(value: string): string | null {
@@ -435,11 +458,26 @@ export default function HomeScreen() {
               if (fileSize > MAX_TRANSFER_BYTES) {
                 throw new Error('This version supports files up to 256 MB. Choose a shorter or smaller video.');
               }
+               const itemId = media.kind === 'image' ? `${Date.now()}-${index}` : undefined;
+               if (media.kind === 'image') {
+                 const previewDataUrl = await createPhotoPreviewDataUrl(media.uri);
+                 if (previewDataUrl && transferRun === transferRunRef.current) {
+                   await waitForBuffer(mediaChannel);
+                   mediaChannel.send(JSON.stringify({
+                     framecast: 'preview',
+                     itemId,
+                     name: media.name,
+                     kind: 'image',
+                     previewDataUrl,
+                   }));
+                 }
+               }
               setTotalBytes(fileSize);
               setSentBytes(0);
               mediaChannel.send(JSON.stringify({
                 framecast: 'metadata',
                 name: media.name,
+                 itemId,
                 mimeType: media.mimeType,
                 kind: media.kind,
                 size: fileSize,

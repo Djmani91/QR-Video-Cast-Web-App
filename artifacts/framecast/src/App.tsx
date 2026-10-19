@@ -244,6 +244,52 @@ async function preparePhotoForTransfer(file: File): Promise<File> {
   }
 }
 
+async function createPhotoPreviewDataUrl(file: File): Promise<string | undefined> {
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = sourceUrl;
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('Could not make a quick photo preview.'));
+    });
+    const scale = Math.min(1, 480 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return undefined;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const preview = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.3));
+    if (!preview || preview.size > 40_000) return undefined;
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Could not encode photo preview.'));
+      reader.onerror = () => reject(new Error('Could not encode photo preview.'));
+      reader.readAsDataURL(preview);
+    });
+  } catch {
+    return undefined;
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
+function photoPreviewBlob(dataUrl: string): Blob | undefined {
+  try {
+    const [header, encoded] = dataUrl.split(',', 2);
+    if (!header || !encoded || encoded.length > 58_000) return undefined;
+    const mimeType = header.match(/^data:(image\/[a-z0-9.+-]+);base64$/i)?.[1];
+    if (!mimeType) return undefined;
+    const binary = atob(encoded);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: mimeType });
+  } catch {
+    return undefined;
+  }
+}
+
 async function waitForDataChannelBuffer(channel: RTCDataChannel) {
   while (channel.bufferedAmount > DATA_CHANNEL_BUFFER_LIMIT_BYTES) {
     if (channel.readyState !== 'open') {
@@ -273,11 +319,12 @@ function TvPage() {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const mediaObjectUrlsRef = useRef<string[]>([]);
-  const mediaTransferRef = useRef<{ name: string; mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[] } | null>(null);
-  const [receivedImages, setReceivedImages] = useState<{ url: string; name: string }[]>([]);
-  const receivedImagesRef = useRef<{ url: string; name: string }[]>([]);
+  const mediaTransferRef = useRef<{ name: string; itemId?: string; mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[] } | null>(null);
+  const [receivedImages, setReceivedImages] = useState<{ url: string; name: string; itemId?: string }[]>([]);
+  const receivedImagesRef = useRef<{ url: string; name: string; itemId?: string }[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [imageZoom, setImageZoom] = useState(1);
+  const [photoPreviewVisible, setPhotoPreviewVisible] = useState(false);
   const [transferProgress, setTransferProgress] = useState<number | null>(null);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
@@ -304,6 +351,7 @@ function TvPage() {
     setReceivedImages([]);
     setCurrentImageIndex(0);
     setImageZoom(1);
+    setPhotoPreviewVisible(false);
     for (const objectUrl of mediaObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
     mediaObjectUrlsRef.current = [];
     if (videoRef.current) {
@@ -392,11 +440,29 @@ function TvPage() {
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
-                    let packet: { framecast?: string; name?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number };
                     try {
-                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number };
                     } catch {
                       setError('The phone sent an unreadable media transfer message.');
+                      return;
+                    }
+                    if (packet.framecast === 'preview' && packet.kind === 'image' && packet.itemId && packet.previewDataUrl) {
+                      const blob = photoPreviewBlob(packet.previewDataUrl);
+                      if (blob) {
+                        const url = URL.createObjectURL(blob);
+                        mediaObjectUrlsRef.current.push(url);
+                        const currentImages = receivedImagesRef.current;
+                        const existingIndex = currentImages.findIndex((image) => image.itemId === packet.itemId);
+                        const preview = { url, name: packet.name || 'Photo preview', itemId: packet.itemId };
+                        const nextImages = existingIndex >= 0
+                          ? currentImages.map((image, index) => index === existingIndex ? preview : image)
+                          : [...currentImages, preview];
+                        receivedImagesRef.current = nextImages;
+                        setReceivedImages(nextImages);
+                        setPhotoPreviewVisible(true);
+                        setTransferProgress(0);
+                      }
                       return;
                     }
                     if (packet.framecast === 'metadata') {
@@ -407,6 +473,7 @@ function TvPage() {
                       }
                       mediaTransferRef.current = {
                         name: packet.name || `Photo ${receivedImagesRef.current.length + 1}`,
+                        itemId: packet.itemId,
                         mimeType: packet.mimeType,
                         kind: packet.kind === 'image' ? 'image' : 'video',
                         size: packet.size,
@@ -431,15 +498,31 @@ function TvPage() {
                           videoRef.current.removeAttribute('src');
                           videoRef.current.load();
                         }
-                        const images = [...receivedImagesRef.current, { url, name: transfer.name }];
-                        receivedImagesRef.current = images;
-                        setReceivedImages(images);
+                        const existingIndex = transfer.itemId
+                          ? receivedImagesRef.current.findIndex((image) => image.itemId === transfer.itemId)
+                          : -1;
+                        if (existingIndex >= 0) {
+                          const existing = receivedImagesRef.current[existingIndex];
+                          URL.revokeObjectURL(existing.url);
+                          mediaObjectUrlsRef.current = mediaObjectUrlsRef.current.filter((objectUrl) => objectUrl !== existing.url);
+                          const updatedImages = receivedImagesRef.current.map((image, index) => index === existingIndex
+                            ? { url, name: transfer.name, itemId: transfer.itemId }
+                            : image);
+                          receivedImagesRef.current = updatedImages;
+                          setReceivedImages(updatedImages);
+                        } else {
+                          const updatedImages = [...receivedImagesRef.current, { url, name: transfer.name, itemId: transfer.itemId }];
+                          receivedImagesRef.current = updatedImages;
+                          setReceivedImages(updatedImages);
+                        }
+                        setPhotoPreviewVisible(false);
                         setImageZoom(1);
                         if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'displayed' }));
                       } else if (videoRef.current) {
                         receivedImagesRef.current = [];
                         setReceivedImages([]);
                         setCurrentImageIndex(0);
+                        setPhotoPreviewVisible(false);
                         videoRef.current.pause();
                         videoRef.current.srcObject = null;
                         videoRef.current.removeAttribute('src');
@@ -569,7 +652,9 @@ function TvPage() {
   const roomExpired = Boolean(room && new Date(room.expiresAt).getTime() <= clock);
   const statusCopy = status === 'connected'
     ? transferProgress !== null && transferProgress < 100
-      ? `Connected. Receiving the guest’s ${mediaKind === 'image' ? 'photo' : 'video'}…`
+      ? photoPreviewVisible && mediaKind === 'image'
+        ? 'Quick photo preview is on screen. The full photo is arriving directly.'
+        : `Connected. Receiving the guest’s ${mediaKind === 'image' ? 'photo' : 'video'}…`
       : transferProgress === null
         ? 'Connected directly. Waiting for media from the phone.'
         : `The guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on this screen.`
@@ -645,7 +730,7 @@ function TvPage() {
                   : <div className="qr-empty"><Smartphone size={28} /><span>{roomExpired ? 'This pairing code has expired' : 'Your pairing code will appear here'}</span></div>}
               </div>
             )}
-              <p className="pair-prompt">{status === 'connected' ? transferProgress !== null && transferProgress < 100 ? 'Receiving directly from the phone. Playback starts when the transfer is complete.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
+              <p className="pair-prompt">{status === 'connected' ? photoPreviewVisible && mediaKind === 'image' ? 'A quick preview is on screen. The complete photo is arriving directly from the phone.' : transferProgress !== null && transferProgress < 100 ? mediaKind === 'video' ? 'Receiving the video directly. Playback starts when the phone has sent a playable stream.' : 'Receiving the photo directly from the phone.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
             {!room || status === 'failed' || roomExpired ? (
               <button type="button" className="button-primary" onClick={startRoom} disabled={creatingRoom} data-testid="button-create-room">
                 {creatingRoom ? <RefreshCw size={16} className="animate-spin" /> : status === 'failed' || roomExpired ? <RefreshCw size={16} /> : <ArrowUpRight size={16} />}
@@ -944,6 +1029,20 @@ function PhonePage({ roomId }: { roomId?: string }) {
               setMediaKind(kind);
               const nextUrl = URL.createObjectURL(selected);
               setObjectUrl(nextUrl);
+               const itemId = kind === 'image' ? `${Date.now()}-${index}` : undefined;
+               if (kind === 'image') {
+                 const previewDataUrl = await createPhotoPreviewDataUrl(selected);
+                 if (previewDataUrl && transferRun === transferRunRef.current) {
+                   await waitForDataChannelBuffer(mediaChannel);
+                   mediaChannel.send(JSON.stringify({
+                     framecast: 'preview',
+                     itemId,
+                     name: selected.name,
+                     kind: 'image',
+                     previewDataUrl,
+                   }));
+                 }
+               }
               const outgoing = kind === 'image' ? await preparePhotoForTransfer(selected) : selected;
               if (transferRun !== transferRunRef.current) return;
               setProgress(0);
@@ -951,6 +1050,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               mediaChannel.send(JSON.stringify({
                 framecast: 'metadata',
                 name: outgoing.name,
+                 itemId,
                 mimeType,
                 kind,
                 size: outgoing.size,
