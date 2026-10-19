@@ -2442,16 +2442,19 @@ function PhonePage({ roomId }: { roomId?: string }) {
     connectionStartedRef.current = Date.now();
     const sessionId = crypto.randomUUID();
     activeSessionRef.current = sessionId;
+    let videoSetupStage = 'preparing the direct connection';
     try {
       if (!castUrl && queuedFiles.length === 1 && queuedFiles[0].type.startsWith('video/')) {
         const video = videoRef.current;
         if (!video) throw new Error('The phone video preview is not ready. Choose the video again.');
+        videoSetupStage = 'creating the phone audio connection';
         let graph = phoneAudioGraphRef.current;
         if (!graph || graph.video !== video) {
           if (graph) { graph.source.disconnect(); void graph.context.close(); }
           graph = createPhoneAudioGraph(video);
           phoneAudioGraphRef.current = graph;
         }
+        videoSetupStage = 'starting live video capture on the phone';
         const live = startPhoneVideoStream(video, graph, {
           previewMuted: muted,
           onState: (state) => {
@@ -2469,9 +2472,11 @@ function PhonePage({ roomId }: { roomId?: string }) {
         });
         phoneVideoStreamRef.current = live;
         setTransferNotice('Opening the first video frame on this phone… No whole-video preparation or upload.');
+        videoSetupStage = 'opening the selected video on the phone';
         await live.ready;
         if (transferRun !== transferRunRef.current) return;
         if (options.resume) {
+          videoSetupStage = 'restoring the video position and orientation';
           await live.command(`video:seek:${options.resume.currentTime}`);
           await live.command(`video:fit:${options.resume.fitMode}`);
           for (let rotation = 0; rotation < options.resume.rotation; rotation += 90) await live.command('video:rotate');
@@ -2486,6 +2491,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
           if (transferRun !== transferRunRef.current) return;
         }
       }
+      videoSetupStage = phoneVideoStreamRef.current
+        ? 'adding the phone video stream to the direct TV connection'
+        : 'creating the direct TV connection';
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
       const live = phoneVideoStreamRef.current;
@@ -2611,7 +2619,13 @@ function PhonePage({ roomId }: { roomId?: string }) {
           if (packet.framecast === 'stream-error') {
             recoveryWantedRef.current = false;
             recoveryRef.current?.cancel();
-            setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
+            const streamMessage = packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.';
+            if (/illegal invocation/i.test(streamMessage)) {
+              console.error('FrameCast TV reported an internal video playback error:', streamMessage);
+              setError('The TV browser reported “Illegal invocation” while opening the video. The phone connected, but the TV could not start playback.');
+            } else {
+              setError(streamMessage);
+            }
             setTransferNotice('');
             setStatus('failed');
             stopPeer();
@@ -2645,15 +2659,18 @@ function PhonePage({ roomId }: { roomId?: string }) {
         void (async () => {
           try {
             if (castUrl) {
+              videoSetupStage = 'opening the video link on the TV';
               mediaChannel.send(JSON.stringify({ framecast: 'remote-video', url: castUrl }));
               return;
             }
             if (queuedFiles.some((item) => item.type.startsWith('video/'))) {
+              videoSetupStage = 'checking the TV video player';
               await verifyRotationRenderer(mediaChannel);
               if (transferRun !== transferRunRef.current) return;
             }
             const live = phoneVideoStreamRef.current;
             if (live) {
+              videoSetupStage = 'starting video playback on the TV';
               mediaChannel.send(JSON.stringify({ framecast: 'live-video' }));
               await live.command('play');
               const startup = await waitForVideoStartup({
@@ -2674,6 +2691,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
             if (queuedFiles.some((item) => item.type.startsWith('video/'))) {
               throw new Error('The live video stream stopped before playback. Keep this phone page open and tap Try again. Videos are not prepared or uploaded in full.');
             }
+            videoSetupStage = 'sending the selected media to the TV';
             for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
               videoStartupRef.current = { status: 'waiting' };
@@ -2787,7 +2805,13 @@ function PhonePage({ roomId }: { roomId?: string }) {
               return;
             }
             setStatus('failed');
-            setError(transferError instanceof Error ? transferError.message : 'The file could not be sent directly. Try again.');
+            const message = transferError instanceof Error ? transferError.message : 'The file could not be sent directly. Try again.';
+            if (/illegal invocation/i.test(message) && mediaKind === 'video') {
+              console.error(`FrameCast video playback failed while ${videoSetupStage}.`, transferError);
+              setError(`Chrome reported “Illegal invocation” while ${videoSetupStage}. The pairing is active, but video playback failed.`);
+            } else {
+              setError(message);
+            }
           }
         })();
       };
@@ -2827,11 +2851,13 @@ function PhonePage({ roomId }: { roomId?: string }) {
           setStatus('connecting');
         }
       };
+      videoSetupStage = 'negotiating the direct connection with the TV';
       const offer = await peer.createOffer();
       if (transferRun !== transferRunRef.current) return;
       await peer.setLocalDescription(offer);
       if (transferRun !== transferRunRef.current) return;
       send('phone', 'offer', { type: offer.type, sdp: offer.sdp, sessionId, mediaKind: castUrl ? 'video' : mediaKind, transport: 'data-channel' });
+      videoSetupStage = 'waiting for the TV to open the video';
       recoveryRef.current?.wake();
     } catch (connectionError) {
       if (transferRun !== transferRunRef.current) return;
@@ -2842,7 +2868,13 @@ function PhonePage({ roomId }: { roomId?: string }) {
       recoveryWantedRef.current = false;
       stopPeer();
       setStatus('failed');
-      setError(connectionError instanceof Error ? connectionError.message : 'Could not start a direct connection to the TV.');
+      const message = connectionError instanceof Error ? connectionError.message : 'Could not start a direct connection to the TV.';
+      if (/illegal invocation/i.test(message) && queuedFiles.some((selected) => selected.type.startsWith('video/'))) {
+        console.error(`FrameCast video startup failed while ${videoSetupStage}.`, connectionError);
+        setError(`Chrome reported “Illegal invocation” while ${videoSetupStage}. This is specific to video startup, not the photo or Wi-Fi connection.`);
+      } else {
+        setError(message);
+      }
     } finally {
       if (connectionAttemptRef.current === transferRun) connectionAttemptRef.current = null;
     }
