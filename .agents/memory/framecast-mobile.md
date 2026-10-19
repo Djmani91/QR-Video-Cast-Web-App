@@ -31,9 +31,9 @@ Keep the Android build source in a private GitHub repository. The user approved 
 
 Verify authenticated repository access before promising GitHub changes; the source-control connection's active/healthy status alone is not proof of usable workspace credentials.
 
-**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed.
+**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed. A user reconnect produced a new connection but still did not authorize either shell execution path.
 
-**How to apply:** Try an authenticated read before remote writes. If access is unavailable, preserve the repository and source, explain the authorization blocker, and use the Git pane connection flow rather than repeatedly showing failed connection prompts.
+**How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated reconnects if commands still cannot authenticate. Preserve the repository and source, explain the blocker, and offer a manual source/build handoff instead of claiming an APK or private repository exists.
 
 The user wants returning to the same phone browser to reconnect to the same TV automatically, without refreshing, re-entering the code, or rescanning. Keep pairing and selected media until the user explicitly disconnects; a one-minute transport grace window is not a pairing timeout.
 
