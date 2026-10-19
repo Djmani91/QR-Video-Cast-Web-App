@@ -52,8 +52,35 @@ export interface CastRoomLookupResponse {
   roomId: string;
 }
 
+export type CastSignalPayloadType = typeof CastSignalPayloadType[keyof typeof CastSignalPayloadType];
+
+
+export const CastSignalPayloadType = {
+  offer: 'offer',
+  answer: 'answer',
+} as const;
+
+export type CastSignalPayloadMediaKind = typeof CastSignalPayloadMediaKind[keyof typeof CastSignalPayloadMediaKind];
+
+
+export const CastSignalPayloadMediaKind = {
+  video: 'video',
+  image: 'image',
+} as const;
+
+export type CastSignalPayloadTransport = typeof CastSignalPayloadTransport[keyof typeof CastSignalPayloadTransport];
+
+
+export const CastSignalPayloadTransport = {
+  'data-channel': 'data-channel',
+  track: 'track',
+} as const;
+
 export interface CastSignalPayload {
+  type?: CastSignalPayloadType;
   sdp?: string;
+  mediaKind?: CastSignalPayloadMediaKind;
+  transport?: CastSignalPayloadTransport;
   candidate?: string;
   /** @nullable */
   sdpMid?: string | null;

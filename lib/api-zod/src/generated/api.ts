@@ -66,7 +66,10 @@ export const GetCastRoomMessagesResponseItem = zod.object({
   "from": zod.enum(['tv', 'phone']),
   "type": zod.enum(['offer', 'answer', 'ice', 'ready', 'close']),
   "payload": zod.object({
+  "type": zod.enum(['offer', 'answer']).optional(),
   "sdp": zod.string().optional(),
+  "mediaKind": zod.enum(['video', 'image']).optional(),
+  "transport": zod.enum(['data-channel', 'track']).optional(),
   "candidate": zod.string().optional(),
   "sdpMid": zod.string().nullish(),
   "sdpMLineIndex": zod.number().int().nullish(),
@@ -87,7 +90,10 @@ export const SendCastRoomMessageBody = zod.object({
   "from": zod.enum(['tv', 'phone']),
   "type": zod.enum(['offer', 'answer', 'ice', 'ready', 'close']),
   "payload": zod.object({
+  "type": zod.enum(['offer', 'answer']).optional(),
   "sdp": zod.string().optional(),
+  "mediaKind": zod.enum(['video', 'image']).optional(),
+  "transport": zod.enum(['data-channel', 'track']).optional(),
   "candidate": zod.string().optional(),
   "sdpMid": zod.string().nullish(),
   "sdpMLineIndex": zod.number().int().nullish(),

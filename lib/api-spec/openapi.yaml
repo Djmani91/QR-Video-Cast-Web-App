@@ -188,8 +188,17 @@ components:
       type: object
       additionalProperties: true
       properties:
+        type:
+          type: string
+          enum: [offer, answer]
         sdp:
           type: string
+        mediaKind:
+          type: string
+          enum: [video, image]
+        transport:
+          type: string
+          enum: [data-channel, track]
         candidate:
           type: string
         sdpMid:

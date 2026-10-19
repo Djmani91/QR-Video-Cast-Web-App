@@ -332,7 +332,15 @@ function TvPage() {
       if (signal.from !== 'phone' || seenRef.current.has(signal.sequence)) continue;
       seenRef.current.add(signal.sequence);
       if (signal.type === 'ready') {
-        setStatus((current) => current === 'connected' ? current : 'paired');
+        const connectionState = peerRef.current?.connectionState;
+        if (!peerRef.current || connectionState === 'failed' || connectionState === 'disconnected' || connectionState === 'closed') {
+          if (peerRef.current) {
+            stopPeer();
+            queuedCandidates.current = [];
+          }
+          setError('');
+          setStatus('paired');
+        }
       } else if (signal.type === 'offer') {
         void (async () => {
           try {
@@ -458,9 +466,12 @@ function TvPage() {
             await peer.setLocalDescription(answer);
             send('tv', 'answer', { type: answer.type, sdp: answer.sdp });
             setStatus('connecting');
-          } catch {
+          } catch (negotiationError) {
+            console.error('FrameCast TV could not negotiate the direct connection:', negotiationError);
+            stopPeer();
+            queuedCandidates.current = [];
             setStatus('failed');
-            setError('We could not establish this connection. Try creating a fresh room.');
+            setError('The direct connection setup failed. Create a fresh room on the TV, then scan its new code from the phone.');
           }
         })();
       } else if (signal.type === 'ice') {
@@ -472,6 +483,7 @@ function TvPage() {
         }
       } else if (signal.type === 'close') {
         stopPeer();
+        setError('');
         setStatus('paired');
       }
     }
@@ -501,7 +513,7 @@ function TvPage() {
       : status === 'disconnected'
         ? 'Connection paused. Waiting for the phone to come back online.'
         : status === 'failed'
-          ? 'Connection lost. Start a new room to try again.'
+          ? 'Connection failed. Create a fresh room, then scan the new code.'
           : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
 
   return (
