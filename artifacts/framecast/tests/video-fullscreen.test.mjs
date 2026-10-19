@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { requestVideoFullscreen, exitVideoFullscreen, isVideoFullscreen } from '../src/lib/video-fullscreen.ts';
+import { requestVideoFullscreen, exitVideoFullscreen, isVideoFullscreen, requestMediaFullscreen } from '../src/lib/video-fullscreen.ts';
 
 test('prefers the TV native video player rather than fullscreening the webpage', async () => {
   const calls = [];
@@ -42,4 +42,21 @@ test('standard Back exits element fullscreen', async () => {
   const document = { fullscreenElement: video, exitFullscreen() { exited = true; } };
   assert.equal(await exitVideoFullscreen(video, document), true);
   assert.equal(exited, true);
+});
+
+test('photos request fullscreen for their gallery container, preserving zoom and navigation', async () => {
+  let owner;
+  const gallery = { requestFullscreen() { owner = this; } };
+  assert.equal(await requestMediaFullscreen(gallery), true);
+  assert.equal(owner, gallery);
+});
+
+test('gallery fullscreen falls back to the TV prefix and reports permission denial', async () => {
+  let requested = false;
+  assert.equal(await requestMediaFullscreen({
+    requestFullscreen: async () => { throw Error('Unsupported'); },
+    webkitRequestFullScreen() { requested = true; },
+  }), true);
+  assert.equal(requested, true);
+  assert.equal(await requestMediaFullscreen({ requestFullscreen: async () => { throw Error('Gesture required'); } }), false);
 });

@@ -16,7 +16,8 @@ import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
 import { remuxAndSendMp4 } from './lib/mp4-remux';
 import { assertBrowserFileReadable, isSelectedMediaAccessError, preserveBrowserSelection, SelectedMediaAccessError } from './lib/browser-media';
-import { exitVideoFullscreen, isVideoFullscreen, requestVideoFullscreen } from './lib/video-fullscreen';
+import { exitVideoFullscreen, isVideoFullscreen, requestVideoFullscreen, requestMediaFullscreen } from './lib/video-fullscreen';
+import { normalizeRotation, requiredVideoRotation, type VideoOrientation } from './lib/media-orientation';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -479,6 +480,41 @@ function TvPage() {
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const [needsVideoFullscreen, setNeedsVideoFullscreen] = useState(false);
   const [videoReturnedInline, setVideoReturnedInline] = useState(false);
+  const [photoReturnedInline, setPhotoReturnedInline] = useState(false);
+  const [needsPhotoFullscreen, setNeedsPhotoFullscreen] = useState(false);
+  const photoFullscreenAttemptedRef = useRef(false);
+  const playbackStageRef = useRef<HTMLElement>(null);
+  const videoStageRef = useRef<HTMLDivElement>(null);
+  const [videoRotation, setVideoRotation] = useState(0);
+  const videoRotationRef = useRef(0);
+  const orientationSourceRef = useRef<VideoOrientation | null>(null);
+  const manualRotationRef = useRef(0);
+  const [videoViewport, setVideoViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const applyVideoOrientation = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const rotation = normalizeRotation(requiredVideoRotation(orientationSourceRef.current, video.videoWidth, video.videoHeight) + manualRotationRef.current);
+    videoRotationRef.current = rotation;
+    setVideoRotation(rotation);
+    video.playsInline = rotation !== 0;
+    if (rotation) video.setAttribute('webkit-playsinline', '');
+    else video.removeAttribute('webkit-playsinline');
+  }, []);
+  const requestPlaybackFullscreen = useCallback((video: HTMLVideoElement) => {
+    if (videoRotationRef.current && playbackStageRef.current) return requestMediaFullscreen(playbackStageRef.current);
+    return requestVideoFullscreen(video);
+  }, []);
+  const rotateCurrentVideo = useCallback(() => {
+    manualRotationRef.current = normalizeRotation(manualRotationRef.current + 90);
+    applyVideoOrientation();
+    const video = videoRef.current;
+    if (video && isVideoFullscreen(video) && document.fullscreenElement !== playbackStageRef.current) {
+      void exitVideoFullscreen(video).then(() => {
+        setVideoReturnedInline(false);
+        return requestPlaybackFullscreen(video);
+      }).then((entered) => setNeedsVideoFullscreen(!entered));
+    }
+  }, [applyVideoOrientation, requestPlaybackFullscreen]);
   const autoFullscreenSourceRef = useRef<unknown>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
@@ -538,6 +574,13 @@ function TvPage() {
   const messages = messagesQuery.data?.messages ?? [];
 
   const stopPeer = useCallback(() => {
+    photoFullscreenAttemptedRef.current = false;
+    setNeedsPhotoFullscreen(false);
+    setPhotoReturnedInline(false);
+    orientationSourceRef.current = null;
+    manualRotationRef.current = 0;
+    videoRotationRef.current = 0;
+    setVideoRotation(0);
     controlChannelRef.current?.close();
     controlChannelRef.current = null;
     peerRef.current?.getReceivers().forEach((receiver) => receiver.track?.stop());
@@ -664,27 +707,68 @@ function TvPage() {
       if (autoFullscreenSourceRef.current === source) return;
       autoFullscreenSourceRef.current = source;
       setVideoReturnedInline(false);
-      void requestVideoFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+      applyVideoOrientation();
+      void requestPlaybackFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
     };
     const onExit = () => {
       const fullscreen = isVideoFullscreen(video);
       setBrowserFullscreen(fullscreen);
-      if (!fullscreen) setVideoReturnedInline(true);
+      setVideoReturnedInline(!fullscreen);
+      if (mediaKind === 'image') setPhotoReturnedInline(!fullscreen);
       // Do not re-enter on pause/resume or buffering after the viewer presses Back.
       setNeedsVideoFullscreen(false);
       revealTvControls();
     };
     video.addEventListener('playing', onPlaying);
+    video.addEventListener('loadedmetadata', applyVideoOrientation);
+    video.addEventListener('resize', applyVideoOrientation);
     video.addEventListener('webkitendfullscreen', onExit);
     document.addEventListener('fullscreenchange', onExit);
     document.addEventListener('webkitfullscreenchange', onExit);
     return () => {
       video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('loadedmetadata', applyVideoOrientation);
+      video.removeEventListener('resize', applyVideoOrientation);
       video.removeEventListener('webkitendfullscreen', onExit);
       document.removeEventListener('fullscreenchange', onExit);
       document.removeEventListener('webkitfullscreenchange', onExit);
     };
-  }, [revealTvControls]);
+  }, [revealTvControls, mediaKind, applyVideoOrientation, requestPlaybackFullscreen]);
+  useEffect(() => {
+    const measure = () => {
+      const stage = videoStageRef.current;
+      if (!stage || !stage.clientWidth || !stage.clientHeight) return;
+      setVideoViewport((previous) => previous.width === stage.clientWidth && previous.height === stage.clientHeight
+        ? previous : { width: stage.clientWidth, height: stage.clientHeight });
+    };
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    if (videoStageRef.current) observer?.observe(videoStageRef.current);
+    window.addEventListener('resize', measure);
+    document.addEventListener('fullscreenchange', measure);
+    document.addEventListener('webkitfullscreenchange', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+      document.removeEventListener('fullscreenchange', measure);
+      document.removeEventListener('webkitfullscreenchange', measure);
+    };
+  }, [status, mediaKind, videoReturnedInline, videoStreamActive]);
+  useEffect(() => {
+    if (mediaKind !== 'image' || status !== 'connected') return;
+    const onPhotoRemote = (event: KeyboardEvent) => {
+      if ((['Escape', 'Backspace', 'BrowserBack'].includes(event.key) || event.keyCode === 10009) && isVideoFullscreen(videoRef.current!)) {
+        event.preventDefault();
+        void exitVideoFullscreen(videoRef.current!);
+      } else if ((event.key === 'Enter' || event.keyCode === 13) && needsPhotoFullscreen && playbackStageRef.current) {
+        if ((event.target as HTMLElement | null)?.closest('button, input, a')) return;
+        event.preventDefault();
+        void requestMediaFullscreen(playbackStageRef.current).then((entered) => setNeedsPhotoFullscreen(!entered));
+      }
+    };
+    document.addEventListener('keydown', onPhotoRemote);
+    return () => document.removeEventListener('keydown', onPhotoRemote);
+  }, [mediaKind, status, needsPhotoFullscreen]);
   useEffect(() => {
     if (status !== 'connected' || mediaKind !== 'video' || youtubeVideoId) return;
     const video = videoRef.current;
@@ -707,7 +791,7 @@ function TvPage() {
         else {
           void video.play().catch(() => setPlaying(false));
           // This call is inside a real TV remote gesture, not a phone message.
-          if (needsVideoFullscreen) void requestVideoFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+          if (needsVideoFullscreen) void requestPlaybackFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
         }
       } else if (event.key === 'ArrowLeft' || event.keyCode === 412) {
         event.preventDefault();
@@ -723,7 +807,7 @@ function TvPage() {
     };
     document.addEventListener('keydown', onRemoteKey);
     return () => document.removeEventListener('keydown', onRemoteKey);
-  }, [status, mediaKind, youtubeVideoId, needsVideoFullscreen]);
+  }, [status, mediaKind, youtubeVideoId, needsVideoFullscreen, requestPlaybackFullscreen]);
   useEffect(() => {
     if (!youtubeVideoId) return;
     const timer = window.setInterval(sendVideoState, 750);
@@ -782,7 +866,18 @@ function TvPage() {
     const video = videoRef.current;
     if (status === 'connected' && mediaKind === 'video' && !youtubeVideoId && video) {
       if (isVideoFullscreen(video)) void exitVideoFullscreen(video);
-      else void requestVideoFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+      else {
+        setVideoReturnedInline(false);
+        void requestPlaybackFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+      }
+      return;
+    }
+    if (status === 'connected' && mediaKind === 'image' && playbackStageRef.current) {
+      if (video && isVideoFullscreen(video)) void exitVideoFullscreen(video);
+      else {
+        setPhotoReturnedInline(false);
+        void requestMediaFullscreen(playbackStageRef.current).then((entered) => setNeedsPhotoFullscreen(!entered));
+      }
       return;
     }
     if (document.fullscreenElement) {
@@ -873,7 +968,7 @@ function TvPage() {
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
-                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; sizeUnknown?: boolean; streamCandidate?: boolean; url?: string };
+                    let packet: { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; sizeUnknown?: boolean; streamCandidate?: boolean; url?: string; rotation?: number; encodedWidth?: number; encodedHeight?: number; orientationNormalized?: boolean };
                     try {
                       packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean; url?: string };
                     } catch {
@@ -973,6 +1068,17 @@ function TvPage() {
                       return;
                     }
                     if (packet.framecast === 'metadata') {
+                      orientationSourceRef.current = packet.kind !== 'image' && Number.isFinite(packet.rotation)
+                        ? { rotation: packet.rotation!, encodedWidth: packet.encodedWidth || 0, encodedHeight: packet.encodedHeight || 0, orientationNormalized: packet.orientationNormalized === true } : null;
+                      manualRotationRef.current = 0;
+                      const initialRotation = packet.orientationNormalized === true ? normalizeRotation(packet.rotation || 0) : 0;
+                      videoRotationRef.current = initialRotation;
+                      setVideoRotation(initialRotation);
+                      if (videoRef.current) {
+                        videoRef.current.playsInline = initialRotation !== 0;
+                        if (initialRotation) videoRef.current.setAttribute('webkit-playsinline', '');
+                        else videoRef.current.removeAttribute('webkit-playsinline');
+                      }
                       youtubePlayerRef.current = null;
                       youtubeMediaChannelRef.current = null;
                       setYoutubeVideoId(null);
@@ -1363,6 +1469,8 @@ function TvPage() {
                       videoRef.current.muted = volume <= 0;
                       setMuted(volume <= 0);
                     }
+                  } else if (command === 'video:rotate') {
+                    rotateCurrentVideo();
                   } else if (command === 'video:mute' && videoRef.current) {
                     videoRef.current.muted = !videoRef.current.muted;
                     setMuted(videoRef.current.muted);
@@ -1455,7 +1563,7 @@ function TvPage() {
           : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
 
   return (
-    <div className={`app-shell${status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
+    <div className={`app-shell${status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) && !(mediaKind === 'image' && photoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
       <BrandHeader />
       <main className="page-wrap fade-in">
         <div className="hero-grid">
@@ -1466,7 +1574,7 @@ function TvPage() {
             <div className="trust-line"><ShieldCheck size={17} /> Phone files go directly to this screen. Video links are fetched by the TV from their source.</div>
           </section>
 
-          <section className="pair-card" aria-label="TV pairing and playback">
+          <section ref={playbackStageRef} className="pair-card" aria-label="TV pairing and playback">
             <div className="card-heading">
               <div><span className="eyebrow">This screen</span><h2>Pair a phone</h2></div>
               <div className="card-heading-actions">
@@ -1477,18 +1585,31 @@ function TvPage() {
                 </button>
               </div>
             </div>
+            <div ref={videoStageRef} className={!youtubeVideoId && status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'tv-video-stage' : 'sr-only'}>
             <video
               ref={videoRef}
-              className={!youtubeVideoId && status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'video-preview' : 'sr-only'}
+              className="video-preview"
+              style={videoRotation ? {
+                position: 'absolute', left: '50%', top: '50%', right: 'auto', bottom: 'auto',
+                width: `${videoRotation % 180 ? videoViewport.height : videoViewport.width}px`,
+                height: `${videoRotation % 180 ? videoViewport.width : videoViewport.height}px`,
+                maxHeight: 'none', transform: `translate(-50%, -50%) rotate(${videoRotation}deg)`,
+              } : undefined}
               autoPlay
-              controls
+              controls={videoRotation === 0}
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
             />
+            </div>
             {needsVideoFullscreen && status === 'connected' && mediaKind === 'video' && (
               <button type="button" className="button-secondary tv-video-fullscreen-permission" onClick={toggleBrowserFullscreen} data-testid="button-tv-video-fullscreen-permission">
                 <Maximize2 size={16} /> Press here with the TV remote for video full screen
+              </button>
+            )}
+            {needsPhotoFullscreen && status === 'connected' && mediaKind === 'image' && (
+              <button type="button" className="button-secondary tv-video-fullscreen-permission" onClick={toggleBrowserFullscreen} data-testid="button-tv-photo-fullscreen-permission">
+                <Maximize2 size={16} /> Press here with the TV remote for photo full screen
               </button>
             )}
             {youtubeVideoId && status === 'connected' && (
@@ -1506,6 +1627,12 @@ function TvPage() {
                 <img
                   className="image-preview"
                   src={receivedImages[currentImageIndex].url}
+                  onLoad={() => {
+                    if (photoFullscreenAttemptedRef.current || !playbackStageRef.current) return;
+                    photoFullscreenAttemptedRef.current = true;
+                    setPhotoReturnedInline(false);
+                    void requestMediaFullscreen(playbackStageRef.current).then((entered) => setNeedsPhotoFullscreen(!entered));
+                  }}
                   alt={receivedImages[currentImageIndex].name}
                   style={{ transform: `translateY(${imageOffsetY}px) scale(${imageZoom})` }}
                   data-testid="image-tv-current"
@@ -1561,6 +1688,7 @@ function TvPage() {
                   <button className="button-secondary" type="button" onClick={() => setImageZoom((zoom) => Math.min(4, Number((zoom + 0.25).toFixed(2))))} aria-label="Zoom in" data-testid="button-tv-photo-zoom-in">+</button>
                 </>}
                 {mediaKind === 'video' && <>
+                {!youtubeVideoId && <button className="button-secondary" type="button" onClick={rotateCurrentVideo} data-testid="button-tv-video-rotate"><RefreshCw size={16} /> Rotate</button>}
                 <button className="button-secondary" type="button" onClick={() => {
                   const youtube = youtubePlayerRef.current;
                   if (youtube) {
@@ -1998,6 +2126,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                  && (mimeType === 'video/mp4' || mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(outgoing.name));
               let lastProgressUpdate = 0;
                let remuxedForStreaming = false;
+               let sourceOrientation: VideoOrientation | undefined;
                if (streamCandidate) {
                  setTransferNotice('Preparing this video for direct streaming on your phone…');
                  const remuxResult = await remuxAndSendMp4({
@@ -2008,6 +2137,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                    isCancelled: () => transferRun !== transferRunRef.current,
                    waitForBuffer: () => waitForDataChannelBuffer(mediaChannel),
                    onProgress: (bytes) => setProgress(Math.min(99, Math.round((bytes / outgoing.size) * 100))),
+                   onOrientation: (orientation) => { sourceOrientation = orientation; },
                  });
                  if (remuxResult === 'cancelled') return;
                  if (remuxResult === 'sent') {
@@ -2026,6 +2156,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                    kind,
                    size: outgoing.size,
                    streamCandidate,
+                   ...sourceOrientation,
                  }));
                  for (let offset = 0; offset < outgoing.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
                    if (transferRun !== transferRunRef.current) return;
@@ -2380,6 +2511,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
             )}
             {status === 'connected' && mediaKind === 'video' && (videoStreaming || sentToTv) && (
               <div className="video-remote-controls" data-testid="video-remote-controls">
+                {!isUrlPlayback && <button type="button" className="button-secondary" onClick={() => sendPhotoControl('video:rotate')} data-testid="button-phone-video-rotate"><RefreshCw size={16} /> Rotate video on TV</button>}
                 <div className="photo-remote-navigation">
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('video:seek-by:-10')} aria-label="Skip back 10 seconds on TV" data-testid="button-phone-video-back">−10s</button>
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl(remoteVideoState.paused ? 'play' : 'pause')} aria-label={remoteVideoState.paused ? 'Play video on TV' : 'Pause video on TV'} data-testid="button-phone-video-play-pause">

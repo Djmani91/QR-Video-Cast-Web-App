@@ -1,8 +1,10 @@
 import { createFile } from 'mp4box';
+import { orientationFromTrack, type VideoOrientation } from './media-orientation';
 
 type Mp4Track = {
   id: number;
-  video?: unknown;
+  video?: { width: number; height: number };
+  matrix?: ArrayLike<number>;
   audio?: unknown;
 };
 
@@ -18,6 +20,7 @@ type Mp4Segmenter = {
   appendBuffer: (buffer: ArrayBuffer & { fileStart: number }) => number;
   setSegmentOptions: (id: number, user: unknown, options: { nbSamples: number; rapAlignement: boolean }) => void;
   initializeSegmentation: () => { buffer: ArrayBuffer } | Array<{ buffer: ArrayBuffer }>;
+  getTrackById: (id: number) => { tkhd: { matrix: number[]; width: number; height: number } };
   start: () => void;
   flush: () => void;
 };
@@ -47,6 +50,7 @@ export async function remuxAndSendMp4({
   isCancelled,
   waitForBuffer,
   onProgress,
+  onOrientation,
 }: {
   file: RemuxFile;
   channel: RemuxChannel;
@@ -55,6 +59,7 @@ export async function remuxAndSendMp4({
   isCancelled: () => boolean;
   waitForBuffer: () => Promise<void>;
   onProgress: (bytes: number) => void;
+  onOrientation?: (orientation: VideoOrientation) => void;
 }): Promise<RemuxSendResult> {
   const parser = createFile() as unknown as Mp4Segmenter;
   const outputQueue: ArrayBuffer[] = [];
@@ -79,6 +84,9 @@ export async function remuxAndSendMp4({
 
   parser.onReady = (info) => {
     if (state.value !== 'pending') return;
+    const videoTrack = info.tracks.find((track) => track.video);
+    const orientation = orientationFromTrack(videoTrack);
+    onOrientation?.(orientation);
     if (info.isFragmented) {
       state.value = 'already-fragmented';
       return;
@@ -89,6 +97,15 @@ export async function remuxAndSendMp4({
     }
     try {
       for (const track of info.tracks.filter((item) => item.video || item.audio)) {
+        if (track.video && orientation.rotation) {
+          // Render rotation explicitly at the receiver. Some TV MediaSource players
+          // ignore this matrix, while others apply it: an identity output avoids
+          // both sideways playback and accidental double rotation.
+          const header = parser.getTrackById(track.id).tkhd;
+          header.matrix = [65536, 0, 0, 0, 65536, 0, 0, 0, 1073741824];
+          header.width = track.video.width * 65536;
+          header.height = track.video.height * 65536;
+        }
         parser.setSegmentOptions(track.id, null, { nbSamples: 30, rapAlignement: true });
       }
       const initSegments = parser.initializeSegmentation();
@@ -109,6 +126,8 @@ export async function remuxAndSendMp4({
         size: originalSize,
         sizeUnknown: true,
         streamCandidate: true,
+        ...orientation,
+        orientationNormalized: true,
       }));
       committed = true;
       state.value = 'converted';

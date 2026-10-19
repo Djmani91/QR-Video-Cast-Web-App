@@ -10,14 +10,29 @@ type TvVideo = HTMLVideoElement & {
 };
 type TvDocument = Document & {
   webkitFullscreenElement?: Element;
+  webkitCurrentFullScreenElement?: Element;
+  webkitIsFullScreen?: boolean;
   webkitExitFullscreen?: () => void | Promise<void>;
   webkitCancelFullScreen?: () => void | Promise<void>;
 };
 
+/** Photos and corrected videos need their playback container in fullscreen. */
+export async function requestMediaFullscreen(element: HTMLElement): Promise<boolean> {
+  const target = element as HTMLElement & {
+    webkitRequestFullscreen?: () => void | Promise<void>;
+    webkitRequestFullScreen?: () => void | Promise<void>;
+  };
+  for (const request of [target.requestFullscreen, target.webkitRequestFullscreen, target.webkitRequestFullScreen]) {
+    if (!request) continue;
+    try { await request.call(target); return true; } catch { /* Try the TV's legacy API. */ }
+  }
+  return false;
+}
+
 export function isVideoFullscreen(video: HTMLVideoElement, doc: Document = document): boolean {
   const media = video as TvVideo;
   const page = doc as TvDocument;
-  return Boolean(doc.fullscreenElement || page.webkitFullscreenElement
+  return Boolean(doc.fullscreenElement || page.webkitFullscreenElement || page.webkitCurrentFullScreenElement || page.webkitIsFullScreen
     || media.webkitDisplayingFullscreen || media.webkitPresentationMode === 'fullscreen');
 }
 
