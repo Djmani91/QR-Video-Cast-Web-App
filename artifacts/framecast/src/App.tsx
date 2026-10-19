@@ -20,9 +20,11 @@ import {
   Check,
   CircleAlert,
   FileVideo2,
+  Maximize2,
   Image as ImageIcon,
   LockKeyhole,
   Monitor,
+  Minimize2,
   Pause,
   Play,
   RefreshCw,
@@ -212,6 +214,7 @@ function TvPage() {
   const [playing, setPlaying] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [clock, setClock] = useState(Date.now());
+  const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const seenRef = useRef(new Set<number>());
@@ -238,9 +241,30 @@ function TvPage() {
 
   useEffect(() => () => stopPeer(), [stopPeer]);
   useEffect(() => {
+    const updateFullscreenState = () => setBrowserFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', updateFullscreenState);
+    return () => document.removeEventListener('fullscreenchange', updateFullscreenState);
+  }, []);
+  useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 15000);
     return () => window.clearInterval(timer);
   }, []);
+
+  const toggleBrowserFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {
+        setError('This TV browser could not exit full screen. Use its Back or Exit key.');
+      });
+      return;
+    }
+    if (!document.documentElement.requestFullscreen) {
+      setError('This TV browser does not support full screen. Playback will still fill the FrameCast page.');
+      return;
+    }
+    void document.documentElement.requestFullscreen().catch(() => {
+      setError('Use the TV remote to select Full screen. The video will still fill the FrameCast page.');
+    });
+  };
   useEffect(() => {
     if (!createdRoom) return;
     setRoom(createdRoom);
@@ -343,7 +367,7 @@ function TvPage() {
           : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${status === 'connected' ? ' tv-immersive-playback' : ''}`}>
       <BrandHeader />
       <main className="page-wrap fade-in">
         <div className="hero-grid">
@@ -357,7 +381,13 @@ function TvPage() {
           <section className="pair-card" aria-label="TV pairing and playback">
             <div className="card-heading">
               <div><span className="eyebrow">This screen</span><h2>Pair a phone</h2></div>
-              <span className="screen-chip"><Monitor size={13} /> TV browser</span>
+              <div className="card-heading-actions">
+                <span className="screen-chip"><Monitor size={13} /> TV browser</span>
+                <button type="button" className="tv-fullscreen-toggle" onClick={toggleBrowserFullscreen} data-testid="button-tv-fullscreen" aria-label={browserFullscreen ? 'Exit browser full screen' : 'Enter browser full screen'}>
+                  {browserFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                  <span>{browserFullscreen ? 'Exit full screen' : 'Full screen'}</span>
+                </button>
+              </div>
             </div>
             <video
               ref={videoRef}
@@ -383,6 +413,10 @@ function TvPage() {
               </button>
             ) : status === 'connected' ? (
               <div className="tv-controls">
+                <button className="button-secondary" type="button" onClick={toggleBrowserFullscreen} data-testid="button-tv-fullscreen-playback" aria-label={browserFullscreen ? 'Exit browser full screen' : 'Enter browser full screen'}>
+                  {browserFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                  {browserFullscreen ? 'Exit full screen' : 'Full screen'}
+                </button>
                 {mediaKind === 'video' && <>
                 <button className="button-secondary" type="button" onClick={() => {
                   const video = videoRef.current;

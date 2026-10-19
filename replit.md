@@ -35,6 +35,7 @@ FrameCast lets someone pair a smart-TV browser with a phone and stream a selecte
 
 - The TV opens the app in its browser and displays a QR code and five-digit pairing code.
 - A phone can scan the QR code or enter the five-digit code, then select a local photo or video and stream it directly to the TV.
+- When media arrives, playback fills the FrameCast page and keeps playback controls overlaid. Entering the TV browser's native fullscreen mode requires a local TV-browser gesture.
 - The app must explain when direct casting is unsupported or blocked instead of silently uploading or relaying the video.
 
 ## User preferences
