@@ -34,6 +34,7 @@ import {
   Volume2,
   VolumeX,
   Wifi,
+  X,
 } from 'lucide-react';
 import {
   Link,
@@ -201,6 +202,37 @@ function useSignalSender(roomId: string) {
   }, [roomId]);
 }
 
+const MAX_MEDIA_SIZE_BYTES = 256 * 1024 * 1024;
+const MEDIA_CHUNK_SIZE_BYTES = 32 * 1024;
+const DATA_CHANNEL_BUFFER_LIMIT_BYTES = 512 * 1024;
+
+function getMediaMimeType(file: File, kind: MediaKind) {
+  if (file.type) return file.type;
+  const extension = file.name.toLowerCase().split('.').pop() ?? '';
+  if (kind === 'video') {
+    if (extension === 'mov') return 'video/quicktime';
+    if (extension === 'webm') return 'video/webm';
+    if (extension === 'm4v') return 'video/x-m4v';
+    return 'video/mp4';
+  }
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  if (extension === 'gif') return 'image/gif';
+  return 'image/jpeg';
+}
+
+async function waitForDataChannelBuffer(channel: RTCDataChannel) {
+  while (channel.bufferedAmount > DATA_CHANNEL_BUFFER_LIMIT_BYTES) {
+    if (channel.readyState !== 'open') {
+      throw new Error('The direct connection closed before the file finished sending.');
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+  }
+  if (channel.readyState !== 'open') {
+    throw new Error('The direct connection closed before the file finished sending.');
+  }
+}
+
 function TvPage() {
   const createRoom = useCreateCastRoom();
   const { mutate: createRoomMutation, data: createdRoom, isPending: creatingRoom, isError: createRoomError } = createRoom;
@@ -355,7 +387,7 @@ function TvPage() {
                           videoRef.current.load();
                         }
                         setReceivedImageUrl(url);
-                        if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received' }));
+                        if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'displayed' }));
                       } else if (videoRef.current) {
                         setReceivedImageUrl('');
                         videoRef.current.srcObject = null;
@@ -363,10 +395,11 @@ function TvPage() {
                         videoRef.current.load();
                         void videoRef.current.play().then(() => {
                           setPlaying(true);
-                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received' }));
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'playing' }));
                         }).catch(() => {
                           setPlaying(false);
-                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received' }));
+                          setError('The TV received this video, but its browser could not play the file format. Try an MP4 video encoded with H.264.');
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'failed' }));
                         });
                       }
                       mediaTransferRef.current = null;
@@ -439,7 +472,7 @@ function TvPage() {
         }
       } else if (signal.type === 'close') {
         stopPeer();
-        setStatus('idle');
+        setStatus('paired');
       }
     }
   }, [messages, roomId, send, stopPeer]);
@@ -456,9 +489,13 @@ function TvPage() {
   const phoneUrl = room ? `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/send/${encodeURIComponent(room.id)}` : '';
   const roomExpired = Boolean(room && new Date(room.expiresAt).getTime() <= clock);
   const statusCopy = status === 'connected'
-    ? `Connected. The guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on this screen.`
+    ? transferProgress !== null && transferProgress < 100
+      ? `Connected. Receiving the guest’s ${mediaKind === 'image' ? 'photo' : 'video'}…`
+      : transferProgress === null
+        ? 'Connected directly. Waiting for media from the phone.'
+        : `The guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on this screen.`
     : status === 'paired'
-      ? 'Paired. Your guest is choosing what to share from their phone.'
+      ? 'Paired with a phone. Waiting for a direct connection.'
     : status === 'connecting'
       ? 'A guest is here. Making a direct connection…'
       : status === 'disconnected'
@@ -475,7 +512,7 @@ function TvPage() {
           <section className="hero-copy">
             <span className="eyebrow">A better way to share the big screen</span>
             <h1 className="hero-title">Your photos &amp; videos.<br /><em>The big screen.</em></h1>
-            <p className="hero-intro">Show a photo or stream a video from your phone to this TV browser. No app, account, or video upload needed.</p>
+            <p className="hero-intro">Send a photo or video from your phone to this TV browser. No account or video upload needed.</p>
             <div className="trust-line"><ShieldCheck size={17} /> Your files stay on your phone. Content travels directly to this screen.</div>
           </section>
 
@@ -605,23 +642,27 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(0);
+  const [sentToTv, setSentToTv] = useState(false);
   const [muted, setMuted] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
+  const mediaChannelRef = useRef<RTCDataChannel | null>(null);
+  const controlChannelRef = useRef<RTCDataChannel | null>(null);
+  const transferRunRef = useRef(0);
+  const transferCompleteRef = useRef(false);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
   const messages = messagesQuery.data ?? [];
-  const videoCaptureSupported = typeof HTMLVideoElement !== 'undefined' &&
-    ('captureStream' in HTMLVideoElement.prototype || 'mozCaptureStream' in HTMLVideoElement.prototype) &&
-    typeof RTCPeerConnection !== 'undefined';
-  const imageCaptureSupported = typeof HTMLCanvasElement !== 'undefined' &&
-    'captureStream' in HTMLCanvasElement.prototype && typeof RTCPeerConnection !== 'undefined';
-  const captureSupported = mediaKind === 'image' ? imageCaptureSupported : videoCaptureSupported;
-  const fileSupported = typeof document !== 'undefined' && 'URL' in window && typeof MediaStream !== 'undefined';
+  const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
+    transferRunRef.current += 1;
+    transferCompleteRef.current = true;
     if (sendClose) send('phone', 'close', {});
+    mediaChannelRef.current?.close();
+    controlChannelRef.current?.close();
+    mediaChannelRef.current = null;
+    controlChannelRef.current = null;
     peerRef.current?.getSenders().forEach((sender) => sender.track?.stop());
     peerRef.current?.close();
     peerRef.current = null;
@@ -667,7 +708,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
         }
       } else if (signal.type === 'close') {
         stopPeer();
-        setStatus('idle');
+        setStatus('disconnected');
+        setError('The TV ended the direct connection. You can send the media again to reconnect.');
       }
     }
   }, [messages, stopPeer]);
@@ -681,7 +723,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
       setError('Choose a video or photo to send to the TV.');
       return;
     }
-    stopPeer();
+    stopPeer(Boolean(peerRef.current));
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     const nextUrl = URL.createObjectURL(selected);
     setFile(selected);
@@ -689,94 +731,153 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setObjectUrl(nextUrl);
     setStatus('paired');
     setProgress(0);
+    setSentToTv(false);
     setError('');
   };
 
   const connect = async () => {
-    const video = videoRef.current;
     if (!file || !mediaKind) {
       setError('Choose a video or photo first, then connect to the TV.');
       return;
     }
-    if (mediaKind === 'video' && (!video || !captureSupported)) {
-      setError('This browser cannot stream video directly to the TV. Try a current version of Safari, Chrome, or Firefox.');
+    if (file.size <= 0) {
+      setError('This file is empty. Choose a different photo or video.');
+      return;
+    }
+    if (file.size > MAX_MEDIA_SIZE_BYTES) {
+      setError('This first version supports files up to 256 MB. Choose a smaller video or photo.');
       return;
     }
     setError('');
     setStatus('connecting');
+    setProgress(0);
+    setSentToTv(false);
     stopPeer();
     queuedCandidates.current = [];
+    transferCompleteRef.current = false;
+    const transferRun = transferRunRef.current;
     try {
-      let stream: MediaStream | null = null;
-      if (mediaKind === 'video' && video) {
-        await video.play();
-        const videoElement = video as HTMLVideoElement & {
-          captureStream?: () => MediaStream;
-          mozCaptureStream?: () => MediaStream;
-        };
-        stream = videoElement.captureStream?.() ?? videoElement.mozCaptureStream?.() ?? null;
-      } else if (mediaKind === 'image' && objectUrl) {
-        const image = new Image();
-        image.src = objectUrl;
-        await image.decode();
-        const canvas = canvasRef.current;
-        if (!canvas) throw new Error('Photo canvas unavailable');
-        const maxWidth = 1920;
-        const maxHeight = 1080;
-        const scale = Math.min(1, maxWidth / image.naturalWidth, maxHeight / image.naturalHeight);
-        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Photo canvas unavailable');
-        context.fillStyle = '#101713';
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        stream = canvas.captureStream(1);
-      }
-      if (!stream || stream.getTracks().length === 0) throw new Error('Capture stream unavailable');
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
       const controlChannel = peer.createDataChannel('framecast-control');
-      controlChannel.onmessage = (event) => {
-        const sourceVideo = videoRef.current;
-        if (event.data === 'pause') sourceVideo?.pause();
-        if (event.data === 'play' && sourceVideo) void sourceVideo.play();
+      controlChannelRef.current = controlChannel;
+      const mediaChannel = peer.createDataChannel('framecast-media');
+      mediaChannelRef.current = mediaChannel;
+      mediaChannel.binaryType = 'arraybuffer';
+      mediaChannel.onmessage = (event) => {
+        if (transferRun !== transferRunRef.current) return;
+        if (typeof event.data !== 'string') return;
+        try {
+          const packet = JSON.parse(event.data) as { framecast?: string; playback?: string };
+          if (packet.framecast === 'received') {
+            transferCompleteRef.current = true;
+            setProgress(100);
+            setSentToTv(true);
+            if (packet.playback === 'failed') {
+              setError('The file reached the TV, but its browser could not play this format. Try an MP4 video encoded with H.264.');
+            }
+          }
+        } catch {
+          setError('The TV returned an unreadable transfer response. Try sending the file again.');
+        }
       };
-      stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+      mediaChannel.onopen = () => {
+        if (transferRun !== transferRunRef.current) return;
+        setStatus('connected');
+        void (async () => {
+          try {
+            const mimeType = getMediaMimeType(file, mediaKind);
+            mediaChannel.send(JSON.stringify({
+              framecast: 'metadata',
+              name: file.name,
+              mimeType,
+              kind: mediaKind,
+              size: file.size,
+            }));
+            let lastProgressUpdate = 0;
+            for (let offset = 0; offset < file.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
+              if (transferRun !== transferRunRef.current) return;
+              await waitForDataChannelBuffer(mediaChannel);
+              const chunk = await file.slice(offset, Math.min(offset + MEDIA_CHUNK_SIZE_BYTES, file.size)).arrayBuffer();
+              if (transferRun !== transferRunRef.current) return;
+              mediaChannel.send(chunk);
+              const sentBytes = Math.min(offset + chunk.byteLength, file.size);
+              const now = Date.now();
+              if (now - lastProgressUpdate > 120 || sentBytes === file.size) {
+                setProgress(Math.min(99, Math.round((sentBytes / file.size) * 100)));
+                lastProgressUpdate = now;
+              }
+            }
+            await waitForDataChannelBuffer(mediaChannel);
+            if (transferRun === transferRunRef.current) {
+              mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+              setProgress(99);
+            }
+          } catch (transferError) {
+            if (transferRun !== transferRunRef.current) return;
+            setStatus('failed');
+            setError(transferError instanceof Error ? transferError.message : 'The file could not be sent directly. Try again.');
+          }
+        })();
+      };
+      mediaChannel.onclose = () => {
+        if (transferRun !== transferRunRef.current || transferCompleteRef.current) return;
+        setStatus((current) => current === 'failed' ? current : 'disconnected');
+        setError((current) => current || 'The direct connection ended before the file reached the TV. Keep both devices awake and try again.');
+      };
       peer.onicecandidate = (event) => {
+        if (transferRun !== transferRunRef.current) return;
         if (event.candidate) send('phone', 'ice', { ...event.candidate.toJSON() });
       };
       peer.onconnectionstatechange = () => {
+        if (transferRun !== transferRunRef.current) return;
         if (peer.connectionState === 'connected') {
           setStatus('connected');
-          setProgress(100);
         } else if (peer.connectionState === 'disconnected') {
           setStatus('disconnected');
+          setError('The direct connection was interrupted. Reconnect and try again.');
         } else if (peer.connectionState === 'failed') {
           setStatus('failed');
-          setError('The direct connection dropped. Check that both devices are online and reconnect.');
+          setError('A direct connection could not be made. Check that both devices are on the same Wi-Fi network.');
         } else if (peer.connectionState === 'connecting') {
           setStatus('connecting');
         }
       };
       const offer = await peer.createOffer();
+      if (transferRun !== transferRunRef.current) return;
       await peer.setLocalDescription(offer);
-      send('phone', 'offer', { type: offer.type, sdp: offer.sdp, mediaKind });
-      if (mediaKind === 'video') setProgress(35);
-    } catch {
+      if (transferRun !== transferRunRef.current) return;
+      send('phone', 'offer', { type: offer.type, sdp: offer.sdp, mediaKind, transport: 'data-channel' });
+    } catch (connectionError) {
+      if (transferRun !== transferRunRef.current) return;
+      stopPeer();
       setStatus('failed');
-      setError(`The ${mediaKind === 'image' ? 'photo' : 'video'} could not be streamed from this browser. Try again or use a supported browser.`);
+      setError(connectionError instanceof Error ? connectionError.message : 'Could not start a direct connection to the TV.');
     }
   };
 
+  const disconnect = () => {
+    stopPeer(true);
+    setStatus('disconnected');
+    setProgress(0);
+    setSentToTv(false);
+    setError('');
+  };
+
   const statusCopy = status === 'connected'
-    ? `You’re connected. Your ${mediaKind === 'image' ? 'photo' : 'video'} is on the TV.`
+    ? sentToTv
+      ? error
+        ? 'Connected. The TV received the file but could not play it.'
+        : `Connected. Your ${mediaKind === 'image' ? 'photo is on' : 'video is playing on'} the TV.`
+      : progress >= 99
+        ? 'Connected. Waiting for the TV to finish opening the file…'
+        : `Connected. Sending your ${mediaKind === 'image' ? 'photo' : 'video'} to the TV${progress ? ` · ${progress}%` : '…'}`
     : status === 'connecting'
       ? 'Connecting directly to the TV… Keep this page open.'
       : status === 'paired'
         ? 'Paired with the TV. Choose a photo or video when you’re ready.'
         : status === 'disconnected'
-        ? 'Connection paused. Keep both devices awake and nearby.'
+        ? 'Disconnected from the TV. Choose Send to reconnect.'
         : status === 'failed'
           ? 'Connection needs attention. Try again when ready.'
           : file ? `Your ${mediaKind === 'image' ? 'photo' : 'video'} is ready to share.` : 'Choose a video or photo stored on this phone.';
@@ -791,10 +892,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
           <div className="phone-heading">
             <span className="eyebrow">You’re joining a FrameCast screen</span>
             <h1>Send it to the TV.</h1>
-            <p>Choose a video or photo on this phone. It streams straight to the TV—your file stays right here. Keep both devices on the same Wi-Fi network.</p>
+            <p>Choose a video or photo on this phone. It sends directly to the TV—your file stays right here. Keep both devices on the same Wi-Fi network.</p>
           </div>
           <div className="phone-card">
-            <canvas ref={canvasRef} className="capture-canvas" aria-hidden="true" />
             {file && objectUrl ? (
               <>
                 {mediaKind === 'video' ? (
@@ -822,7 +922,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <label className="dropzone" htmlFor="video-file-input" data-testid="control-content-picker">
                 <span className="drop-icon"><FileVideo2 size={22} /><ImageIcon size={17} /></span>
                 <strong>Choose a photo or video</strong>
-                <span>Media stays on your phone until it streams directly to the TV</span>
+                <span>Media stays on your phone and is sent directly to the TV</span>
               </label>
             )}
             <input
@@ -834,17 +934,34 @@ function PhonePage({ roomId }: { roomId?: string }) {
               aria-label="Choose a photo or video"
               data-testid="input-content-file"
             />
-            {mediaKind === 'video' && status === 'connected' && (
-              <div className="status-row" aria-label={`Video progress ${Math.round(progress)} percent`} data-testid="status-video-progress">
+            {file && status === 'connected' && (
+              <div className="status-row" aria-label={`Transfer progress ${Math.round(progress)} percent`} data-testid="status-video-progress">
                 <span className="status-dot live" />
-                <span className="status-text">Playing on TV · {Math.round(progress)}% through</span>
+                <span className="status-text">
+                  {sentToTv
+                    ? error ? 'TV received the file but could not play it.' : `${mediaKind === 'image' ? 'Photo shown' : 'Video playing'} on TV.`
+                    : progress >= 99
+                      ? 'Transfer complete. Waiting for the TV to open the file…'
+                      : `Connected · sending ${mediaKind === 'image' ? 'photo' : 'video'}${progress ? ` · ${progress}%` : '…'}`}
+                </span>
               </div>
             )}
             <div className="phone-actions">
               {file && (
-                <button type="button" className="button-primary" onClick={connect} disabled={!captureSupported || status === 'connecting' || status === 'connected'} data-testid="button-connect-tv">
+                <button type="button" className="button-primary" onClick={connect} disabled={status === 'connecting' || status === 'connected'} data-testid="button-connect-tv">
                   {status === 'connecting' ? <RefreshCw size={16} className="animate-spin" /> : status === 'connected' ? <Check size={16} /> : <ArrowUpRight size={16} />}
-                  {status === 'connecting' ? 'Connecting…' : status === 'connected' ? (mediaKind === 'image' ? 'Photo on the TV' : 'Playing on the TV') : status === 'failed' ? 'Try connecting again' : mediaKind === 'image' ? 'Show photo on TV' : 'Play video on TV'}
+                  {status === 'connecting'
+                    ? 'Connecting…'
+                    : status === 'connected'
+                      ? sentToTv ? (mediaKind === 'image' ? 'Photo sent to TV' : 'Sent to TV') : 'Sending to TV…'
+                      : status === 'failed' || status === 'disconnected'
+                        ? 'Try again'
+                        : mediaKind === 'image' ? 'Show photo on TV' : 'Play video on TV'}
+                </button>
+              )}
+              {(status === 'connecting' || status === 'connected') && (
+                <button type="button" className="button-secondary" onClick={disconnect} data-testid="button-disconnect-tv">
+                  <X size={16} /> Disconnect from TV
                 </button>
               )}
               {file && mediaKind === 'video' && <button type="button" className="button-secondary" onClick={() => setMuted((value) => !value)} data-testid="button-phone-mute" aria-label={muted ? 'Enable preview sound' : 'Mute preview'}>
@@ -855,7 +972,6 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {file && !captureSupported && <p className="support-note" role="note" data-testid="text-browser-support">This browser cannot create a direct {mediaKind === 'image' ? 'photo' : 'video'} stream. Open this link in a recent Safari, Chrome, or Firefox browser.</p>}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
