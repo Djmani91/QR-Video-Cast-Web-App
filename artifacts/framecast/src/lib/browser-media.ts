@@ -35,6 +35,7 @@ export async function assertBrowserFileReadable(file: File): Promise<void> {
 export async function preserveBrowserSelection(
   files: File[],
   isCancelled: () => boolean = () => false,
+  options: { liveVideo?: boolean } = {},
 ): Promise<File[] | null> {
   let remainingBudget = SELECTION_MEMORY_BUDGET;
   const readable: File[] = [];
@@ -42,6 +43,14 @@ export async function preserveBrowserSelection(
     if (isCancelled()) return null;
     try {
       if (!file.size) throw new SelectedMediaAccessError();
+      if (options.liveVideo && file.type.startsWith('video/')) {
+        // The media element reads this Blob on demand. Copying or probing its
+        // tail can make Android/cloud providers fetch the entire movie first.
+        // Keep input.files intact; actual decoder/read failures are surfaced
+        // by bounded phone-video startup, not by a whole-file preflight.
+        readable.push(file);
+        continue;
+      }
       if (file.size <= remainingBudget) {
         // Read immediately while the picker grant is still held. This File no
         // longer depends on a temporary Android/cloud-provider file handle.

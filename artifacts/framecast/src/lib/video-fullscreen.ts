@@ -24,33 +24,41 @@ export async function requestMediaFullscreen(element: HTMLElement): Promise<bool
   };
   for (const request of [target.requestFullscreen, target.webkitRequestFullscreen, target.webkitRequestFullScreen]) {
     if (!request) continue;
-    try { await request.call(target); return true; } catch { /* Try the TV's legacy API. */ }
+    try {
+      await request.call(target);
+      if (isVideoFullscreen(element as HTMLVideoElement)) return true;
+    } catch { /* Try the TV's legacy API. */ }
   }
   return false;
 }
 
-export function isVideoFullscreen(video: HTMLVideoElement, doc: Document = document): boolean {
+export function isVideoFullscreen(video: HTMLVideoElement, doc: Document | undefined = video.ownerDocument ?? globalThis.document): boolean {
   const media = video as TvVideo;
   const page = doc as TvDocument;
-  return Boolean(doc.fullscreenElement || page.webkitFullscreenElement || page.webkitCurrentFullScreenElement || page.webkitIsFullScreen
+  return Boolean(doc?.fullscreenElement || page?.webkitFullscreenElement || page?.webkitCurrentFullScreenElement || page?.webkitIsFullScreen
     || media.webkitDisplayingFullscreen || media.webkitPresentationMode === 'fullscreen');
 }
 
 /** Fullscreen the VIDEO, never the document. Try TV-native media APIs first. */
 export async function requestVideoFullscreen(video: HTMLVideoElement): Promise<boolean> {
   const media = video as TvVideo;
-  const requests = [
+  const nativeRequests = [
     media.webkitEnterFullscreen,
     media.webkitEnterFullScreen,
+  ];
+  const elementRequests = [
     media.requestFullscreen,
     media.webkitRequestFullscreen,
     media.webkitRequestFullScreen,
   ];
+  // Some Samsung native-player APIs silently do nothing for a MediaStream.
+  // Fullscreening the video element works for Chrome and decoded WebRTC video.
+  const requests = media.srcObject ? [...elementRequests, ...nativeRequests] : [...nativeRequests, ...elementRequests];
   for (const request of requests) {
     if (!request) continue;
     try {
       await request.call(media);
-      return true;
+      if (isVideoFullscreen(video)) return true;
     } catch {
       // An exposed API can still reject. Try the next TV/browser implementation.
     }

@@ -66,3 +66,20 @@ test('a partial/empty provider read is rejected before connecting to the TV', as
   const partial = { size: 100, arrayBuffer: async () => new ArrayBuffer(0) };
   await assert.rejects(preserveBrowserSelection([partial]), SelectedMediaAccessError);
 });
+
+test('live video selection never copies or probes the movie, regardless of size or MP4 index position', async () => {
+  for (const size of [1_000_000, 12_000_000, 256_000_000, 8 * 1024 ** 3]) {
+    const source = {
+      name: 'original.mov', type: 'video/quicktime', size,
+      arrayBuffer() { throw Error('A live video must not be copied'); },
+      slice() { throw Error('A live video must not be probed at its tail'); },
+    };
+    const selected = await preserveBrowserSelection([source], () => false, { liveVideo: true });
+    assert.equal(selected[0], source);
+  }
+});
+
+test('on-demand live selection still rejects empty files and honors cancellation', async () => {
+  await assert.rejects(preserveBrowserSelection([{ size: 0, type: 'video/mp4' }], () => false, { liveVideo: true }), SelectedMediaAccessError);
+  assert.equal(await preserveBrowserSelection([{ size: 10, type: 'video/mp4' }], () => true, { liveVideo: true }), null);
+});

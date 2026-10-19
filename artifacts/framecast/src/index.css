@@ -238,6 +238,11 @@
   max-width: 90vw;
   background: #203b32;
   color: #fff;
+  min-height: 56px;
+  padding: 16px 24px;
+  border: 2px solid #fff;
+  font-size: 16px;
+  box-shadow: 0 4px 24px #0008;
 }
 .tv-controls-countdown { align-self: center; padding: 0 8px; color: #f4f1e8; font: 600 11px/1 var(--app-font-mono); white-space: nowrap; }
 .photo-remote-controls { display: grid; gap: 8px; width: min(100%, 420px); margin: 12px auto; }

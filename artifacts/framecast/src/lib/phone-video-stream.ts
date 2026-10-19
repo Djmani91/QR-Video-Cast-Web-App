@@ -13,6 +13,45 @@ export type PhoneAudioGraph = {
   source: MediaElementAudioSourceNode;
 };
 
+export function waitForPhoneVideoFrame(video: HTMLVideoElement, priming: Promise<unknown>, signal: AbortSignal, timeoutMs = 12_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let primed = false;
+    let finished = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      for (const event of ['loadeddata', 'resize', 'playing']) video.removeEventListener(event, check);
+      video.removeEventListener('error', onError);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const finish = (error?: unknown) => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      if (error) reject(error); else resolve();
+    };
+    const check = () => {
+      if (primed && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) finish();
+    };
+    const onError = () => finish(new Error(
+      video.error?.code === 3 || video.error?.code === 4
+        ? 'This phone browser could not decode the video. Try the original video in your phone gallery or a format your phone browser can play.'
+        : 'The phone could not read this video. Download the original onto this phone, then select it again.',
+    ));
+    const onAbort = () => finish(new DOMException('Video startup cancelled.', 'AbortError'));
+    const timer = setTimeout(() => finish(new Error('The phone is still waiting for the first video frame. If this is a cloud-only video, download it onto the phone first, then select it again. No video has been uploaded.')), timeoutMs);
+    for (const event of ['loadeddata', 'resize', 'playing']) video.addEventListener(event, check);
+    video.addEventListener('error', onError);
+    signal.addEventListener('abort', onAbort);
+    if (signal.aborted) onAbort();
+    else if (video.error) onError();
+    void priming.then(() => { primed = true; check(); }, (error) => {
+      if ((error as { name?: string })?.name === 'NotAllowedError') {
+        finish(new Error('The phone browser blocked playback. Tap Play in the phone preview, then try casting again.'));
+      } else finish(error);
+    });
+  });
+}
+
 export function createPhoneAudioGraph(video: HTMLVideoElement): PhoneAudioGraph {
   if (typeof document.createElement('canvas').captureStream !== 'function') {
     throw new Error('This phone browser cannot send an upright video stream. Please use a current Chrome or Safari browser.');
@@ -60,6 +99,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   video.volume = 1;
   video.playsInline = true;
   let stopped = false;
+  const startupAbort = new AbortController();
   let rotation = 0;
   let fitMode: 'cover' | 'contain' = 'cover';
   let frame = 0;
@@ -101,6 +141,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   function stop() {
     if (stopped) return;
     stopped = true;
+    startupAbort.abort();
     cancelAnimationFrame(frame);
     for (const event of events) video.removeEventListener(event, redraw);
     video.pause();
@@ -113,7 +154,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
     canvas.height = 0;
   }
   // Both calls begin in the phone's button gesture, before network/file awaits.
-  const ready = Promise.all([graph.context.resume(), video.play()]).then(() => {
+  const ready = waitForPhoneVideoFrame(video, Promise.all([graph.context.resume(), video.play()]), startupAbort.signal).then(() => {
     if (stopped) return;
     video.pause();
     video.currentTime = 0;

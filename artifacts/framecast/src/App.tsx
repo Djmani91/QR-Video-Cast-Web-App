@@ -14,7 +14,6 @@ import {
 } from '@workspace/api-client-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
-import { remuxAndSendMp4 } from './lib/mp4-remux';
 import { assertBrowserFileReadable, isSelectedMediaAccessError, preserveBrowserSelection, SelectedMediaAccessError } from './lib/browser-media';
 import { exitVideoFullscreen, isVideoFullscreen, requestVideoFullscreen, requestMediaFullscreen } from './lib/video-fullscreen';
 import { normalizeRotation, requiredVideoRotation, type VideoOrientation } from './lib/media-orientation';
@@ -946,9 +945,17 @@ function TvPage() {
     };
   }, [revealTvControls]);
   useEffect(() => {
-    const updateFullscreenState = () => setBrowserFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener('fullscreenchange', updateFullscreenState);
-    return () => document.removeEventListener('fullscreenchange', updateFullscreenState);
+    const video = videoRef.current;
+    const updateFullscreenState = () => setBrowserFullscreen(video ? isVideoFullscreen(video) : Boolean(document.fullscreenElement));
+    const documentEvents = ['fullscreenchange', 'webkitfullscreenchange'];
+    const videoEvents = ['webkitbeginfullscreen', 'webkitendfullscreen', 'webkitpresentationmodechanged'];
+    for (const event of documentEvents) document.addEventListener(event, updateFullscreenState);
+    for (const event of videoEvents) video?.addEventListener(event, updateFullscreenState);
+    updateFullscreenState();
+    return () => {
+      for (const event of documentEvents) document.removeEventListener(event, updateFullscreenState);
+      for (const event of videoEvents) video?.removeEventListener(event, updateFullscreenState);
+    };
   }, []);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 15000);
@@ -1785,9 +1792,9 @@ function TvPage() {
               onFailure={handleCanvasFailure}
             />}
             </div>
-            {needsVideoFullscreen && status === 'connected' && mediaKind === 'video' && (
+            {!browserFullscreen && status === 'connected' && mediaKind === 'video' && (
               <button type="button" className="button-secondary tv-video-fullscreen-permission" onClick={toggleBrowserFullscreen} data-testid="button-tv-video-fullscreen-permission">
-                <Maximize2 size={16} /> Press here with the TV remote for video full screen
+                <Maximize2 size={20} /> Full screen — click here or press OK with the TV remote
               </button>
             )}
             {needsPhotoFullscreen && status === 'connected' && mediaKind === 'image' && (
@@ -2161,7 +2168,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setTransferNotice('');
     setError('');
     try {
-      const preserved = await preserveBrowserSelection(chosen, () => selectionRun !== selectionRunRef.current);
+      const preserved = await preserveBrowserSelection(chosen, () => selectionRun !== selectionRunRef.current, { liveVideo: selectedKind === 'video' });
       if (!preserved || selectionRun !== selectionRunRef.current) return;
       setIsUrlPlayback(false);
       urlCastActiveRef.current = false;
@@ -2254,12 +2261,18 @@ function PhonePage({ roomId }: { roomId?: string }) {
           },
         });
         phoneVideoStreamRef.current = live;
+        setTransferNotice('Opening the first video frame on this phone… No whole-video preparation or upload.');
         await live.ready;
         if (transferRun !== transferRunRef.current) return;
+        setTransferNotice('Phone video is ready. Connecting directly to the TV…');
       }
-      for (const selected of queuedFiles) {
-        await assertBrowserFileReadable(selected);
-        if (transferRun !== transferRunRef.current) return;
+      // A successful phone decoder already proves video access. Head/tail
+      // probes can force a cloud provider to download the whole film.
+      if (!phoneVideoStreamRef.current) {
+        for (const selected of queuedFiles) {
+          await assertBrowserFileReadable(selected);
+          if (transferRun !== transferRunRef.current) return;
+        }
       }
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
@@ -2395,6 +2408,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 : 'Playing directly from your phone. Rotation and screen fitting happen on the phone, not in the TV browser. Keep FrameCast open while playing.');
               return;
             }
+            if (queuedFiles.some((item) => item.type.startsWith('video/'))) {
+              throw new Error('The live video stream stopped before playback. Keep this phone page open and tap Try again. Videos are not prepared or uploaded in full.');
+            }
             for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
               videoStartupRef.current = { status: 'waiting' };
@@ -2425,32 +2441,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
               if (transferRun !== transferRunRef.current) return;
               setProgress(0);
               const mimeType = getMediaMimeType(outgoing, kind);
-               const streamCandidate = kind === 'video'
-                 && (mimeType === 'video/mp4' || mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(outgoing.name));
               let lastProgressUpdate = 0;
-               let remuxedForStreaming = false;
-               let sourceOrientation: VideoOrientation | undefined;
-               if (streamCandidate) {
-                 setTransferNotice('Preparing this video for direct streaming on your phone…');
-                 const remuxResult = await remuxAndSendMp4({
-                   file: outgoing,
-                   channel: mediaChannel,
-                   name: outgoing.name,
-                   originalSize: outgoing.size,
-                   isCancelled: () => transferRun !== transferRunRef.current,
-                   waitForBuffer: () => waitForDataChannelBuffer(mediaChannel),
-                   onProgress: (bytes) => setProgress(Math.min(99, Math.round((bytes / outgoing.size) * 100))),
-                   onOrientation: (orientation) => { sourceOrientation = orientation; },
-                 });
-                 if (remuxResult === 'cancelled') return;
-                 if (remuxResult === 'sent') {
-                   remuxedForStreaming = true;
-                   setTransferNotice('The phone prepared a streamable copy and is sending it directly to the TV.');
-                 } else if (remuxResult === 'unsupported' && outgoing.size > BUFFERED_VIDEO_FALLBACK_MAX_BYTES) {
-                   throw new Error('This large video could not be prepared for instant streaming. Try an MP4 or MOV with its playback index near the start of the file.');
-                 }
-               }
-               if (!remuxedForStreaming) {
+               {
                  mediaChannel.send(JSON.stringify({
                    framecast: 'metadata',
                    name: outgoing.name,
@@ -2458,8 +2450,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                    mimeType,
                    kind,
                    size: outgoing.size,
-                   streamCandidate,
-                   ...sourceOrientation,
+                   streamCandidate: false,
                  }));
                  for (let offset = 0; offset < outgoing.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
                    if (transferRun !== transferRunRef.current) return;
@@ -2488,7 +2479,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   };
                 });
               }
-               if (!remuxedForStreaming) {
+               {
                  await waitForDataChannelBuffer(mediaChannel);
                  mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
                }
@@ -2688,6 +2679,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                     ref={videoRef}
                     className="video-preview"
                     src={objectUrl}
+                    preload="metadata"
                     controls={!phoneVideoStreamRef.current}
                     playsInline
                     muted={phoneVideoStreamRef.current ? false : muted}
