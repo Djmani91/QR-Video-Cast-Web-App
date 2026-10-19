@@ -1,3 +1,5 @@
+import { phoneStreamProfile } from './video-stream-quality.ts';
+
 export type PhoneVideoState = {
   currentTime: number;
   duration: number;
@@ -80,12 +82,16 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   onError: (message: string) => void;
 }) {
   const canvas = document.createElement('canvas');
-  canvas.width = 1280;
-  canvas.height = 720;
+  let profile = phoneStreamProfile(video.videoWidth, video.videoHeight);
+  canvas.width = profile.width;
+  canvas.height = profile.height;
   if (typeof canvas.captureStream !== 'function') throw new Error('This phone browser cannot send an upright video stream. Please use a current Chrome or Safari browser.');
   const context = canvas.getContext('2d', { alpha: false });
   if (!context) throw new Error('This phone browser could not open its video correction engine.');
-  const output = canvas.captureStream(24);
+  const output = canvas.captureStream(profile.frameRate);
+  for (const track of output.getVideoTracks?.() ?? []) {
+    if ('contentHint' in track) track.contentHint = 'motion';
+  }
   const destination = graph.context.createMediaStreamDestination();
   const monitor = graph.context.createGain();
   monitor.gain.value = options.previewMuted ? 0 : 1;
@@ -103,6 +109,9 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   let rotation = 0;
   let fitMode: 'cover' | 'contain' = 'cover';
   let frame = 0;
+  let decoderFrame = 0;
+  const decoderClock = typeof video.requestVideoFrameCallback === 'function'
+    && typeof video.cancelVideoFrameCallback === 'function';
   let lastDraw = -Infinity;
   let lastState = -Infinity;
   const state = (): PhoneVideoState => ({
@@ -113,7 +122,12 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   function emit() { if (!stopped) options.onState(state()); }
   function paint() {
     if (stopped || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-    const geometry = phoneFrameGeometry(video.videoWidth, video.videoHeight, rotation, fitMode);
+    profile = phoneStreamProfile(video.videoWidth, video.videoHeight);
+    if (canvas.width !== profile.width || canvas.height !== profile.height) {
+      canvas.width = profile.width;
+      canvas.height = profile.height;
+    }
+    const geometry = phoneFrameGeometry(video.videoWidth, video.videoHeight, rotation, fitMode, canvas.width, canvas.height);
     context!.save();
     try {
       context!.setTransform(1, 0, 0, 1, 0, 0);
@@ -131,9 +145,24 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   }
   function tick(now: number) {
     if (stopped) return;
-    if (now - lastDraw >= 1000 / 24 - 1) { paint(); lastDraw = now; }
+    const interval = 1000 / profile.frameRate;
+    if (!video.paused && !video.ended && now - lastDraw >= interval - 0.5) {
+      paint();
+      // Preserve the clock's phase: resetting to `now` turned a 24fps target
+      // into ~20fps on a 60Hz phone, causing uneven repeated/skipped frames.
+      const elapsed = now - lastDraw;
+      lastDraw = Number.isFinite(elapsed)
+        ? lastDraw + Math.max(1, Math.floor((elapsed + 0.5) / interval)) * interval
+        : now;
+    }
     if (now - lastState >= 500) { emit(); lastState = now; }
-    if (!stopped) frame = requestAnimationFrame(tick);
+    schedule();
+  }
+  function schedule() {
+    if (stopped) return;
+    // Draw actual decoded pictures rather than racing a second display timer.
+    if (decoderClock) decoderFrame = video.requestVideoFrameCallback(tick);
+    else frame = requestAnimationFrame(tick);
   }
   function redraw() { paint(); emit(); }
   const events = ['seeked', 'loadeddata', 'play', 'pause', 'ended'];
@@ -143,6 +172,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
     stopped = true;
     startupAbort.abort();
     cancelAnimationFrame(frame);
+    if (decoderClock) video.cancelVideoFrameCallback(decoderFrame);
     for (const event of events) video.removeEventListener(event, redraw);
     video.pause();
     graph.source.disconnect();
@@ -161,9 +191,9 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
     paint();
     emit();
   });
-  frame = requestAnimationFrame(tick);
+  schedule();
   return {
-    stream: output, ready, state, stop,
+    stream: output, ready, state, stop, profile: () => ({ ...profile }),
     setPreviewMuted(muted: boolean) { monitor.gain.value = muted ? 0 : 1; },
     async command(action: string) {
       if (stopped) return;

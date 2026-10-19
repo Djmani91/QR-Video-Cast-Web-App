@@ -24,6 +24,7 @@ import { createConnectionGrace } from './lib/connection-grace';
 import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, type ScopedIceCandidate } from './lib/session-recovery';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
+import { configureVideoSender } from './lib/video-stream-quality';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -2351,6 +2352,19 @@ function PhonePage({ roomId }: { roomId?: string }) {
       peerRef.current = peer;
       const live = phoneVideoStreamRef.current;
       if (live) for (const track of live.stream.getTracks()) peer.addTrack(track, live.stream);
+      const applyVideoQuality = () => {
+        if (!live || peerRef.current !== peer) return;
+        for (const sender of peer.getSenders()) {
+          if (sender.track?.kind === 'video') {
+            void configureVideoSender(sender, live.profile()).catch((error) => {
+              // Optional encoder tuning must not prevent otherwise working TV
+              // playback on older Safari/Samsung implementations.
+              console.warn('HD encoder tuning unavailable; browser automatic video quality remains active.', error);
+            });
+          }
+        }
+      };
+      applyVideoQuality();
       let connectedOnce = false;
       const holdInterruptedConnection = () => {
         connectionGrace.hold(() => {
@@ -2630,6 +2644,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
         if (transferRun !== transferRunRef.current) return;
         if (peer.connectionState === 'connected') {
           connectedOnce = true;
+          applyVideoQuality();
           if (connectionGrace.interrupted) setError('');
           connectionGrace.cancel();
           setStatus('connected');
@@ -3025,7 +3040,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? '720p live compatibility mode: video is decoded and rotated on your phone, then sent directly to the TV. Keep FrameCast visible during playback; no full-video upload is needed.' : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
+            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? `HD streaming targets ${phoneVideoStreamRef.current.profile().height}p at up to 30 fps. Actual quality depends on the original video, phone and Wi-Fi. Keep FrameCast visible during playback; video goes directly to the TV with no full-video upload.` : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}

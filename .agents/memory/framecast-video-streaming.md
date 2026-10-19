@@ -20,3 +20,9 @@ Some automation Chromium builds cannot decode H.264/AAC even when an MP4 is vali
 **Why:** A missing proprietary decoder can prevent peer creation entirely and must not be mistaken for an application reconnection defect.
 
 **How to apply:** Check actual phone-preview decoding first, then confirm received video frames rather than only connection labels. Use supported generated fixtures for transport tests, and do not infer MP4, physical Samsung, or mobile OS background compatibility from a successful desktop WebM simulation.
+
+Drive compatibility rendering from decoded video frames where available. A display-clock fallback must preserve timing phase rather than resetting its throttle after every draw.
+
+**Why:** The user reported soft, jerky TV playback. A nominal frame-rate cap sampled on a phone display clock can silently deliver fewer, unevenly spaced pictures; increasing resolution or bitrate alone does not fix that. Full-resolution phone decoding plus canvas encoding also has a real processing cost.
+
+**How to apply:** Preserve the upright phone-rendering path, bound its output to Full HD rather than attempting 4K encoding, avoid a Full HD upscale for lower-resolution sources, and allow quality adaptation to protect motion. Describe resolution as a target, not verified TV delivery or original-file quality; actual resolution depends on the source, encoder, network and receiver.

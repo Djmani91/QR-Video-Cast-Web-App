@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { phoneFrameGeometry, startPhoneVideoStream, waitForPhoneVideoFrame } from '../src/lib/phone-video-stream.ts';
 
-function setup() {
+function setup({ decoderClock = false } = {}) {
   const original = { document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame };
   const frames = new Map();
   let id = 0;
@@ -10,14 +10,15 @@ function setup() {
   const events = [];
   const track = kind => ({ kind, stopped: false, stop() { this.stopped = true; } });
   const videoTrack = track('video');
+  videoTrack.contentHint = '';
   const audioTrack = track('audio');
   const tracks = [videoTrack];
-  const output = { getTracks: () => tracks, addTrack: item => tracks.push(item) };
+  const output = { getTracks: () => tracks, getVideoTracks: () => [videoTrack], addTrack: item => tracks.push(item) };
   const context = Object.fromEntries(['save', 'restore', 'setTransform', 'fillRect', 'translate', 'rotate', 'drawImage']
     .map(name => [name, (...args) => calls.push([name, ...args])]));
   const canvas = { width: 0, height: 0, getContext: () => context, captureStream: fps => { events.push(['capture', fps]); return output; } };
   globalThis.document = { createElement: tag => { assert.equal(tag, 'canvas'); return canvas; } };
-  globalThis.requestAnimationFrame = fn => { frames.set(++id, fn); return id; };
+  globalThis.requestAnimationFrame = fn => { events.push(['raf']); frames.set(++id, fn); return id; };
   globalThis.cancelAnimationFrame = handle => frames.delete(handle);
   const video = Object.assign(new EventTarget(), {
     readyState: 2, videoWidth: 576, videoHeight: 1024, currentTime: 0, duration: 300, paused: true, ended: false,
@@ -25,6 +26,10 @@ function setup() {
     async play() { this.paused = false; this.dispatchEvent(new Event('play')); },
     pause() { this.paused = true; this.dispatchEvent(new Event('pause')); },
   });
+  if (decoderClock) {
+    video.requestVideoFrameCallback = fn => { events.push(['decoder-frame']); frames.set(++id, fn); return id; };
+    video.cancelVideoFrameCallback = handle => frames.delete(handle);
+  }
   const monitor = { gain: { value: 0 }, connect() {}, disconnect() { events.push(['monitor-disconnect']); } };
   const graph = {
     video,
@@ -40,7 +45,12 @@ function setup() {
   const errors = [];
   const live = startPhoneVideoStream(video, graph, { previewMuted: true, onState: state => states.push(state), onError: message => errors.push(message) });
   return {
-    live, video, canvas, calls, events, monitor, states, errors, tracks,
+    live, video, canvas, calls, events, monitor, states, errors, tracks, frames,
+    step(now) {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(now, { mediaTime: now / 1000 });
+    },
     restore() { live.stop(); for (const [key, value] of Object.entries(original)) { if (value === undefined) delete globalThis[key]; else globalThis[key] = value; } },
   };
 }
@@ -153,4 +163,79 @@ test('disconnect cancels a pending phone startup and its deadline', async () => 
   const ready = waitForPhoneVideoFrame(video, new Promise(() => {}), controller.signal);
   controller.abort();
   await assert.rejects(ready, { name: 'AbortError' });
+});
+
+test('60Hz fallback delivers thirty evenly spaced pictures per second, not twenty', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    f.calls.length = 0;
+    const draws = [];
+    for (let i = 0; i < 60; i++) {
+      const before = f.calls.filter(call => call[0] === 'drawImage').length;
+      f.step(i * 1000 / 60);
+      if (f.calls.filter(call => call[0] === 'drawImage').length > before) draws.push(i);
+    }
+    assert.equal(draws.length, 30);
+    assert.ok(draws.slice(1).every((tick, index) => tick - draws[index] === 2));
+    assert.equal(f.events.find(event => event[0] === 'capture')[1], 30);
+    assert.equal(f.tracks[0].contentHint, 'motion');
+  } finally { f.restore(); }
+});
+
+test('decoder-driven playback draws each actual 24fps picture with no competing display timer', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    f.calls.length = 0;
+    for (let i = 0; i < 24; i++) f.step(i * 1000 / 24);
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, 24);
+    assert.equal(f.events.some(event => event[0] === 'raf'), false);
+    assert.ok(f.frames.size === 1);
+    f.live.stop();
+    assert.equal(f.frames.size, 0);
+  } finally { f.restore(); }
+});
+
+test('paused video avoids re-encoding the same picture over and over', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    f.calls.length = 0;
+    for (let i = 0; i < 60; i++) f.step(i * 1000 / 60);
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, 0);
+    await f.live.command('video:rotate');
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, 1);
+  } finally { f.restore(); }
+});
+
+test('HD dimensions arriving after startup produce a Full HD canvas without 4K phone processing', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    const originalTracks = [...f.live.stream.getTracks()];
+    f.video.videoWidth = 3840;
+    f.video.videoHeight = 2160;
+    f.video.dispatchEvent(new Event('loadeddata'));
+    assert.equal(f.canvas.width, 1920);
+    assert.equal(f.canvas.height, 1080);
+    assert.equal(f.live.profile().maxBitrate, 8_000_000);
+    assert.deepEqual(f.calls.filter(call => call[0] === 'drawImage').at(-1).slice(-2), [1920, 1080]);
+    assert.deepEqual(f.live.stream.getTracks(), originalTracks);
+  } finally { f.restore(); }
+});
+
+test('an already-queued decoder callback cannot redraw or reschedule after disconnect', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    const late = [...f.frames.values()][0];
+    f.live.stop();
+    f.calls.length = 0;
+    late(500);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.frames.size, 0);
+  } finally { f.restore(); }
 });
