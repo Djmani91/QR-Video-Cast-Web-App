@@ -23,6 +23,7 @@ import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
 import { needsVideoCanvas } from './lib/rotated-video-canvas';
 import { createConnectionGrace } from './lib/connection-grace';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
+import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -500,6 +501,12 @@ function TvPage() {
   const canvasPlaybackRef = useRef(false);
   const canvasUnavailableRef = useRef(false);
   const videoMediaChannelRef = useRef<RTCDataChannel | null>(null);
+  const phoneRenderedVideoRef = useRef(false);
+  const phoneVideoStateRef = useRef<PhoneVideoState | null>(null);
+  const relayPhoneVideoCommand = useCallback((action: string) => {
+    const channel = controlChannelRef.current;
+    if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'live-command', action }));
+  }, []);
   const applyVideoOrientation = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -509,7 +516,7 @@ function TvPage() {
     const source = orientationSourceRef.current;
     const width = source?.orientationNormalized ? source.encodedWidth : video.videoWidth || source?.encodedWidth || 0;
     const height = source?.orientationNormalized ? source.encodedHeight : video.videoHeight || source?.encodedHeight || 0;
-    const canvas = !canvasUnavailableRef.current && needsVideoCanvas(rotation, videoFitModeRef.current, width, height, window.innerWidth, window.innerHeight);
+    const canvas = !phoneRenderedVideoRef.current && !canvasUnavailableRef.current && needsVideoCanvas(rotation, videoFitModeRef.current, width, height, window.innerWidth, window.innerHeight);
     canvasPlaybackRef.current = canvas;
     setCanvasPlayback(canvas);
     video.playsInline = canvas;
@@ -537,6 +544,10 @@ function TvPage() {
     }));
   }, []);
   const rotateCurrentVideo = useCallback(() => {
+    if (phoneRenderedVideoRef.current) {
+      relayPhoneVideoCommand('video:rotate');
+      return;
+    }
     manualRotationRef.current = normalizeRotation(manualRotationRef.current + 90);
     applyVideoOrientation();
     const video = videoRef.current;
@@ -548,6 +559,10 @@ function TvPage() {
     }
   }, [applyVideoOrientation, requestPlaybackFullscreen]);
   const changeVideoFit = useCallback((mode: 'cover' | 'contain') => {
+    if (phoneRenderedVideoRef.current) {
+      relayPhoneVideoCommand(`video:fit:${mode}`);
+      return;
+    }
     videoFitModeRef.current = mode;
     setVideoFitMode(mode);
     applyVideoOrientation();
@@ -620,6 +635,8 @@ function TvPage() {
     connectionGrace.cancel();
     canvasUnavailableRef.current = false;
     videoMediaChannelRef.current = null;
+    phoneRenderedVideoRef.current = false;
+    phoneVideoStateRef.current = null;
     photoFullscreenAttemptedRef.current = false;
     setNeedsPhotoFullscreen(false);
     setPhotoReturnedInline(false);
@@ -688,9 +705,9 @@ function TvPage() {
     if (!video) return;
     channel.send(JSON.stringify({
       framecast: 'video-state',
-      currentTime: video.currentTime,
-      duration: Number.isFinite(video.duration) ? video.duration : 0,
-      paused: video.paused,
+      currentTime: phoneVideoStateRef.current?.currentTime ?? video.currentTime,
+      duration: phoneVideoStateRef.current?.duration ?? (Number.isFinite(video.duration) ? video.duration : 0),
+      paused: phoneVideoStateRef.current?.paused ?? video.paused,
       volume: video.muted ? 0 : video.volume,
       fitMode: videoFitModeRef.current,
     }));
@@ -752,6 +769,8 @@ function TvPage() {
     const video = videoRef.current;
     if (!video) return;
     const onPlaying = () => {
+      if (phoneRenderedVideoRef.current && (!video.videoWidth || !video.videoHeight || video.paused)) return;
+      if (phoneRenderedVideoRef.current && phoneVideoStateRef.current?.paused) relayPhoneVideoCommand('play');
       const channel = videoMediaChannelRef.current;
       if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
       const source = video.srcObject || video.currentSrc || video.src;
@@ -785,6 +804,9 @@ function TvPage() {
       revealTvControls();
     };
     video.addEventListener('playing', onPlaying);
+    const onLiveFrame = () => { if (phoneRenderedVideoRef.current && video.readyState >= 2 && !video.paused) onPlaying(); };
+    video.addEventListener('loadeddata', onLiveFrame);
+    video.addEventListener('resize', onLiveFrame);
     video.addEventListener('loadedmetadata', applyVideoOrientation);
     video.addEventListener('resize', applyVideoOrientation);
     video.addEventListener('webkitendfullscreen', onExit);
@@ -793,6 +815,8 @@ function TvPage() {
     document.addEventListener('webkitfullscreenchange', onExit);
     return () => {
       video.removeEventListener('playing', onPlaying);
+      video.removeEventListener('loadeddata', onLiveFrame);
+      video.removeEventListener('resize', onLiveFrame);
       video.removeEventListener('loadedmetadata', applyVideoOrientation);
       video.removeEventListener('resize', applyVideoOrientation);
       video.removeEventListener('webkitendfullscreen', onExit);
@@ -801,6 +825,15 @@ function TvPage() {
       document.removeEventListener('webkitfullscreenchange', onExit);
     };
   }, [revealTvControls, mediaKind, applyVideoOrientation, requestPlaybackFullscreen]);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onPause = () => {
+      if (phoneRenderedVideoRef.current && phoneVideoStateRef.current && !phoneVideoStateRef.current.paused) relayPhoneVideoCommand('pause');
+    };
+    video.addEventListener('pause', onPause);
+    return () => video.removeEventListener('pause', onPause);
+  }, [relayPhoneVideoCommand]);
   useEffect(() => {
     if (mediaKind !== 'image' || status !== 'connected') return;
     const onPhotoRemote = (event: KeyboardEvent) => {
@@ -832,6 +865,19 @@ function TvPage() {
       const play = event.key === 'MediaPlay' || event.keyCode === 415;
       const pause = event.key === 'MediaPause' || event.keyCode === 19;
       const toggle = ['Enter', 'MediaPlayPause', ' '].includes(event.key) || event.keyCode === 10252;
+      if (phoneRenderedVideoRef.current) {
+        const action = play ? 'play' : pause ? 'pause' : toggle
+          ? (phoneVideoStateRef.current?.paused ? 'play' : 'pause')
+          : event.key === 'ArrowLeft' || event.keyCode === 412 ? 'video:seek-by:-10'
+          : event.key === 'ArrowRight' || event.keyCode === 417 ? 'video:seek-by:10'
+          : event.key === 'MediaStop' || event.keyCode === 413 ? 'stop' : '';
+        if (action) {
+          event.preventDefault();
+          relayPhoneVideoCommand(action);
+          if (action === 'play' && needsVideoFullscreen) void requestPlaybackFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+        }
+        return;
+      }
       if (play || pause || toggle) {
         event.preventDefault();
         if (pause || (toggle && !video.paused)) video.pause();
@@ -1025,6 +1071,20 @@ function TvPage() {
                     }
                     if (packet.framecast === 'receiver-info') {
                       if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'receiver-info', rotationRenderer: ROTATION_RENDERER_VERSION }));
+                      return;
+                    }
+                    if (packet.framecast === 'live-video') {
+                      const video = videoRef.current;
+                      if (phoneRenderedVideoRef.current && video) {
+                        setTransferProgress(100);
+                        setVideoStreamActive(true);
+                        if (!video.paused && video.readyState >= 2 && video.videoWidth && video.videoHeight) channel.send(JSON.stringify({ framecast: 'streaming' }));
+                        else void startReceiverVideo(video, {
+                          onPlaying: () => { if (channel.readyState === 'open' && video.videoWidth && video.videoHeight) channel.send(JSON.stringify({ framecast: 'streaming' })); },
+                          onBlocked: () => { if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'playback-blocked', message: 'Press Play with the TV remote. Your phone is connected.' })); },
+                          onFailed: () => { if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: 'The TV could not open the direct video stream.' })); },
+                        });
+                      }
                       return;
                     }
                     if (packet.framecast === 'preview' && packet.kind === 'image' && packet.itemId && packet.previewDataUrl) {
@@ -1431,6 +1491,30 @@ function TvPage() {
                 channel.onopen = sendVideoState;
                 channel.onmessage = (message) => {
                   const command = String(message.data);
+                  if (phoneRenderedVideoRef.current && command.startsWith('{')) {
+                    try {
+                      const packet = JSON.parse(command) as Partial<PhoneVideoState> & { framecast?: string };
+                      if (packet.framecast === 'live-state' && Number.isFinite(packet.currentTime) && Number.isFinite(packet.duration) && typeof packet.paused === 'boolean') {
+                        phoneVideoStateRef.current = packet as PhoneVideoState;
+                        if (packet.fitMode === 'cover' || packet.fitMode === 'contain') {
+                          videoFitModeRef.current = packet.fitMode;
+                          setVideoFitMode(packet.fitMode);
+                        }
+                        const video = videoRef.current;
+                        if (video) {
+                          if (packet.paused && !video.paused) video.pause();
+                          else if (!packet.paused && video.paused) void video.play().catch(() => setError('Press Play with the TV remote to resume.'));
+                        }
+                        setPlaying(!packet.paused);
+                        sendVideoState();
+                      }
+                    } catch { setError('The phone sent unreadable playback information. Reconnect it.'); }
+                    return;
+                  }
+                  if (phoneRenderedVideoRef.current && (['play', 'pause', 'stop'].includes(command) || command.startsWith('video:seek'))) {
+                    relayPhoneVideoCommand(command);
+                    return;
+                  }
                   const youtube = youtubePlayerRef.current;
                   if (youtube) {
                     let handled = true;
@@ -1541,7 +1625,20 @@ function TvPage() {
             };
             peer.ontrack = (event) => {
               if (videoRef.current) {
-                videoRef.current.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+                phoneRenderedVideoRef.current = true;
+                orientationSourceRef.current = null;
+                manualRotationRef.current = 0;
+                videoRotationRef.current = 0;
+                setVideoRotation(0);
+                canvasPlaybackRef.current = false;
+                setCanvasPlayback(false);
+                setMediaKind('video');
+                setVideoStreamActive(true);
+                setTransferProgress(100);
+                videoRef.current.playsInline = false;
+                videoRef.current.removeAttribute('webkit-playsinline');
+                const stream = event.streams[0] ?? new MediaStream([event.track]);
+                if (videoRef.current.srcObject !== stream) videoRef.current.srcObject = stream;
                 void videoRef.current.play().catch(() => setPlaying(false));
               }
             };
@@ -1900,6 +1997,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const videoStreamingRef = useRef(false);
   const videoStartupRef = useRef<VideoStartup>({ status: 'waiting' });
   const videoWarningRef = useRef('');
+  const phoneVideoStreamRef = useRef<PhoneVideoStream | null>(null);
+  const phoneAudioGraphRef = useRef<PhoneAudioGraph | null>(null);
   const fileQueueRef = useRef<File[]>([]);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
@@ -1908,6 +2007,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
 
   const stopPeer = useCallback((sendClose = false) => {
     connectionGrace.cancel();
+    phoneVideoStreamRef.current?.stop();
+    phoneVideoStreamRef.current = null;
     selectionRunRef.current += 1;
     setPreparingSelection(false);
     transferRunRef.current += 1;
@@ -1932,6 +2033,22 @@ function PhonePage({ roomId }: { roomId?: string }) {
   }, [send]);
 
   useEffect(() => () => stopPeer(), [stopPeer]);
+  useEffect(() => () => {
+    const graph = phoneAudioGraphRef.current;
+    graph?.source.disconnect();
+    if (graph) void graph.context.close().catch(() => console.warn('Phone audio cleanup failed.'));
+    phoneAudioGraphRef.current = null;
+  }, []);
+  useEffect(() => {
+    const graph = phoneAudioGraphRef.current;
+    if (graph && graph.video !== videoRef.current) {
+      graph.source.disconnect();
+      graph.video.removeAttribute('src');
+      graph.video.load();
+      void graph.context.close().catch(() => console.warn('Phone audio cleanup failed.'));
+      phoneAudioGraphRef.current = null;
+    }
+  }, [objectUrl, mediaKind]);
   useEffect(() => () => {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
   }, [objectUrl]);
@@ -2114,12 +2231,40 @@ function PhonePage({ roomId }: { roomId?: string }) {
     transferCompleteRef.current = false;
     const transferRun = transferRunRef.current;
     try {
+      if (!castUrl && queuedFiles.length === 1 && queuedFiles[0].type.startsWith('video/')) {
+        const video = videoRef.current;
+        if (!video) throw new Error('The phone video preview is not ready. Choose the video again.');
+        let graph = phoneAudioGraphRef.current;
+        if (!graph || graph.video !== video) {
+          if (graph) { graph.source.disconnect(); void graph.context.close(); }
+          graph = createPhoneAudioGraph(video);
+          phoneAudioGraphRef.current = graph;
+        }
+        const live = startPhoneVideoStream(video, graph, {
+          previewMuted: muted,
+          onState: (state) => {
+            const channel = controlChannelRef.current;
+            if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'live-state', ...state }));
+          },
+          onError: (message) => {
+            if (transferRun !== transferRunRef.current) return;
+            setError(message);
+            setStatus('failed');
+            stopPeer(true);
+          },
+        });
+        phoneVideoStreamRef.current = live;
+        await live.ready;
+        if (transferRun !== transferRunRef.current) return;
+      }
       for (const selected of queuedFiles) {
         await assertBrowserFileReadable(selected);
         if (transferRun !== transferRunRef.current) return;
       }
       const peer = new RTCPeerConnection(rtcConfig);
       peerRef.current = peer;
+      const live = phoneVideoStreamRef.current;
+      if (live) for (const track of live.stream.getTracks()) peer.addTrack(track, live.stream);
       let connectedOnce = false;
       const holdInterruptedConnection = () => {
         connectionGrace.hold(() => {
@@ -2130,10 +2275,19 @@ function PhonePage({ roomId }: { roomId?: string }) {
       };
       const controlChannel = peer.createDataChannel('framecast-control');
       controlChannelRef.current = controlChannel;
+      controlChannel.onopen = () => {
+        const live = phoneVideoStreamRef.current;
+        if (live) controlChannel.send(JSON.stringify({ framecast: 'live-state', ...live.state() }));
+      };
       controlChannel.onmessage = (event) => {
         if (typeof event.data !== 'string') return;
         try {
           const packet = JSON.parse(event.data) as { framecast?: string; currentTime?: number; duration?: number; paused?: boolean; volume?: number; fitMode?: 'cover' | 'contain' };
+          if (packet.framecast === 'live-command') {
+            const action = (JSON.parse(event.data) as { action?: unknown }).action;
+            if (typeof action === 'string') void phoneVideoStreamRef.current?.command(action).catch(() => setError('Tap Play on the phone to resume this video.'));
+            return;
+          }
           if (packet.framecast === 'video-state') {
             if (packet.fitMode === 'cover' || packet.fitMode === 'contain') setTvVideoFit(packet.fitMode);
             setRemoteVideoState({
@@ -2159,6 +2313,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
             videoStreamingRef.current = true;
             setVideoStreaming(true);
             setTransferNotice(videoWarningRef.current);
+            if (phoneVideoStreamRef.current) {
+              transferCompleteRef.current = true;
+              setProgress(100);
+              setSentToTv(true);
+              setTransferNotice('Playing directly from your phone. Keep FrameCast open while playing.');
+            }
             if (urlCastActiveRef.current) {
               transferCompleteRef.current = true;
               setProgress(100);
@@ -2216,6 +2376,24 @@ function PhonePage({ roomId }: { roomId?: string }) {
             if (queuedFiles.some((item) => item.type.startsWith('video/'))) {
               await verifyRotationRenderer(mediaChannel);
               if (transferRun !== transferRunRef.current) return;
+            }
+            const live = phoneVideoStreamRef.current;
+            if (live) {
+              mediaChannel.send(JSON.stringify({ framecast: 'live-video' }));
+              await live.command('play');
+              const startup = await waitForVideoStartup({
+                state: () => videoStreamingRef.current ? { status: 'playing' } : videoStartupRef.current,
+                active: () => transferRun === transferRunRef.current,
+              });
+              if (startup.status === 'interrupted' || transferRun !== transferRunRef.current) return;
+              transferCompleteRef.current = true;
+              setProgress(100);
+              setSentToTv(startup.status === 'playing');
+              setSentQueueCount(1);
+              setTransferNotice(startup.status === 'blocked'
+                ? startup.message || 'Press Play with the TV remote. Your phone is connected.'
+                : 'Playing directly from your phone. Rotation and screen fitting happen on the phone, not in the TV browser. Keep FrameCast open while playing.');
+              return;
             }
             for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
@@ -2510,9 +2688,15 @@ function PhonePage({ roomId }: { roomId?: string }) {
                     ref={videoRef}
                     className="video-preview"
                     src={objectUrl}
-                    controls
+                    controls={!phoneVideoStreamRef.current}
                     playsInline
-                    muted={muted}
+                    muted={phoneVideoStreamRef.current ? false : muted}
+                    onPlay={() => {
+                      const graph = phoneAudioGraphRef.current;
+                      if (!phoneVideoStreamRef.current && graph?.context.state === 'suspended') {
+                        void graph.context.resume().catch(() => setError('Tap Play again to enable preview sound.'));
+                      }
+                    }}
                     onTimeUpdate={(event) => {
                       const element = event.currentTarget;
                       if (element.duration) setProgress(Math.max(status === 'connected' ? 35 : 0, (element.currentTime / element.duration) * 100));
@@ -2622,7 +2806,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   <X size={16} /> Disconnect from TV
                 </button>
               )}
-              {file && mediaKind === 'video' && <button type="button" className="button-secondary" onClick={() => setMuted((value) => !value)} data-testid="button-phone-mute" aria-label={muted ? 'Enable preview sound' : 'Mute preview'}>
+              {file && mediaKind === 'video' && <button type="button" className="button-secondary" onClick={() => setMuted((value) => { phoneVideoStreamRef.current?.setPreviewMuted(!value); return !value; })} data-testid="button-phone-mute" aria-label={muted ? 'Enable preview sound' : 'Mute preview'}>
                 {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{muted ? 'Preview muted' : 'Preview sound on'}
               </button>}
             </div>
@@ -2694,7 +2878,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {mediaKind === 'video' && <p className="support-note">MP4/MOV files are prepared on the phone for streaming. Other small videos transfer first; the TV must support the codec.</p>}
+            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? '720p live compatibility mode: video is decoded and rotated on your phone, then sent directly to the TV. Keep FrameCast visible during playback; no full-video upload is needed.' : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}

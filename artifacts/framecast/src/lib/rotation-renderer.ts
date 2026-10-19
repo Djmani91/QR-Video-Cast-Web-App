@@ -1,4 +1,4 @@
-export const ROTATION_RENDERER_VERSION = 4;
+export const ROTATION_RENDERER_VERSION = 5;
 
 const REFRESH_MESSAGE = 'Refresh the TV browser page, reconnect your phone, then send the video again. The TV page is using an older video player.';
 

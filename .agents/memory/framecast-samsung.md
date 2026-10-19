@@ -15,7 +15,7 @@ The user confirmed video fullscreen works on their Samsung TV; the model was not
 
 **Why:** The user then showed sideways video despite working fullscreen. A TV's native media overlay can bypass CSS transforms, and fragmented-video rotation metadata is not handled consistently across TV players. Genuine portrait footage must not be stretched to landscape.
 
-**How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. The user reports correct laptop rendering but sideways Samsung rendering, so desktop CSS-transform checks are not proof of TV compatibility. Use decoded-pixel drawing in a fullscreen playback container for correction/cropping, keeping upright controls. Retain native playback for already-wide, unrotated footage and manual Rotate for missing metadata. Do not claim hardware compatibility until verified on the TV.
+**How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. Desktop CSS-transform checks are not proof of Samsung compatibility. Prefer correcting local browser video on the phone and sending already-upright landscape frames to the TV's ordinary WebRTC video player. Do not switch the TV into a canvas or CSS rotation path when rotating this stream. Retain native fullscreen and do not claim hardware compatibility until verified on the TV.
 
 The user wants videos to show horizontally and fill the TV screen. Default to Fill TV screen, keeping the picture upright and center-cropping portrait footage rather than stretching it or turning people sideways. Offer Fit whole video to restore the complete picture.
 
@@ -28,6 +28,12 @@ Keep the underlying video visible and full-sized when using a canvas overlay. If
 **Why:** The user reported previously playable video failing after the wide-screen drawing change. Offscreen/tiny video is unsafe for TV decoder compatibility, and failure of a display enhancement must not stop otherwise supported playback.
 
 **How to apply:** Never rely on desktop drawing checks as proof of Samsung playback. Distinguish actual playing, autoplay permission requiring the TV remote, and real decoder errors. Preserve specific TV feedback rather than replacing it with a generic format warning after a short timeout.
+
+The user reports that TV-side Rotate can produce a black picture while audio continues, and cycling rotation restores the uncorrected picture. A drawing API being available or not throwing is not evidence that the TV can display decoded frames through it.
+
+**Why:** Exception-only fallback and desktop rendering checks did not catch the Samsung display failure.
+
+**How to apply:** For phone-browser files, rotate and crop on the phone with a stable outgoing media track, rather than changing the TV video surface. Relay seek/play/pause/Rotate/Fill commands to the phone's source file; the receiving live video's clock is not the file timeline. Keep phone preview mute separate from TV audio. Confirm decoded video dimensions before reporting TV playback.
 
 Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
 
