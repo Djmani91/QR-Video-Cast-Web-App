@@ -22,6 +22,7 @@ import { ROTATION_RENDERER_VERSION, verifyRotationRenderer } from './lib/rotatio
 import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
 import { needsVideoCanvas } from './lib/rotated-video-canvas';
 import { createConnectionGrace } from './lib/connection-grace';
+import { createAutoFullscreen } from './lib/auto-fullscreen';
 import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, type ScopedIceCandidate } from './lib/session-recovery';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
@@ -479,6 +480,8 @@ function TvPage() {
   const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
+  const receiverMediaKindRef = useRef(mediaKind);
+  receiverMediaKindRef.current = mediaKind;
   const [error, setError] = useState('');
   const [muted, setMuted] = useState(true);
   const [playing, setPlaying] = useState(true);
@@ -577,7 +580,7 @@ function TvPage() {
         .then((entered) => setNeedsVideoFullscreen(!entered));
     }
   }, [applyVideoOrientation, requestPlaybackFullscreen]);
-  const autoFullscreenSourceRef = useRef<unknown>(null);
+  const [autoFullscreen] = useState(createAutoFullscreen);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const tvControlsIntervalRef = useRef<number | null>(null);
@@ -637,6 +640,7 @@ function TvPage() {
   const messages = messagesQuery.data?.messages ?? [];
 
   const stopPeer = useCallback(() => {
+    autoFullscreen.reset();
     connectionGrace.cancel();
     activeSessionRef.current = null;
     canvasUnavailableRef.current = false;
@@ -700,6 +704,7 @@ function TvPage() {
       const duration = youtube.getDuration();
       channel.send(JSON.stringify({
         framecast: 'video-state',
+        fullscreen: videoRef.current ? isVideoFullscreen(videoRef.current) : Boolean(document.fullscreenElement),
         currentTime: Number.isFinite(currentTime) ? currentTime : 0,
         duration: Number.isFinite(duration) ? duration : 0,
         paused: youtube.getPlayerState() !== 1,
@@ -711,6 +716,7 @@ function TvPage() {
     if (!video) return;
     channel.send(JSON.stringify({
       framecast: 'video-state',
+      fullscreen: isVideoFullscreen(video),
       currentTime: phoneVideoStateRef.current?.currentTime ?? video.currentTime,
       duration: phoneVideoStateRef.current?.duration ?? (Number.isFinite(video.duration) ? video.duration : 0),
       paused: phoneVideoStateRef.current?.paused ?? video.paused,
@@ -775,16 +781,21 @@ function TvPage() {
     const video = videoRef.current;
     if (!video) return;
     const onPlaying = () => {
-      if (phoneRenderedVideoRef.current && (!video.videoWidth || !video.videoHeight || video.paused)) return;
+      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight || video.paused) return;
       if (phoneRenderedVideoRef.current && phoneVideoStateRef.current?.paused) relayPhoneVideoCommand('play');
       const channel = videoMediaChannelRef.current;
       if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
       const source = video.srcObject || video.currentSrc || video.src;
-      if (autoFullscreenSourceRef.current === source) return;
-      autoFullscreenSourceRef.current = source;
-      setVideoReturnedInline(false);
-      applyVideoOrientation();
-      void requestPlaybackFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
+      if (isVideoFullscreen(video)) { autoFullscreen.observe(true); sendVideoState(); return; }
+      void autoFullscreen.start(source, {
+        ready: () => video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0 && !video.paused,
+        request: () => {
+          setVideoReturnedInline(false);
+          applyVideoOrientation();
+          return requestPlaybackFullscreen(video);
+        },
+        onResult: (entered) => { setNeedsVideoFullscreen(!entered); sendVideoState(); },
+      });
     };
     let correctingNativeFullscreen = false;
     const correctNativeFullscreen = () => {
@@ -803,6 +814,7 @@ function TvPage() {
         return;
       }
       setBrowserFullscreen(fullscreen);
+      autoFullscreen.observe(fullscreen);
       setVideoReturnedInline(!fullscreen);
       if (mediaKind === 'image') setPhotoReturnedInline(!fullscreen);
       // Do not re-enter on pause/resume or buffering after the viewer presses Back.
@@ -816,7 +828,8 @@ function TvPage() {
     video.addEventListener('loadedmetadata', applyVideoOrientation);
     video.addEventListener('resize', applyVideoOrientation);
     video.addEventListener('webkitendfullscreen', onExit);
-    video.addEventListener('webkitbeginfullscreen', correctNativeFullscreen);
+    const onBegin = () => { correctNativeFullscreen(); autoFullscreen.observe(isVideoFullscreen(video)); sendVideoState(); };
+    video.addEventListener('webkitbeginfullscreen', onBegin);
     document.addEventListener('fullscreenchange', onExit);
     document.addEventListener('webkitfullscreenchange', onExit);
     return () => {
@@ -826,11 +839,11 @@ function TvPage() {
       video.removeEventListener('loadedmetadata', applyVideoOrientation);
       video.removeEventListener('resize', applyVideoOrientation);
       video.removeEventListener('webkitendfullscreen', onExit);
-      video.removeEventListener('webkitbeginfullscreen', correctNativeFullscreen);
+      video.removeEventListener('webkitbeginfullscreen', onBegin);
       document.removeEventListener('fullscreenchange', onExit);
       document.removeEventListener('webkitfullscreenchange', onExit);
     };
-  }, [revealTvControls, mediaKind, applyVideoOrientation, requestPlaybackFullscreen]);
+  }, [revealTvControls, mediaKind, applyVideoOrientation, requestPlaybackFullscreen, autoFullscreen, sendVideoState]);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -868,6 +881,12 @@ function TvPage() {
       }
       const target = event.target as HTMLElement | null;
       if (target && ['BUTTON', 'INPUT', 'A'].includes(target.tagName)) return;
+      if (needsVideoFullscreen && (event.key === 'Enter' || event.keyCode === 13)) {
+        event.preventDefault();
+        applyVideoOrientation();
+        void requestPlaybackFullscreen(video).then((entered) => { setNeedsVideoFullscreen(!entered); sendVideoState(); });
+        return;
+      }
       const play = event.key === 'MediaPlay' || event.keyCode === 415;
       const pause = event.key === 'MediaPause' || event.keyCode === 19;
       const toggle = ['Enter', 'MediaPlayPause', ' '].includes(event.key) || event.keyCode === 10252;
@@ -953,7 +972,10 @@ function TvPage() {
   }, [revealTvControls]);
   useEffect(() => {
     const video = videoRef.current;
-    const updateFullscreenState = () => setBrowserFullscreen(video ? isVideoFullscreen(video) : Boolean(document.fullscreenElement));
+    const updateFullscreenState = () => {
+      setBrowserFullscreen(video ? isVideoFullscreen(video) : Boolean(document.fullscreenElement));
+      sendVideoState();
+    };
     const documentEvents = ['fullscreenchange', 'webkitfullscreenchange'];
     const videoEvents = ['webkitbeginfullscreen', 'webkitendfullscreen', 'webkitpresentationmodechanged'];
     for (const event of documentEvents) document.addEventListener(event, updateFullscreenState);
@@ -963,7 +985,7 @@ function TvPage() {
       for (const event of documentEvents) document.removeEventListener(event, updateFullscreenState);
       for (const event of videoEvents) video?.removeEventListener(event, updateFullscreenState);
     };
-  }, []);
+  }, [sendVideoState]);
   useEffect(() => {
     const timer = window.setInterval(() => setClock(Date.now()), 15000);
     return () => window.clearInterval(timer);
@@ -1511,6 +1533,28 @@ function TvPage() {
                 channel.onmessage = (message) => {
                   if (peerRef.current !== peer) return;
                   const command = String(message.data);
+                  if (command === 'fullscreen:enter' || command === 'fullscreen:exit') {
+                    const video = videoRef.current;
+                    const source = video?.srcObject || video?.currentSrc || video?.src;
+                    const entering = command === 'fullscreen:enter';
+                    if (entering) autoFullscreen.allow(source);
+                    else autoFullscreen.dismiss(source);
+                    const request = entering
+                      ? receiverMediaKindRef.current === 'image' || youtubePlayerRef.current
+                        ? playbackStageRef.current ? requestMediaFullscreen(playbackStageRef.current) : Promise.resolve(false)
+                        : video ? requestPlaybackFullscreen(video) : Promise.resolve(false)
+                      : video ? exitVideoFullscreen(video) : Promise.resolve(false);
+                    void request.then(() => {
+                      if (peerRef.current !== peer || channel.readyState !== 'open') return;
+                      const fullscreen = video ? isVideoFullscreen(video) : Boolean(document.fullscreenElement);
+                      autoFullscreen.observe(fullscreen);
+                      setBrowserFullscreen(fullscreen);
+                      if (receiverMediaKindRef.current === 'image') setNeedsPhotoFullscreen(entering && !fullscreen);
+                      else setNeedsVideoFullscreen(entering && !fullscreen);
+                      channel.send(JSON.stringify({ framecast: 'fullscreen-state', fullscreen, needsGesture: entering && !fullscreen }));
+                    });
+                    return;
+                  }
                   if (command.startsWith('{')) {
                     try {
                       const packet = JSON.parse(command) as { framecast?: string; nonce?: string };
@@ -2028,6 +2072,11 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [sentToTv, setSentToTv] = useState(false);
   const [videoStreaming, setVideoStreaming] = useState(false);
   const [remoteVideoState, setRemoteVideoState] = useState({ currentTime: 0, duration: 0, paused: true, volume: 0 });
+  const [tvFullscreen, setTvFullscreen] = useState(false);
+  const [fullscreenPending, setFullscreenPending] = useState(false);
+  const [fullscreenNotice, setFullscreenNotice] = useState('');
+  const fullscreenRequestRef = useRef<boolean | null>(null);
+  const fullscreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [tvVideoFit, setTvVideoFit] = useState<'cover' | 'contain'>('cover');
   const [connectionGrace] = useState(createConnectionGrace);
   const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
@@ -2064,6 +2113,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
+    if (fullscreenTimerRef.current !== null) clearTimeout(fullscreenTimerRef.current);
+    fullscreenTimerRef.current = null;
+    fullscreenRequestRef.current = null;
+    setTvFullscreen(false);
+    setFullscreenPending(false);
+    setFullscreenNotice('');
     playlistSwitchRunRef.current++;
     playlistBusyRef.current = false;
     setPlaylistLoading(false);
@@ -2437,7 +2492,19 @@ function PhonePage({ roomId }: { roomId?: string }) {
         if (transferRun !== transferRunRef.current) return;
         if (typeof event.data !== 'string') return;
         try {
-          const packet = JSON.parse(event.data) as { framecast?: string; currentTime?: number; duration?: number; paused?: boolean; volume?: number; fitMode?: 'cover' | 'contain' };
+          const packet = JSON.parse(event.data) as { framecast?: string; currentTime?: number; duration?: number; paused?: boolean; volume?: number; fitMode?: 'cover' | 'contain'; fullscreen?: boolean; needsGesture?: boolean };
+          if ((packet.framecast === 'video-state' || packet.framecast === 'fullscreen-state') && typeof packet.fullscreen === 'boolean') {
+            setTvFullscreen(packet.fullscreen);
+            if (packet.framecast === 'fullscreen-state' || fullscreenRequestRef.current === packet.fullscreen) {
+              if (fullscreenTimerRef.current !== null) clearTimeout(fullscreenTimerRef.current);
+              fullscreenTimerRef.current = null;
+              fullscreenRequestRef.current = null;
+              setFullscreenPending(false);
+              setFullscreenNotice('');
+            }
+            if (packet.fullscreen) setFullscreenNotice('');
+            if (packet.needsGesture) setFullscreenNotice('The TV browser requires its own remote button. Press Full screen or OK on the TV; your video is still connected.');
+          }
           if (packet.framecast === 'session-alive') {
             peerProbe.accept((JSON.parse(event.data) as { nonce?: unknown }).nonce);
             connectionGrace.cancel();
@@ -2944,6 +3011,26 @@ function PhonePage({ roomId }: { roomId?: string }) {
     if (channel?.readyState === 'open') channel.send(action);
   };
 
+  const requestTvFullscreen = () => {
+    const channel = controlChannelRef.current;
+    if (channel?.readyState !== 'open') {
+      setFullscreenNotice('TV controls are reconnecting. Try again once connected.');
+      return;
+    }
+    if (fullscreenTimerRef.current !== null) clearTimeout(fullscreenTimerRef.current);
+    const entering = !tvFullscreen;
+    fullscreenRequestRef.current = entering;
+    setFullscreenPending(true);
+    setFullscreenNotice('');
+    channel.send(entering ? 'fullscreen:enter' : 'fullscreen:exit');
+    fullscreenTimerRef.current = setTimeout(() => {
+      fullscreenTimerRef.current = null;
+      fullscreenRequestRef.current = null;
+      setFullscreenPending(false);
+      setFullscreenNotice('The TV has not confirmed fullscreen. Use Full screen on the TV. If its page is an older version, reload it once to enable phone fullscreen controls.');
+    }, 3000);
+  };
+
   const showQueuePhoto = (index: number) => {
     if (index < 0 || index >= sentQueueCount) return;
     const selected = fileQueueRef.current[index];
@@ -3143,6 +3230,16 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{muted ? 'Preview muted' : 'Preview sound on'}
               </button>}
             </div>
+            {status === 'connected' && (
+              <div className="video-remote-controls" data-testid="phone-tv-fullscreen-controls">
+                <button type="button" className="button-secondary" onClick={requestTvFullscreen} disabled={fullscreenPending}
+                  aria-label={tvFullscreen ? 'Exit full screen on TV' : 'Enter full screen on TV'} data-testid="button-phone-tv-fullscreen">
+                  {tvFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                  {fullscreenPending ? 'Requesting TV fullscreen…' : tvFullscreen ? 'Exit TV full screen' : 'Full screen on TV'}
+                </button>
+                {fullscreenNotice && <p className="support-note" role="status" data-testid="text-phone-fullscreen-notice">{fullscreenNotice}</p>}
+              </div>
+            )}
             {status === 'connected' && mediaKind === 'image' && sentQueueCount > 0 && (
               <div className="photo-remote-controls" data-testid="photo-remote-controls">
                 <span className="support-note">Browse and zoom the photos on the TV from here.</span>

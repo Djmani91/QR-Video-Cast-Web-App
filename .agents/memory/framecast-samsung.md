@@ -37,9 +37,9 @@ The user reports that TV-side Rotate can produce a black picture while audio con
 
 Do not treat a fullscreen API call returning without an exception as proof that fullscreen was entered. Some native file-player APIs can silently do nothing for a WebRTC stream.
 
-**Why:** The user reports browser chrome still visible and no automatic fullscreen after the live-video change.
+**Why:** The user reports browser chrome still visible after live-video changes, and later confirms Samsung automatic video fullscreen previously worked but regressed. Samsung's native media entry and general browser fullscreen are not interchangeable.
 
-**How to apply:** Prefer video-element fullscreen for live streams, retain native-player priority for ordinary files, and verify document/native fullscreen flags. Keep a separate fullscreen permission button visible while not fullscreen, outside the five-second controls timeout. Chrome can require a real click or TV-remote gesture on the receiving screen.
+**How to apply:** Give Samsung's native video entry a chance after decoded frames exist, including for live video, with a verified video-element fallback for native no-ops. A failed early attempt is not completed fullscreen; allow bounded startup retries, but respect Back/Exit. Keep a separate TV fullscreen permission button visible outside the five-second controls timeout. The user also wants a phone control for TV fullscreen: report actual TV state and explain when its browser requires its own remote gesture. A phone click cannot transfer browser user activation to the receiving device. Do not claim physical Samsung compatibility from desktop checks alone.
 
 Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
 

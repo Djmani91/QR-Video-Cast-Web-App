@@ -51,17 +51,29 @@ export async function requestVideoFullscreen(video: HTMLVideoElement): Promise<b
     media.webkitRequestFullscreen,
     media.webkitRequestFullScreen,
   ];
-  // Some Samsung native-player APIs silently do nothing for a MediaStream.
-  // Fullscreening the video element works for Chrome and decoded WebRTC video.
-  const requests = media.srcObject ? [...elementRequests, ...nativeRequests] : [...nativeRequests, ...elementRequests];
+  // Samsung's media-player entry must be tried while playback is ready, before
+  // a general browser fullscreen request can reject/consume that opportunity.
+  // A TV that cannot use its native overlay for WebRTC still gets the element
+  // fallback; never assume that an exposed native function actually succeeded.
+  const requests = [...new Set([...nativeRequests, ...elementRequests])];
+  let unconfirmed = false;
   for (const request of requests) {
     if (!request) continue;
     try {
-      await request.call(media);
+      const result = request.call(media);
+      // Legacy native APIs return void. Keep the next fallback in the same
+      // click/remote gesture rather than inserting an unnecessary await.
+      if (result && typeof result.then === 'function') await result;
       if (isVideoFullscreen(video)) return true;
+      unconfirmed = true;
     } catch {
       // An exposed API can still reject. Try the next TV/browser implementation.
     }
+  }
+  if (unconfirmed) {
+    // Some TV overlays update their fullscreen flags on a later event/task.
+    await new Promise<void>(resolve => setTimeout(resolve, 200));
+    return isVideoFullscreen(video);
   }
   return false;
 }

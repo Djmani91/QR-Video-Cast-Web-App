@@ -75,7 +75,7 @@ test('a native API that silently does nothing is not reported as fullscreen', as
   assert.equal(await requestVideoFullscreen({ webkitEnterFullscreen() {} }), false);
 });
 
-test('live WebRTC video prefers real element fullscreen over a TV file-only native player', async () => {
+test('live WebRTC falls back to element fullscreen when the native overlay does nothing', async () => {
   const calls = [];
   const video = {
     srcObject: {},
@@ -84,9 +84,39 @@ test('live WebRTC video prefers real element fullscreen over a TV file-only nati
     requestFullscreen() { calls.push('chrome-fullscreen'); this.ownerDocument.fullscreenElement = this; },
   };
   assert.equal(await requestVideoFullscreen(video), true);
-  assert.deepEqual(calls, ['chrome-fullscreen']);
+  assert.deepEqual(calls, ['file-only-native', 'chrome-fullscreen']);
 });
 
 test('a no-op gallery fullscreen request keeps the fullscreen prompt available', async () => {
   assert.equal(await requestMediaFullscreen({ requestFullscreen() {} }), false);
+});
+
+test('Samsung native fullscreen is attempted first even for a live video stream', async () => {
+  const calls = [];
+  const video = {
+    srcObject: {},
+    webkitEnterFullscreen() { calls.push('native'); this.webkitDisplayingFullscreen = true; },
+    requestFullscreen() { calls.push('general-browser'); throw Error('Gesture needed'); },
+  };
+  assert.equal(await requestVideoFullscreen(video), true);
+  assert.deepEqual(calls, ['native']);
+});
+
+test('legacy void methods do not lose the current remote gesture before the element fallback', async () => {
+  const calls = [];
+  const video = {
+    ownerDocument: { fullscreenElement: null },
+    webkitEnterFullscreen() { calls.push('native-noop'); },
+    requestFullscreen() { calls.push('element'); this.ownerDocument.fullscreenElement = this; },
+  };
+  const result = requestVideoFullscreen(video);
+  assert.deepEqual(calls, ['native-noop', 'element']);
+  assert.equal(await result, true);
+});
+
+test('a delayed native presentation flag is confirmed instead of falsely reporting failure', async () => {
+  const video = {
+    webkitEnterFullscreen() { setTimeout(() => { this.webkitDisplayingFullscreen = true; }, 10); },
+  };
+  assert.equal(await requestVideoFullscreen(video), true);
 });
