@@ -18,6 +18,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { File as ExpoFile } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
+import { getYouTubeVideoId } from '@/lib/youtube';
 import { useColors } from '@/hooks/useColors';
 import {
   getGetCastRoomMessagesQueryKey,
@@ -191,6 +192,7 @@ function findVideoUrlInPage(html: string, pageUrl: string) {
 
 async function resolveVideoLink(input: string) {
   const url = normalizeVideoLink(input);
+  if (getYouTubeVideoId(url)) return url;
   const parsed = new URL(url);
   if (/\.(mp4|m4v|mov|webm|m3u8|mpd|ogv)$/i.test(parsed.pathname)) return url;
 
@@ -1043,7 +1045,7 @@ export default function HomeScreen() {
                     setVideoLinkError('');
                   }}
                   style={[styles.urlInput, { borderColor: activeColors.border, backgroundColor: activeColors.background, color: activeColors.foreground }]}
-                  placeholder="https://example.com/video.mp4"
+                  placeholder="https://www.youtube.com/watch?v=..."
                   placeholderTextColor={activeColors.mutedForeground}
                   keyboardType="url"
                   autoCapitalize="none"
@@ -1059,7 +1061,7 @@ export default function HomeScreen() {
                   testID="button-play-video-link"
                 >
                   {checkingVideoLink ? <ActivityIndicator color={activeColors.primaryForeground} /> : <Ionicons name="play-outline" size={18} color={activeColors.primaryForeground} />}
-                  <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>{checkingVideoLink ? 'Finding video…' : 'Find and play video'}</Text>
+                  <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>{checkingVideoLink ? 'Checking link…' : 'Play on TV'}</Text>
                 </Pressable>
                 {videoLinkError ? (
                   <>
@@ -1074,7 +1076,7 @@ export default function HomeScreen() {
                     </Pressable>
                   </>
                 ) : null}
-                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>Direct MP4/M3U8 links work best. Public pages may be detected when they expose a video link; sign-in and protected streams may not work.</Text>
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>Copy a YouTube link with Share → Copy link and paste it here. The TV opens YouTube’s official player. Some videos block embedding or autoplay; direct MP4/M3U8 links also work.</Text>
               </View>
             )}
             {selectedMedia?.kind === 'image' && stage !== 'sending' && (

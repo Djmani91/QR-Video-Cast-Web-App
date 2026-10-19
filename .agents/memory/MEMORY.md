@@ -3,4 +3,4 @@
 - [FrameCast native companion](framecast-mobile.md) — iOS/Android should be a native companion and needs a custom WebRTC build, not Expo Go.
 - [FrameCast signaling contract](framecast-signaling.md) — explicitly define nested offer fields in OpenAPI; generated Zod strips undeclared signaling data.
 - [FrameCast production QueryClient](framecast-production-build.md) — Vite must bundle one TanStack Query context for the app and generated API hooks.
-- [FrameCast instant video](framecast-video-streaming.md) — stream only TV-compatible fragmented MP4 directly; warn and stop rather than waiting for full-file transfer of other formats.
+- [FrameCast video playback](framecast-video-streaming.md) — local files stream directly; ordinary YouTube links use the official player, never stream extraction or proxying.

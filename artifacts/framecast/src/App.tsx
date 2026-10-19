@@ -15,6 +15,8 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
 import { remuxAndSendMp4 } from './lib/mp4-remux';
+import { getYouTubeVideoId } from './lib/youtube';
+import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
 import {
   ArrowLeft,
@@ -97,6 +99,7 @@ function findVideoUrlInPage(html: string, pageUrl: string) {
 
 async function resolveVideoLink(input: string) {
   const url = normalizeVideoLink(input);
+  if (getYouTubeVideoId(url)) return url;
   const parsed = new URL(url);
   if (/\.(mp4|m4v|mov|webm|m3u8|mpd|ogv)$/i.test(parsed.pathname)) return url;
 
@@ -119,7 +122,7 @@ async function resolveVideoLink(input: string) {
     if (html.length > 5 * 1024 * 1024) throw new Error('This webpage is too large to inspect in the browser.');
     const videoUrl = findVideoUrlInPage(html, url);
     if (videoUrl) return videoUrl;
-    throw new Error('No directly playable video was found. Try a direct MP4/M3U8 link; sign-in or protected streams may not work.');
+    throw new Error('No directly playable video was found. Try a direct MP4/M3U8 link; sign-in and protected streams may not work.');
   } finally {
     window.clearTimeout(timeout);
   }
@@ -460,6 +463,9 @@ function TvPage() {
   const [muted, setMuted] = useState(true);
   const [playing, setPlaying] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
+  const youtubePlayerRef = useRef<YouTubePlayerApi | null>(null);
+  const youtubeMediaChannelRef = useRef<RTCDataChannel | null>(null);
   const [clock, setClock] = useState(Date.now());
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -507,6 +513,9 @@ function TvPage() {
     }
     videoStreamRef.current = null;
     setVideoStreamActive(false);
+    youtubePlayerRef.current = null;
+    youtubeMediaChannelRef.current = null;
+    setYoutubeVideoId(null);
     mediaTransferRef.current = null;
     setTransferProgress(null);
     receivedImagesRef.current = [];
@@ -524,9 +533,23 @@ function TvPage() {
   }, []);
 
   const sendVideoState = useCallback(() => {
-    const video = videoRef.current;
     const channel = controlChannelRef.current;
-    if (!video || channel?.readyState !== 'open') return;
+    if (channel?.readyState !== 'open') return;
+    const youtube = youtubePlayerRef.current;
+    if (youtube) {
+      const currentTime = youtube.getCurrentTime();
+      const duration = youtube.getDuration();
+      channel.send(JSON.stringify({
+        framecast: 'video-state',
+        currentTime: Number.isFinite(currentTime) ? currentTime : 0,
+        duration: Number.isFinite(duration) ? duration : 0,
+        paused: youtube.getPlayerState() !== 1,
+        volume: youtube.isMuted() ? 0 : youtube.getVolume() / 100,
+      }));
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) return;
     channel.send(JSON.stringify({
       framecast: 'video-state',
       currentTime: video.currentTime,
@@ -534,6 +557,48 @@ function TvPage() {
       paused: video.paused,
       volume: video.muted ? 0 : video.volume,
     }));
+  }, []);
+
+  const handleYouTubeReady = useCallback((player: YouTubePlayerApi) => {
+    youtubePlayerRef.current = player;
+    player.mute();
+    player.playVideo();
+    setMuted(true);
+    setError('');
+    setPlaying(false);
+    if (youtubeMediaChannelRef.current?.readyState === 'open') {
+      youtubeMediaChannelRef.current.send(JSON.stringify({ framecast: 'streaming' }));
+    }
+    sendVideoState();
+  }, [sendVideoState]);
+
+  const handleYouTubeStateChange = useCallback((player: YouTubePlayerApi, state: number) => {
+    void player;
+    setPlaying(state === 1);
+    if (state === 1) {
+      setError('');
+      if (youtubeMediaChannelRef.current?.readyState === 'open') {
+        youtubeMediaChannelRef.current.send(JSON.stringify({ framecast: 'streaming' }));
+      }
+    }
+    sendVideoState();
+  }, [sendVideoState]);
+
+  const handleYouTubeError = useCallback((code: number) => {
+    const message = code === 101 || code === 150
+      ? 'This YouTube video does not allow playback in an embedded player.'
+      : 'YouTube could not play this video. It may be unavailable, private, or restricted.';
+    setError(message);
+    if (youtubeMediaChannelRef.current?.readyState === 'open') {
+      youtubeMediaChannelRef.current.send(JSON.stringify({ framecast: 'stream-error', message }));
+    }
+  }, []);
+
+  const handleYouTubeAutoplayBlocked = useCallback(() => {
+    setError('The TV browser blocked automatic YouTube playback. Press Play in the YouTube player on the TV.');
+    if (youtubeMediaChannelRef.current?.readyState === 'open') {
+      youtubeMediaChannelRef.current.send(JSON.stringify({ framecast: 'streaming' }));
+    }
   }, []);
 
   useEffect(() => {
@@ -546,6 +611,11 @@ function TvPage() {
       for (const eventName of events) video.removeEventListener(eventName, update);
     };
   }, [sendVideoState]);
+  useEffect(() => {
+    if (!youtubeVideoId) return;
+    const timer = window.setInterval(sendVideoState, 750);
+    return () => window.clearInterval(timer);
+  }, [youtubeVideoId, sendVideoState]);
 
   useEffect(() => () => stopPeer(), [stopPeer]);
   useEffect(() => {
@@ -662,6 +732,29 @@ function TvPage() {
                         if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: messageText }));
                         return;
                       }
+                      const youtubeId = getYouTubeVideoId(videoUrl.href);
+                      if (youtubeId) {
+                        const video = videoRef.current;
+                        if (video) {
+                          video.pause();
+                          video.srcObject = null;
+                          video.removeAttribute('src');
+                          video.load();
+                        }
+                        youtubePlayerRef.current = null;
+                        youtubeMediaChannelRef.current = channel;
+                        setYoutubeVideoId(youtubeId);
+                        setError('');
+                        setMediaKind('video');
+                        setTransferProgress(100);
+                        setPhotoPreviewVisible(false);
+                        setPlaying(false);
+                        setVideoStreamActive(false);
+                        return;
+                      }
+                      youtubePlayerRef.current = null;
+                      youtubeMediaChannelRef.current = null;
+                      setYoutubeVideoId(null);
                       const video = videoRef.current;
                       if (!video) {
                         const messageText = 'The TV browser could not open its video player.';
@@ -703,6 +796,9 @@ function TvPage() {
                       return;
                     }
                     if (packet.framecast === 'metadata') {
+                      youtubePlayerRef.current = null;
+                      youtubeMediaChannelRef.current = null;
+                      setYoutubeVideoId(null);
                       const kind: MediaKind = packet.kind === 'image' ? 'image' : 'video';
                       const sizeLimit = kind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_MEDIA_SIZE_BYTES;
                       if (!packet.size || packet.size > sizeLimit || !packet.mimeType) {
@@ -993,6 +1089,43 @@ function TvPage() {
                 channel.onopen = sendVideoState;
                 channel.onmessage = (message) => {
                   const command = String(message.data);
+                  const youtube = youtubePlayerRef.current;
+                  if (youtube) {
+                    let handled = true;
+                    if (command === 'pause') {
+                      youtube.pauseVideo();
+                      setPlaying(false);
+                    } else if (command === 'play') {
+                      youtube.playVideo();
+                    } else if (command === 'stop') {
+                      youtube.stopVideo();
+                      setPlaying(false);
+                    } else if (command.startsWith('video:seek-by:')) {
+                      const offset = Number(command.slice('video:seek-by:'.length));
+                      const duration = youtube.getDuration();
+                      const current = youtube.getCurrentTime();
+                      if (Number.isFinite(offset)) youtube.seekTo(Math.max(0, Math.min(duration || current + offset, current + offset)), true);
+                    } else if (command.startsWith('video:seek:')) {
+                      const targetTime = Number(command.slice('video:seek:'.length));
+                      const duration = youtube.getDuration();
+                      if (Number.isFinite(targetTime)) youtube.seekTo(Math.max(0, Math.min(duration || targetTime, targetTime)), true);
+                    } else if (command.startsWith('video:volume:')) {
+                      const volume = Number(command.slice('video:volume:'.length));
+                      if (Number.isFinite(volume)) {
+                        const normalized = Math.min(1, Math.max(0, volume));
+                        youtube.setVolume(Math.round(normalized * 100));
+                        if (normalized <= 0) youtube.mute();
+                        else youtube.unMute();
+                        setMuted(normalized <= 0);
+                      }
+                    } else {
+                      handled = false;
+                    }
+                    if (handled) {
+                      sendVideoState();
+                      return;
+                    }
+                  }
                   if (command === 'photo:next') {
                     setCurrentImageIndex((index) => Math.min(receivedImagesRef.current.length - 1, index + 1));
                     setImageZoom(1);
@@ -1148,13 +1281,23 @@ function TvPage() {
             </div>
             <video
               ref={videoRef}
-              className={status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'video-preview' : 'sr-only'}
+              className={!youtubeVideoId && status === 'connected' && (transferProgress === null || (mediaKind === 'video' && (transferProgress >= 100 || videoStreamActive))) ? 'video-preview' : 'sr-only'}
               autoPlay
               playsInline
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
             />
+            {youtubeVideoId && status === 'connected' && (
+              <YouTubePlayer
+                videoId={youtubeVideoId}
+                className="youtube-player-tv"
+                onReady={handleYouTubeReady}
+                onStateChange={handleYouTubeStateChange}
+                onError={handleYouTubeError}
+                onAutoplayBlocked={handleYouTubeAutoplayBlocked}
+              />
+            )}
             {status === 'connected' && mediaKind === 'image' && receivedImages[currentImageIndex] && (
               <>
                 <img
@@ -1213,6 +1356,12 @@ function TvPage() {
                 </>}
                 {mediaKind === 'video' && <>
                 <button className="button-secondary" type="button" onClick={() => {
+                  const youtube = youtubePlayerRef.current;
+                  if (youtube) {
+                    if (youtube.getPlayerState() === 1) youtube.pauseVideo();
+                    else youtube.playVideo();
+                    return;
+                  }
                   const video = videoRef.current;
                   if (!video) return;
                   if (video.paused) {
@@ -1232,7 +1381,17 @@ function TvPage() {
                   {playing ? <Pause size={16} /> : <Play size={16} />}
                   {playing ? 'Pause' : 'Play'}
                 </button>
-                <button className="button-secondary" type="button" onClick={() => setMuted((value) => !value)} data-testid="button-tv-mute" aria-label={muted ? 'Turn sound on' : 'Mute sound'}>
+                <button className="button-secondary" type="button" onClick={() => {
+                  const nextMuted = !muted;
+                  const youtube = youtubePlayerRef.current;
+                  if (youtube) {
+                    if (nextMuted) youtube.mute();
+                    else youtube.unMute();
+                  } else if (videoRef.current) {
+                    videoRef.current.muted = nextMuted;
+                  }
+                  setMuted(nextMuted);
+                }} data-testid="button-tv-mute" aria-label={muted ? 'Turn sound on' : 'Mute sound'}>
                   {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{muted ? 'Sound off' : 'Sound on'}
                 </button>
                 </>}
@@ -1868,7 +2027,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               data-testid="input-content-file"
             />
             <div className="video-link-card" data-testid="video-link-card">
-              <label htmlFor="video-link-input">Or paste a video or webpage link</label>
+              <label htmlFor="video-link-input">Or paste a YouTube or video link</label>
               <div className="video-link-actions">
                 <input
                   id="video-link-input"
@@ -1878,7 +2037,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                     setVideoLink(event.currentTarget.value);
                     setVideoLinkError('');
                   }}
-                  placeholder="https://example.com/video.mp4"
+                  placeholder="https://www.youtube.com/watch?v=..."
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
@@ -1893,10 +2052,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   data-testid="button-play-video-link"
                 >
                   {checkingVideoLink ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
-                  {checkingVideoLink ? 'Finding video…' : 'Find and play'}
+                  {checkingVideoLink ? 'Checking link…' : 'Play on TV'}
                 </button>
               </div>
-              <p className="video-link-help">Direct MP4/M3U8 links work best. Webpage detection depends on the site allowing inspection; sign-in and protected streams may not work.</p>
+              <p className="video-link-help">Copy a YouTube link with Share → Copy link and paste it here. The TV opens YouTube’s official player. Some videos block embedding or autoplay; direct MP4/M3U8 links also work.</p>
               {videoLinkError && <p className="video-link-error" role="alert" data-testid="text-video-link-error">{videoLinkError}</p>}
               {videoLinkError && <button type="button" className="button-secondary video-link-direct" onClick={() => void castVideoLinkDirectly()} disabled={!videoLink.trim() || checkingVideoLink} data-testid="button-try-video-link-direct">Try this link directly</button>}
             </div>
