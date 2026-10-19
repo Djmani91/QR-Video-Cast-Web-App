@@ -23,6 +23,18 @@ The user has no other Expo setup beyond Replit's mobile preview. Do not keep ask
 
 **How to apply:** Work from the existing app source. Android Gradle builds can run without an EAS account; investigate that path rather than requiring a nonexistent project URL. If choosing EAS, treat creating/linking a project under the user's intended account as new setup; do not guess the owner from GitHub or create a project under Replit's local account.
 
+Keep the Android build source in a private GitHub repository. The user approved making their provided repository private before uploading app source.
+
+**Why:** The user selected private source hosting for the APK build.
+
+**How to apply:** Confirm repository visibility is private before pushing a clean, allowlisted source export. Exclude phone media, secrets, chat files, and existing project history.
+
+Verify authenticated repository access before promising GitHub changes; the source-control connection's active/healthy status alone is not proof of usable workspace credentials.
+
+**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed.
+
+**How to apply:** Try an authenticated read before remote writes. If access is unavailable, preserve the repository and source, explain the authorization blocker, and use the Git pane connection flow rather than repeatedly showing failed connection prompts.
+
 The user wants returning to the same phone browser to reconnect to the same TV automatically, without refreshing, re-entering the code, or rescanning. Keep pairing and selected media until the user explicitly disconnects; a one-minute transport grace window is not a pairing timeout.
 
 **Why:** The user reports that briefly leaving the browser made later video sends fail and required repeated TV refreshes and QR scanning.
