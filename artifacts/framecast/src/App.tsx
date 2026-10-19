@@ -18,6 +18,7 @@ import { remuxAndSendMp4 } from './lib/mp4-remux';
 import { assertBrowserFileReadable, isSelectedMediaAccessError, preserveBrowserSelection, SelectedMediaAccessError } from './lib/browser-media';
 import { exitVideoFullscreen, isVideoFullscreen, requestVideoFullscreen, requestMediaFullscreen } from './lib/video-fullscreen';
 import { normalizeRotation, requiredVideoRotation, type VideoOrientation } from './lib/media-orientation';
+import { ROTATION_RENDERER_VERSION, verifyRotationRenderer } from './lib/rotation-renderer';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -710,8 +711,22 @@ function TvPage() {
       applyVideoOrientation();
       void requestPlaybackFullscreen(video).then((entered) => setNeedsVideoFullscreen(!entered));
     };
+    let correctingNativeFullscreen = false;
+    const correctNativeFullscreen = () => {
+      if (!videoRotationRef.current || correctingNativeFullscreen) return;
+      correctingNativeFullscreen = true;
+      // A TV hardware overlay can bypass our rotation transform despite playsInline.
+      void exitVideoFullscreen(video)
+        .then(() => requestPlaybackFullscreen(video))
+        .then((entered) => setNeedsVideoFullscreen(!entered))
+        .finally(() => { correctingNativeFullscreen = false; });
+    };
     const onExit = () => {
       const fullscreen = isVideoFullscreen(video);
+      if (fullscreen && document.fullscreenElement === video && videoRotationRef.current) {
+        correctNativeFullscreen();
+        return;
+      }
       setBrowserFullscreen(fullscreen);
       setVideoReturnedInline(!fullscreen);
       if (mediaKind === 'image') setPhotoReturnedInline(!fullscreen);
@@ -723,6 +738,7 @@ function TvPage() {
     video.addEventListener('loadedmetadata', applyVideoOrientation);
     video.addEventListener('resize', applyVideoOrientation);
     video.addEventListener('webkitendfullscreen', onExit);
+    video.addEventListener('webkitbeginfullscreen', correctNativeFullscreen);
     document.addEventListener('fullscreenchange', onExit);
     document.addEventListener('webkitfullscreenchange', onExit);
     return () => {
@@ -730,6 +746,7 @@ function TvPage() {
       video.removeEventListener('loadedmetadata', applyVideoOrientation);
       video.removeEventListener('resize', applyVideoOrientation);
       video.removeEventListener('webkitendfullscreen', onExit);
+      video.removeEventListener('webkitbeginfullscreen', correctNativeFullscreen);
       document.removeEventListener('fullscreenchange', onExit);
       document.removeEventListener('webkitfullscreenchange', onExit);
     };
@@ -973,6 +990,10 @@ function TvPage() {
                       packet = JSON.parse(message.data) as { framecast?: string; name?: string; itemId?: string; previewDataUrl?: string; mimeType?: string; kind?: MediaKind; size?: number; streamCandidate?: boolean; url?: string };
                     } catch {
                       setError('The phone sent an unreadable media transfer message.');
+                      return;
+                    }
+                    if (packet.framecast === 'receiver-info') {
+                      if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'receiver-info', rotationRenderer: ROTATION_RENDERER_VERSION }));
                       return;
                     }
                     if (packet.framecast === 'preview' && packet.kind === 'image' && packet.itemId && packet.previewDataUrl) {
@@ -1597,6 +1618,7 @@ function TvPage() {
               } : undefined}
               autoPlay
               controls={videoRotation === 0}
+              playsInline={videoRotation !== 0}
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
@@ -2094,6 +2116,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
             if (castUrl) {
               mediaChannel.send(JSON.stringify({ framecast: 'remote-video', url: castUrl }));
               return;
+            }
+            if (queuedFiles.some((item) => item.type.startsWith('video/'))) {
+              await verifyRotationRenderer(mediaChannel);
+              if (transferRun !== transferRunRef.current) return;
             }
             for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;

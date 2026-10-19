@@ -25,6 +25,12 @@ test('normalized streaming pixels have exactly one explicit receiver rotation', 
     assert.equal(requiredVideoRotation({ rotation, encodedWidth: 720, encodedHeight: 1280, orientationNormalized: true }, 720, 1280), rotation);
   }
 });
+test('known phone-file rotation survives TV loading and fullscreen transitions with zero dimensions', () => {
+  const originalPhoneVideo = { rotation: 90, encodedWidth: 1024, encodedHeight: 576, orientationNormalized: true };
+  for (const [width, height] of [[0, 0], [1024, 0], [0, 576], [1024, 576], [0, 0], [1024, 576]]) {
+    assert.equal(requiredVideoRotation(originalPhoneVideo, width, height), 90);
+  }
+});
 test('genuine portrait and landscape files stay in their original orientation', () => {
   assert.equal(requiredVideoRotation({ rotation: 0, encodedWidth: 720, encodedHeight: 1280 }, 720, 1280), 0);
   assert.equal(requiredVideoRotation({ rotation: 0, encodedWidth: 1280, encodedHeight: 720 }, 1280, 720), 0);

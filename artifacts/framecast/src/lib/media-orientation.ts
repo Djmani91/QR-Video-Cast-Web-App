@@ -21,9 +21,13 @@ export function orientationFromTrack(track?: { matrix?: ArrayLike<number>; video
 
 /** Avoid rotating twice when a browser already honors an original file's matrix. */
 export function requiredVideoRotation(source: VideoOrientation | null, width: number, height: number): number {
-  if (!source || !width || !height) return 0;
+  if (!source) return 0;
   const rotation = normalizeRotation(source.rotation);
+  // Normalized streams carry authoritative orientation out of band. TV
+  // MediaSource implementations can report zero dimensions during loading
+  // and native-fullscreen transitions; that must never erase this rotation.
   if (source.orientationNormalized) return rotation;
+  if (!width || !height) return 0;
   if (rotation !== 90 && rotation !== 270) return 0;
   if (!source.encodedWidth || !source.encodedHeight) return 0;
   const rawRatio = source.encodedWidth / source.encodedHeight;

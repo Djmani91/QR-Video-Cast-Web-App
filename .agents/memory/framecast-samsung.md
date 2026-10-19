@@ -17,6 +17,12 @@ The user confirmed video fullscreen works on their Samsung TV; the model was not
 
 **How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. When correcting orientation in the receiver, use a fullscreen playback container that retains the transform and upright controls. Retain a manual Rotate fallback for missing metadata. Do not claim the photo or orientation correction is confirmed on hardware until the user verifies it.
 
+Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
+
+**Why:** Loading and fullscreen transitions can temporarily clear intrinsic dimensions. Treating that as zero rotation can re-enable the TV's native overlay and bypass the intended correction, even when the original file's rotation metadata is correct.
+
+**How to apply:** Clear known rotation only when changing media, not when dimensions temporarily disappear. Check renderer compatibility before sending videos: a TV room can remain open across a publish, so a freshly loaded phone must not silently assume the TV has refreshed too.
+
 **Why:** The user explicitly described this behavior in their Web Video Caster recording and wants FrameCast to behave similarly.
 
 **How to apply:** Distinguish video-player fullscreen from making the entire browser page fullscreen. Explain browser permission limits and verify remote Back behavior rather than assuming either works.
