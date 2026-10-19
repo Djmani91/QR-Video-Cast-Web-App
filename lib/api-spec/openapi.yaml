@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: casting
+    description: Short-lived signaling for direct phone-to-TV video casting.
 paths:
   /healthz:
     get:
@@ -24,6 +26,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /cast/rooms:
+    post:
+      operationId: createCastRoom
+      tags: [casting]
+      summary: Create a temporary casting room
+      description: Creates an in-memory pairing room. No video is sent to this API.
+      responses:
+        "201":
+          description: Temporary room created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CastRoom"
+        "503":
+          description: Room capacity is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /cast/rooms/{roomId}/messages:
+    get:
+      operationId: getCastRoomMessages
+      tags: [casting]
+      summary: Read new connection messages for one peer
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Temporary room negotiation messages. Peers filter by sequence.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CastSignal"
+        "404":
+          description: Room not found or expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    post:
+      operationId: sendCastRoomMessage
+      tags: [casting]
+      summary: Send a temporary WebRTC negotiation message
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CastSignalInput"
+      responses:
+        "201":
+          description: Message accepted for temporary delivery to the other peer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CastSignalReceipt"
+        "400":
+          description: Invalid message.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: Room not found or expired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +117,68 @@ components:
           type: string
       required:
         - status
+    CastRole:
+      type: string
+      enum: [tv, phone]
+    CastSignalType:
+      type: string
+      enum: [offer, answer, ice, ready, close]
+    CastRoom:
+      type: object
+      required: [id, expiresAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        expiresAt:
+          type: string
+          format: date-time
+    CastSignalPayload:
+      type: object
+      additionalProperties: true
+      properties:
+        sdp:
+          type: string
+        candidate:
+          type: string
+        sdpMid:
+          type: [string, "null"]
+        sdpMLineIndex:
+          type: [integer, "null"]
+        usernameFragment:
+          type: [string, "null"]
+    CastSignal:
+      type: object
+      required: [sequence, from, type, payload]
+      properties:
+        sequence:
+          type: integer
+        from:
+          $ref: "#/components/schemas/CastRole"
+        type:
+          $ref: "#/components/schemas/CastSignalType"
+        payload:
+          $ref: "#/components/schemas/CastSignalPayload"
+    CastSignalInput:
+      type: object
+      required: [from, type, payload]
+      properties:
+        from:
+          $ref: "#/components/schemas/CastRole"
+        type:
+          $ref: "#/components/schemas/CastSignalType"
+        payload:
+          $ref: "#/components/schemas/CastSignalPayload"
+    CastSignalReceipt:
+      type: object
+      required: [sequence]
+      properties:
+        sequence:
+          type: integer
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
 

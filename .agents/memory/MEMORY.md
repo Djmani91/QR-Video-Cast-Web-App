@@ -1,0 +1,1 @@
+- [FrameCast privacy](framecast-privacy.md) — video must remain peer-to-peer; do not persist user data or media.

@@ -1,40 +1,45 @@
-# [Project name]
+# FrameCast
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+FrameCast lets someone pair a smart-TV browser with a phone and stream a selected video directly between them.
 
 ## Run & Operate
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/framecast run dev` — run the TV/phone web app
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - API: Express 5
-- DB: PostgreSQL + Drizzle ORM
+- FrameCast casting rooms: in-memory only; no database connection is used
 - Validation: Zod (`zod/v4`), `drizzle-zod`
 - API codegen: Orval (from OpenAPI spec)
 - Build: esbuild (CJS bundle)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/framecast` — React/Vite TV and phone web experience.
+- `artifacts/api-server` — short-lived casting-room signaling API.
+- `lib/api-spec/openapi.yaml` — source of truth for signaling API contracts.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Video files remain on the phone and are sent to the TV over a direct WebRTC connection; the API does not receive video bytes.
+- Pairing and WebRTC negotiation messages live only in API-server memory and expire after a short window. Do not add persistent storage for media or signaling.
+- No TURN relay is enabled in the initial version; some network combinations may fail to connect directly.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- The TV opens the app in its browser and displays a QR code.
+- A phone scans the code, selects a local video, and streams it directly to the TV.
+- The app must explain when direct casting is unsupported or blocked instead of silently uploading or relaying the video.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Privacy requirement: do not save or upload users' video or persistent personal data.
 
 ## Gotchas
 
