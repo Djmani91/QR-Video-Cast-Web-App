@@ -22,3 +22,9 @@ The user wants returning to the same phone browser to reconnect to the same TV a
 **Why:** The user reports that briefly leaving the browser made later video sends fail and required repeated TV refreshes and QR scanning.
 
 **How to apply:** Separate pairing intent from an individual WebRTC peer. Probe the existing transport on return and recreate it automatically in the same room when stale. Preserve selected files and playback state in the live page; suppress overlapping repairs and ignore replies/candidates/closes from replaced sessions. An explicit Disconnect or TV room replacement must cancel recovery. Be clear that the OS can suspend playback/networking, closing the tab loses in-memory files, and server restarts or a genuinely expired room cannot be repaired from browser state alone.
+
+Deliver an installable Android APK for testing first; the user will request iOS after testing Android. They also want opt-in background casting that keeps the connection when the app is backgrounded, with playback controls accessible outside the app.
+
+**Why:** The user explicitly requested Android first and described Web Video Caster's background permission and external playback controls as the desired experience.
+
+**How to apply:** Prioritize Android and leave iOS unchanged until requested. Background casting needs real Android foreground-service/media-notification support, not just a permission popup or a browser wake lock. Do not imply an Expo preview is an APK, or promise continued casting after force-stop, network loss, or OS termination.
