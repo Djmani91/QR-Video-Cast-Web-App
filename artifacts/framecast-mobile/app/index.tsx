@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -140,6 +141,16 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
 }
 
+function formatPlaybackTime(seconds: number) {
+  const value = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const remainder = value % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+    : `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -162,6 +173,8 @@ export default function HomeScreen() {
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [remoteVideoPosition, setRemoteVideoPosition] = useState({ currentTime: 0, duration: 0, volume: 0 });
+  const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
   const transferComplete = useRef(false);
   const peerRef = useRef<PeerLike | null>(null);
   const mediaChannelRef = useRef<DataChannelLike | null>(null);
@@ -199,6 +212,8 @@ export default function HomeScreen() {
     mediaAckResolverRef.current = null;
     videoStreamingRef.current = false;
     setVideoStreaming(false);
+    setRemoteVideoPosition({ currentTime: 0, duration: 0, volume: 0 });
+    setVideoSeekDraft(null);
     if (notifyTv && roomId) sendSignal('close', {});
     transferComplete.current = true;
     mediaChannelRef.current?.close();
@@ -459,6 +474,27 @@ export default function HomeScreen() {
       controlChannel.onmessage = (event) => {
         if (event.data === 'pause') setPaused(true);
         if (event.data === 'play') setPaused(false);
+        if (typeof event.data === 'string' && event.data.startsWith('{')) {
+          try {
+            const packet = JSON.parse(event.data) as {
+              framecast?: string;
+              currentTime?: number;
+              duration?: number;
+              paused?: boolean;
+              volume?: number;
+            };
+            if (packet.framecast === 'video-state') {
+              setRemoteVideoPosition({
+                currentTime: Number.isFinite(packet.currentTime) ? Math.max(0, packet.currentTime ?? 0) : 0,
+                duration: Number.isFinite(packet.duration) ? Math.max(0, packet.duration ?? 0) : 0,
+                volume: Number.isFinite(packet.volume) ? Math.min(1, Math.max(0, packet.volume ?? 0)) : 0,
+              });
+              setPaused(Boolean(packet.paused));
+            }
+          } catch {
+            // Ignore other control messages.
+          }
+        }
       };
       mediaChannel.onopen = () => {
         void (async () => {
@@ -832,16 +868,54 @@ export default function HomeScreen() {
               </Pressable>
             )}
 
-            {stage === 'sent' && selectedMedia?.kind === 'video' && (
-              <View style={styles.playbackRow}>
-                <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl(paused ? 'play' : 'pause')} testID="button-phone-play-pause">
-                  <Ionicons name={paused ? 'play' : 'pause'} size={18} color={activeColors.foreground} />
-                  <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>{paused ? 'Play on TV' : 'Pause TV'}</Text>
-                </Pressable>
-                <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { setSelectedMedia(null); setStage('paired'); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
-                  <Ionicons name="stop" size={18} color={activeColors.foreground} />
-                  <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Stop</Text>
-                </Pressable>
+            {(stage === 'sent' || videoStreaming) && selectedMedia?.kind === 'video' && (
+              <View style={styles.videoRemoteControls} testID="video-remote-controls">
+                <View style={styles.playbackRow}>
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('video:seek-by:-10')} accessibilityLabel="Skip back 10 seconds on TV" testID="button-phone-video-back">
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>−10s</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl(paused ? 'play' : 'pause')} accessibilityLabel={paused ? 'Play video on TV' : 'Pause video on TV'} testID="button-phone-play-pause">
+                    <Ionicons name={paused ? 'play' : 'pause'} size={18} color={activeColors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>{paused ? 'Play' : 'Pause'}</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('video:seek-by:10')} accessibilityLabel="Skip forward 10 seconds on TV" testID="button-phone-video-forward">
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>+10s</Text>
+                  </Pressable>
+                </View>
+                <Slider
+                  minimumValue={0}
+                  maximumValue={Math.max(1, remoteVideoPosition.duration)}
+                  value={Math.min(Math.max(1, remoteVideoPosition.duration), videoSeekDraft ?? remoteVideoPosition.currentTime)}
+                  step={1}
+                  disabled={remoteVideoPosition.duration <= 0}
+                  minimumTrackTintColor={activeColors.primary}
+                  maximumTrackTintColor={activeColors.secondary}
+                  thumbTintColor={activeColors.primary}
+                  onValueChange={setVideoSeekDraft}
+                  onSlidingComplete={(value) => {
+                    setVideoSeekDraft(null);
+                    sendPlaybackControl(`video:seek:${Math.round(value)}`);
+                  }}
+                  accessibilityLabel="Seek video on TV"
+                  testID="slider-phone-video-seek"
+                />
+                <View style={styles.videoTimeRow}>
+                  <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
+                    {formatPlaybackTime(videoSeekDraft ?? remoteVideoPosition.currentTime)} / {formatPlaybackTime(remoteVideoPosition.duration)}
+                  </Text>
+                  <View style={styles.playbackRow}>
+                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl(`video:volume:${Math.max(0, remoteVideoPosition.volume - 0.1).toFixed(1)}`)} accessibilityLabel="Lower TV volume">
+                      <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Vol−</Text>
+                    </Pressable>
+                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl(`video:volume:${Math.min(1, remoteVideoPosition.volume + 0.1).toFixed(1)}`)} accessibilityLabel="Raise TV volume">
+                      <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Vol+</Text>
+                    </Pressable>
+                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { setSelectedMedia(null); setStage('paired'); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
+                      <Ionicons name="stop" size={18} color={activeColors.foreground} />
+                      <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Stop</Text>
+                    </Pressable>
+                  </View>
+                </View>
               </View>
             )}
 
@@ -978,6 +1052,8 @@ const styles = StyleSheet.create({
   progressCopy: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, marginTop: 9 },
   loadingRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   playbackRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  videoRemoteControls: { gap: 3, marginTop: 8 },
+  videoTimeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   secondaryButton: { flex: 1, minHeight: 48, borderRadius: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   secondaryButtonText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   leaveButton: { alignSelf: 'center', paddingVertical: 18, marginTop: 4 },

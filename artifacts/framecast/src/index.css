@@ -208,6 +208,10 @@
 .waiting-panel p { color: #c2c9c1; font-size: 13px; line-height: 1.6; margin: 8px auto 0; max-width: 260px; }
 .tv-controls { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
 .photo-remote-controls { display: grid; gap: 8px; width: min(100%, 420px); margin: 12px auto; }
+.video-remote-controls { display: grid; gap: 8px; width: min(100%, 420px); margin: 12px auto; }
+.video-seek-slider { width: 100%; margin: 0; accent-color: hsl(var(--primary)); }
+.video-time-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: hsl(var(--muted-foreground)); font: 600 12px/1.2 var(--app-font-mono); }
+.video-volume-controls { display: flex; align-items: center; gap: 4px; }
 .photo-remote-navigation { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .photo-remote-navigation .button-secondary { min-width: 66px; }
 .photo-remote-navigation span { color: hsl(var(--muted-foreground)); font: 600 12px/1 var(--app-font-mono); }

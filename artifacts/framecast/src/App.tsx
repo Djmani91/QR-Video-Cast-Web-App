@@ -49,6 +49,15 @@ const queryClient = new QueryClient();
 
 type PeerStatus = 'idle' | 'paired' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 type MediaKind = 'video' | 'image';
+function formatPlaybackTime(seconds: number) {
+  const value = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const remainder = value % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+    : `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
 type Mp4TrackInfo = { codec?: string; video?: unknown; audio?: unknown };
 type Mp4ParserLike = {
   onReady: ((info: { isFragmented: boolean; tracks: Mp4TrackInfo[] }) => void) | null;
@@ -446,6 +455,30 @@ function TvPage() {
     }
   }, []);
 
+  const sendVideoState = useCallback(() => {
+    const video = videoRef.current;
+    const channel = controlChannelRef.current;
+    if (!video || channel?.readyState !== 'open') return;
+    channel.send(JSON.stringify({
+      framecast: 'video-state',
+      currentTime: video.currentTime,
+      duration: Number.isFinite(video.duration) ? video.duration : 0,
+      paused: video.paused,
+      volume: video.muted ? 0 : video.volume,
+    }));
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const update = () => sendVideoState();
+    const events = ['timeupdate', 'play', 'pause', 'durationchange', 'volumechange', 'seeked', 'loadedmetadata'];
+    for (const eventName of events) video.addEventListener(eventName, update);
+    return () => {
+      for (const eventName of events) video.removeEventListener(eventName, update);
+    };
+  }, [sendVideoState]);
+
   useEffect(() => () => stopPeer(), [stopPeer]);
   useEffect(() => {
     const updateFullscreenState = () => setBrowserFullscreen(Boolean(document.fullscreenElement));
@@ -782,6 +815,7 @@ function TvPage() {
                 };
               } else {
                 controlChannelRef.current = channel;
+                channel.onopen = sendVideoState;
                 channel.onmessage = (message) => {
                   const command = String(message.data);
                   if (command === 'photo:next') {
@@ -812,6 +846,25 @@ function TvPage() {
                     videoRef.current.pause();
                     videoRef.current.currentTime = 0;
                     setPlaying(false);
+                  } else if (command.startsWith('video:seek-by:') && videoRef.current) {
+                    const offset = Number(command.slice('video:seek-by:'.length));
+                    const video = videoRef.current;
+                    if (Number.isFinite(offset) && Number.isFinite(video.duration)) {
+                      video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + offset));
+                    }
+                  } else if (command.startsWith('video:seek:') && videoRef.current) {
+                    const targetTime = Number(command.slice('video:seek:'.length));
+                    const video = videoRef.current;
+                    if (Number.isFinite(targetTime) && Number.isFinite(video.duration)) {
+                      video.currentTime = Math.max(0, Math.min(video.duration, targetTime));
+                    }
+                  } else if (command.startsWith('video:volume:') && videoRef.current) {
+                    const volume = Number(command.slice('video:volume:'.length));
+                    if (Number.isFinite(volume)) {
+                      videoRef.current.volume = Math.min(1, Math.max(0, volume));
+                      videoRef.current.muted = volume <= 0;
+                      setMuted(volume <= 0);
+                    }
                   }
                 };
               }
@@ -1066,6 +1119,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [progress, setProgress] = useState(0);
   const [sentToTv, setSentToTv] = useState(false);
   const [videoStreaming, setVideoStreaming] = useState(false);
+  const [remoteVideoState, setRemoteVideoState] = useState({ currentTime: 0, duration: 0, paused: true, volume: 0 });
+  const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
   const [muted, setMuted] = useState(true);
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -1086,6 +1141,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
     transferCompleteRef.current = true;
     videoStreamingRef.current = false;
     setVideoStreaming(false);
+    setRemoteVideoState({ currentTime: 0, duration: 0, paused: true, volume: 0 });
+    setVideoSeekDraft(null);
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
     if (sendClose) send('phone', 'close', {});
@@ -1235,6 +1292,22 @@ function PhonePage({ roomId }: { roomId?: string }) {
       peerRef.current = peer;
       const controlChannel = peer.createDataChannel('framecast-control');
       controlChannelRef.current = controlChannel;
+      controlChannel.onmessage = (event) => {
+        if (typeof event.data !== 'string') return;
+        try {
+          const packet = JSON.parse(event.data) as { framecast?: string; currentTime?: number; duration?: number; paused?: boolean; volume?: number };
+          if (packet.framecast === 'video-state') {
+            setRemoteVideoState({
+              currentTime: Number.isFinite(packet.currentTime) ? Math.max(0, packet.currentTime ?? 0) : 0,
+              duration: Number.isFinite(packet.duration) ? Math.max(0, packet.duration ?? 0) : 0,
+              paused: Boolean(packet.paused),
+              volume: Number.isFinite(packet.volume) ? Math.min(1, Math.max(0, packet.volume ?? 0)) : 0,
+            });
+          }
+        } catch {
+          // Photo and playback commands remain plain text on this channel.
+        }
+      };
       const mediaChannel = peer.createDataChannel('framecast-media');
       mediaChannelRef.current = mediaChannel;
       mediaChannel.binaryType = 'arraybuffer';
@@ -1570,6 +1643,43 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-out')} aria-label="Zoom out on TV" data-testid="button-phone-photo-zoom-out">−</button>
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-reset')} aria-label="Fit photo on TV" data-testid="button-phone-photo-zoom-reset">Fit</button>
                   <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-in')} aria-label="Zoom in on TV" data-testid="button-phone-photo-zoom-in">+</button>
+                </div>
+              </div>
+            )}
+            {status === 'connected' && mediaKind === 'video' && (videoStreaming || sentToTv) && (
+              <div className="video-remote-controls" data-testid="video-remote-controls">
+                <div className="photo-remote-navigation">
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('video:seek-by:-10')} aria-label="Skip back 10 seconds on TV" data-testid="button-phone-video-back">−10s</button>
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl(remoteVideoState.paused ? 'play' : 'pause')} aria-label={remoteVideoState.paused ? 'Play video on TV' : 'Pause video on TV'} data-testid="button-phone-video-play-pause">
+                    {remoteVideoState.paused ? <Play size={15} /> : <Pause size={15} />}
+                    {remoteVideoState.paused ? 'Play' : 'Pause'}
+                  </button>
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('video:seek-by:10')} aria-label="Skip forward 10 seconds on TV" data-testid="button-phone-video-forward">+10s</button>
+                </div>
+                <input
+                  className="video-seek-slider"
+                  type="range"
+                  min={0}
+                  max={Math.max(1, remoteVideoState.duration)}
+                  step={1}
+                  value={Math.min(Math.max(1, remoteVideoState.duration), videoSeekDraft ?? remoteVideoState.currentTime)}
+                  disabled={remoteVideoState.duration <= 0}
+                  aria-label="Seek video on TV"
+                  data-testid="slider-phone-video-seek"
+                  onChange={(event) => {
+                    const target = Number(event.currentTarget.value);
+                    setVideoSeekDraft(target);
+                    sendPhotoControl(`video:seek:${Math.round(target)}`);
+                  }}
+                  onPointerUp={() => setVideoSeekDraft(null)}
+                  onTouchEnd={() => setVideoSeekDraft(null)}
+                />
+                <div className="video-time-row">
+                  <span>{formatPlaybackTime(videoSeekDraft ?? remoteVideoState.currentTime)} / {formatPlaybackTime(remoteVideoState.duration)}</span>
+                  <div className="video-volume-controls">
+                    <button type="button" className="button-quiet" onClick={() => sendPhotoControl(`video:volume:${Math.max(0, remoteVideoState.volume - 0.1).toFixed(1)}`)} aria-label="Lower TV volume">Vol−</button>
+                    <button type="button" className="button-quiet" onClick={() => sendPhotoControl(`video:volume:${Math.min(1, remoteVideoState.volume + 0.1).toFixed(1)}`)} aria-label="Raise TV volume">Vol+</button>
+                  </div>
                 </div>
               </div>
             )}
