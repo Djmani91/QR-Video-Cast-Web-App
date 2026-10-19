@@ -15,4 +15,7 @@ export const CastSignalType = {
   ice: 'ice',
   ready: 'ready',
   close: 'close',
+  'local-video': 'local-video',
+  'player-command': 'player-command',
+  'player-state': 'player-state',
 } as const;

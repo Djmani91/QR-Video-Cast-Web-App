@@ -26,6 +26,9 @@ export const CastSignalType = {
   ice: 'ice',
   ready: 'ready',
   close: 'close',
+  'local-video': 'local-video',
+  'player-command': 'player-command',
+  'player-state': 'player-state',
 } as const;
 
 export interface CastRoom {
@@ -77,6 +80,16 @@ export const CastSignalPayloadTransport = {
 } as const;
 
 export interface CastSignalPayload {
+  sessionId?: string;
+  receiverUrl?: string;
+  extension?: string;
+  action?: string;
+  currentTime?: number;
+  duration?: number;
+  volume?: number;
+  paused?: boolean;
+  playback?: string;
+  message?: string;
   type?: CastSignalPayloadType;
   sdp?: string;
   mediaKind?: CastSignalPayloadMediaKind;

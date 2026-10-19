@@ -150,7 +150,7 @@ components:
       enum: [tv, phone]
     CastSignalType:
       type: string
-      enum: [offer, answer, ice, ready, close]
+      enum: [offer, answer, ice, ready, close, local-video, player-command, player-state]
     CastRoom:
       type: object
       required: [id, code, expiresAt]
@@ -186,6 +186,26 @@ components:
       type: object
       additionalProperties: true
       properties:
+        sessionId:
+          type: string
+        receiverUrl:
+          type: string
+        extension:
+          type: string
+        action:
+          type: string
+        currentTime:
+          type: number
+        duration:
+          type: number
+        volume:
+          type: number
+        paused:
+          type: boolean
+        playback:
+          type: string
+        message:
+          type: string
         type:
           type: string
           enum: [offer, answer]

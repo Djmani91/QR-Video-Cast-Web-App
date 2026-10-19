@@ -10,6 +10,16 @@ import type { CastSignalPayloadTransport } from './castSignalPayloadTransport';
 import type { CastSignalPayloadType } from './castSignalPayloadType';
 
 export interface CastSignalPayload {
+  sessionId?: string;
+  receiverUrl?: string;
+  extension?: string;
+  action?: string;
+  currentTime?: number;
+  duration?: number;
+  volume?: number;
+  paused?: boolean;
+  playback?: string;
+  message?: string;
   type?: CastSignalPayloadType;
   sdp?: string;
   mediaKind?: CastSignalPayloadMediaKind;

@@ -456,7 +456,14 @@ function TvPage() {
   const { mutate: createRoomMutation, data: createdRoom, isPending: creatingRoom, isError: createRoomError } = createRoom;
   const createRoomRef = useRef(createRoomMutation);
   createRoomRef.current = createRoomMutation;
-  const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(null);
+  const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(() => {
+    if (new URLSearchParams(window.location.search).get('resume') !== '1') return null;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('framecast-tv-resume') || 'null');
+      return saved && typeof saved.id === 'string' && typeof saved.code === 'string' && typeof saved.expiresAt === 'string' ? saved : null;
+    } catch { return null; }
+  });
+  const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
   const [error, setError] = useState('');
@@ -715,6 +722,7 @@ function TvPage() {
   };
   useEffect(() => {
     if (!createdRoom) return;
+    resumeAfterRef.current = 0;
     setRoom(createdRoom);
     setStatus('idle');
     seenRef.current.clear();
@@ -740,9 +748,29 @@ function TvPage() {
   useEffect(() => {
     if (!roomId) return;
     for (const signal of messages) {
-      if (signal.from !== 'phone' || seenRef.current.has(signal.sequence)) continue;
+      if (signal.from !== 'phone' || signal.sequence <= resumeAfterRef.current || seenRef.current.has(signal.sequence)) continue;
       seenRef.current.add(signal.sequence);
-      if (signal.type === 'ready') {
+      if (signal.type === 'local-video') {
+        try {
+          const target = new URL(String(signal.payload.receiverUrl));
+          if (target.protocol !== 'http:' || target.username || target.password
+            || !/^(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(target.hostname)
+            || target.hostname.split('.').some((part) => Number(part) > 255)
+            || !/^\/[a-z0-9]+\/receiver[.]html$/.test(target.pathname)) throw new Error();
+          sessionStorage.setItem('framecast-tv-resume', JSON.stringify(room));
+          const config = {
+            endpoint: `${window.location.origin}/api/cast/rooms/${roomId}/messages`,
+            returnUrl: window.location.href,
+            after: signal.sequence,
+            sessionId: signal.payload.sessionId,
+            extension: signal.payload.extension,
+          };
+          window.location.assign(`${target.href}#${encodeURIComponent(JSON.stringify(config))}`);
+          return;
+        } catch {
+          setError('The phone supplied an invalid local playback address. Reconnect it to your home Wi-Fi and try again.');
+        }
+      } else if (signal.type === 'ready') {
         const connectionState = peerRef.current?.connectionState;
         if (!peerRef.current || connectionState === 'failed' || connectionState === 'disconnected' || connectionState === 'closed') {
           if (peerRef.current) {
@@ -1312,6 +1340,11 @@ function TvPage() {
   }, [messages, roomId, send, stopPeer]);
 
   const startRoom = () => {
+    sessionStorage.removeItem('framecast-tv-resume');
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('resume');
+    cleanUrl.searchParams.delete('after');
+    window.history.replaceState(null, '', cleanUrl.href);
     if (room) send('tv', 'close', { reason: 'new-room' });
     stopPeer();
     queuedCandidates.current = [];

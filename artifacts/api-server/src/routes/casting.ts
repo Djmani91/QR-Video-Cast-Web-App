@@ -20,7 +20,7 @@ const MAX_SIGNAL_BYTES = 64 * 1024;
 const MAX_SIGNAL_HISTORY_BYTES = 512 * 1024;
 
 type Role = "tv" | "phone";
-type SignalType = "offer" | "answer" | "ice" | "ready" | "close";
+type SignalType = "offer" | "answer" | "ice" | "ready" | "close" | "local-video" | "player-command" | "player-state";
 
 type Signal = {
   sequence: number;
@@ -178,6 +178,18 @@ router.post("/cast/rooms/:roomId/messages", (req, res): void => {
     return;
   }
 
+  // Playback telemetry is a snapshot, not an ever-growing history. A four-hour
+  // film must not exhaust the signaling room after a few minutes.
+  if (parsed.data.type === "player-state") {
+    room.messages = room.messages.filter((message) =>
+      !(message.type === "player-state" && message.from === parsed.data.from));
+  }
+  if (parsed.data.type === "player-command") {
+    const commands = room.messages.filter((message) => message.type === "player-command");
+    const cutoff = commands.length >= 32 ? commands[commands.length - 32].sequence : 0;
+    room.messages = room.messages.filter((message) => message.type !== "player-command" || message.sequence > cutoff);
+  }
+  room.signalBytes = room.messages.reduce((bytes, message) => bytes + Buffer.byteLength(JSON.stringify(message.payload), "utf8"), 0);
   if (room.messages.length >= MAX_MESSAGES_PER_ROOM || room.signalBytes + signalBytes > MAX_SIGNAL_HISTORY_BYTES) {
     res.status(429).json({ error: "This room has reached its connection-message limit. Create a fresh room to continue." });
     return;

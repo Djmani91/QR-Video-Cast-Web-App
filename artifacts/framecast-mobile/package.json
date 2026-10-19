@@ -56,11 +56,14 @@
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "15.0.2",
+    "@dr.pogodin/react-native-fs": "^2.40.3",
+    "@dr.pogodin/react-native-static-server": "0.28.0",
     "@react-native-community/slider": "5.2.0",
     "expo-camera": "~57.0.6",
     "expo-dev-client": "~57.0.20",
     "expo-file-system": "~57.0.7",
     "expo-image-manipulator": "~57.0.21",
+    "expo-keep-awake": "~57.0.2",
     "mp4box": "^2.4.1",
     "react-native-webrtc": "124.0.7"
   }

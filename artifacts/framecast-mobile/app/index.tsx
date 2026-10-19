@@ -18,6 +18,8 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { File as ExpoFile, Paths } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
+import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { getYouTubeVideoId } from '@/lib/youtube';
 import { useColors } from '@/hooks/useColors';
 import {
@@ -271,6 +273,7 @@ export default function HomeScreen() {
   const [checkingVideoLink, setCheckingVideoLink] = useState(false);
   const [isUrlPlayback, setIsUrlPlayback] = useState(false);
   const [videoStreaming, setVideoStreaming] = useState(false);
+  const [localPlayback, setLocalPlayback] = useState(false);
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
@@ -282,6 +285,8 @@ export default function HomeScreen() {
   const peerRef = useRef<PeerLike | null>(null);
   const mediaChannelRef = useRef<DataChannelLike | null>(null);
   const controlChannelRef = useRef<DataChannelLike | null>(null);
+  const localSessionRef = useRef<string | null>(null);
+  const localOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
   const temporaryMediaUrisRef = useRef(new Set<string>());
   const queueIndexRef = useRef(0);
@@ -325,6 +330,11 @@ export default function HomeScreen() {
   }, [roomId]);
 
   const closePeer = useCallback((notifyTv = false) => {
+    setLocalPlayback(false);
+    localSessionRef.current = null;
+    if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+    localOpenTimerRef.current = null;
+    void stopLocalStream().catch(() => setError('The local video server could not stop cleanly. Close and reopen FrameCast before sharing again.'));
     transferRunRef.current += 1;
     urlCastActiveRef.current = false;
     mediaAckResolverRef.current?.('interrupted');
@@ -344,6 +354,8 @@ export default function HomeScreen() {
   }, [roomId, sendSignal]);
 
   useEffect(() => () => {
+    if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+    void stopLocalStream().catch(() => undefined);
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
     peerRef.current?.close();
@@ -363,7 +375,30 @@ export default function HomeScreen() {
     for (const signal of messages) {
       if (signal.from !== 'tv' || seenMessages.current.has(signal.sequence)) continue;
       seenMessages.current.add(signal.sequence);
-      if (signal.type === 'answer') {
+      if (signal.type === 'player-state' && signal.payload.sessionId === localSessionRef.current) {
+        const state = signal.payload;
+        if (state.playback !== 'opening') {
+          if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+          localOpenTimerRef.current = null;
+        }
+        setRemoteVideoPosition({
+          currentTime: Math.max(0, Number(state.currentTime) || 0),
+          duration: Math.max(0, Number(state.duration) || 0),
+          volume: Math.min(1, Math.max(0, Number(state.volume) || 0)),
+        });
+        setPaused(Boolean(state.paused));
+        if (state.playback === 'playing' || state.playback === 'ended') {
+          transferComplete.current = true;
+          videoStreamingRef.current = true;
+          setVideoStreaming(true);
+          setStage('sent');
+          setTransferNotice('Playing directly over Wi-Fi. Keep FrameCast open on this phone.');
+          setError('');
+        } else if (state.playback === 'error' || state.playback === 'blocked') {
+          setStage('sent');
+          setError(typeof state.message === 'string' && state.message ? state.message : 'Press Play on the TV remote to start this video.');
+        }
+      } else if (signal.type === 'answer') {
         void (async () => {
           try {
             const peer = peerRef.current;
@@ -407,6 +442,18 @@ export default function HomeScreen() {
       }
     }
   }, [messages, closePeer, cleanupTemporaryCopies]);
+
+  useEffect(() => {
+    if (!localPlayback) return;
+    let cancelled = false;
+    void activateKeepAwakeAsync('framecast-stream').then(() => {
+      if (cancelled) deactivateKeepAwake('framecast-stream');
+    }).catch(() => setError('Keep your phone screen awake while this video is playing.'));
+    return () => {
+      cancelled = true;
+      deactivateKeepAwake('framecast-stream');
+    };
+  }, [localPlayback]);
 
   const joinRoom = (id: string) => {
     if (!id) {
@@ -631,6 +678,30 @@ export default function HomeScreen() {
     const transferRun = transferRunRef.current;
     queuedIce.current = [];
     try {
+      // Native phone -> TV HTTP byte ranges. The TV starts from a small buffer,
+      // can seek anywhere, and does not wait for a complete WebRTC file copy.
+      if (!castUrl && queue.length === 1 && queue[0].kind === 'video' && Platform.OS !== 'web') {
+        setTransferNotice('Opening the video directly over your Wi-Fi…');
+        const stream = await startLocalStream(queue[0].uri, queue[0].name);
+        if (transferRun !== transferRunRef.current) {
+          await stopLocalStream();
+          return;
+        }
+        localSessionRef.current = stream.sessionId;
+        setLocalPlayback(true);
+        setStage('sending');
+        sendSignal('local-video', {
+          sessionId: stream.sessionId,
+          receiverUrl: stream.receiverUrl,
+          extension: stream.extension,
+        });
+        localOpenTimerRef.current = setTimeout(() => {
+          if (localSessionRef.current !== stream.sessionId) return;
+          setStage('sent');
+          setError('The TV has not opened the video yet. Keep this app open, allow local-network access, and check that your Wi-Fi does not isolate devices.');
+        }, 25_000);
+        return;
+      }
       let totalQueueBytes = 0;
       for (const media of castUrl ? [] : queue) {
         const queuedFile = new ExpoFile(media.uri);
@@ -903,6 +974,11 @@ export default function HomeScreen() {
   };
 
   const sendPlaybackControl = (action: string) => {
+    if (localSessionRef.current) {
+      sendSignal('player-command', { sessionId: localSessionRef.current, action });
+      if (action === 'play' || action === 'pause') setPaused(action === 'pause');
+      return;
+    }
     const channel = controlChannelRef.current;
     if (channel?.readyState !== 'open') return;
     channel.send(action);
@@ -1034,7 +1110,7 @@ export default function HomeScreen() {
           <View style={styles.main}>
             <View style={[styles.connectedBadge, { backgroundColor: activeColors.secondary }]}>
               <View style={[styles.connectedDot, { backgroundColor: stage === 'paired' ? activeColors.accent : activeColors.primary }]} />
-              <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
+              <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : localPlayback ? videoStreaming ? 'Connected · Playing on TV' : 'Connected · Opening video' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
             </View>
             <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
             <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>
@@ -1045,9 +1121,9 @@ export default function HomeScreen() {
                     ? sentQueueCount === mediaQueue.length
                       ? `${mediaQueue.length} photos sent in order.`
                       : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
-                    : selectedMedia?.kind === 'video' ? transferNotice ? 'The TV started the video after it finished sending.' : 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
+                    : selectedMedia?.kind === 'video' ? localPlayback ? 'The TV reads this video directly from your phone as it plays. Keep FrameCast open.' : transferNotice ? 'The TV started the video after it finished sending.' : 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
                 : selectedMedia?.kind === 'video'
-                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : 'MP4 and MOV videos are prepared on the phone for streaming. Other small videos transfer first; the TV must support their codec.'
+                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : Platform.OS !== 'web' ? 'Play directly over the same Wi-Fi without sending the whole file first. The TV must support the video format.' : 'MP4 and MOV videos are prepared on the phone for streaming. Other small videos transfer first; the TV must support their codec.'
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
@@ -1291,7 +1367,7 @@ export default function HomeScreen() {
               </>
             )}
 
-            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && (stage !== 'sent' || mediaQueue.length > 1) && (
+            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && (stage !== 'sent' || mediaQueue.length > 1 || Boolean(error)) && (
               <Pressable
                 onPress={() => void startTransfer()}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
@@ -1307,7 +1383,7 @@ export default function HomeScreen() {
             {(stage === 'sending' || stage === 'connecting') && (
               <View style={styles.loadingRow}>
                 <ActivityIndicator color={activeColors.primary} />
-                <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{stage === 'connecting' ? 'Creating a direct connection…' : 'Sending directly to the TV…'}</Text>
+                <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{localPlayback ? 'Opening the video over Wi-Fi…' : stage === 'connecting' ? 'Creating a direct connection…' : 'Sending directly to the TV…'}</Text>
               </View>
             )}
             <Pressable onPress={leaveRoom} style={styles.leaveButton} testID="button-leave-room">
