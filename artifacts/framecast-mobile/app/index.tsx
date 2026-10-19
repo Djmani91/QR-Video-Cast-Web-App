@@ -290,7 +290,7 @@ export default function HomeScreen() {
       setError('That QR code does not contain a FrameCast room. Scan the code shown on the TV.');
       return;
     }
-    closePeer(true);
+    closePeer(Boolean(peerRef.current));
     setRoomId(id);
     setSelectedMedia(null);
     setMediaQueue([]);
@@ -369,7 +369,7 @@ export default function HomeScreen() {
     setError('');
   };
 
-  const pickPhotos = async () => {
+  const pickPhotos = async (append = false) => {
     setError('');
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -379,13 +379,20 @@ export default function HomeScreen() {
       quality: 0.85,
     });
     if (result.canceled || !result.assets?.length) return;
-    selectMedia(result.assets.map((asset, index) => ({
+    const pickedPhotos: SelectedMedia[] = result.assets.map((asset, index) => ({
       uri: asset.uri,
       name: asset.fileName || `Photo ${index + 1}`,
       mimeType: asset.mimeType || 'image/jpeg',
       kind: 'image',
       size: asset.fileSize ?? undefined,
-    })));
+    }));
+    const existingPhotos = append ? mediaQueueRef.current.filter((media) => media.kind === 'image') : [];
+    const combinedPhotos = [...existingPhotos, ...pickedPhotos];
+    if (combinedPhotos.length > 30) {
+      setError('Choose up to 30 photos in one queue. Remove some and try again.');
+      return;
+    }
+    selectMedia(combinedPhotos);
   };
 
   const pickVideo = async () => {
@@ -623,7 +630,7 @@ export default function HomeScreen() {
           queueRunningRef.current = false;
           setQueueRunning(false);
           setStage('paired');
-          setError('A direct connection could not be made. Check both devices are on the same Wi-Fi network.');
+          setError('A direct connection failed. Your router may block devices from talking to each other. Check that neither device is on guest Wi-Fi or a VPN, and that Wi-Fi client isolation is off. FrameCast does not relay media.');
         } else if (peer.connectionState === 'disconnected') {
           queueRunningRef.current = false;
           setQueueRunning(false);
@@ -808,9 +815,18 @@ export default function HomeScreen() {
                       : selectedMedia.size ? formatBytes(selectedMedia.size) : selectedMedia.kind === 'video' ? 'Video' : 'Photo'}
                   </Text>
                 </View>
-                <Pressable onPress={() => void (selectedMedia.kind === 'video' ? pickVideo() : pickPhotos())} accessibilityLabel="Choose different media" testID="button-change-media">
-                  <Ionicons name="swap-horizontal-outline" size={21} color={activeColors.mutedForeground} />
-                </Pressable>
+                <View style={styles.mediaActionGroup}>
+                  {selectedMedia.kind === 'image' && stage !== 'sending' && (
+                    <Pressable style={styles.mediaAction} onPress={() => void pickPhotos(true)} accessibilityLabel="Add more photos" testID="button-add-more-photos">
+                      <Ionicons name="add-circle-outline" size={19} color={activeColors.primary} />
+                      <Text style={[styles.mediaActionText, { color: activeColors.primary }]}>Add</Text>
+                    </Pressable>
+                  )}
+                  <Pressable style={styles.mediaAction} onPress={() => void (selectedMedia.kind === 'video' ? pickVideo() : pickPhotos())} accessibilityLabel="Choose different media" testID="button-change-media">
+                    <Ionicons name="swap-horizontal-outline" size={19} color={activeColors.mutedForeground} />
+                    <Text style={[styles.mediaActionText, { color: activeColors.mutedForeground }]}>Change</Text>
+                  </Pressable>
+                </View>
               </View>
             ) : (
               <>
@@ -824,7 +840,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.scanButtonCopy}>
                     <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose up to 30 photos</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Send them to the TV in order</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Select several in the picker, then send in order</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -843,6 +859,13 @@ export default function HomeScreen() {
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
               </>
+            )}
+            {selectedMedia?.kind === 'image' && stage !== 'sending' && (
+              <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
+                {mediaQueue.length > 1
+                  ? `${mediaQueue.length} photos queued. You can add more or send them together.`
+                  : 'Select several photos in the picker, or tap Add to queue more.'}
+              </Text>
             )}
 
             {(stage === 'sending' || stage === 'sent') && (selectedMedia?.kind === 'video' || mediaQueue.length > 1) && (
@@ -1047,6 +1070,9 @@ const styles = StyleSheet.create({
   mediaCopy: { flex: 1 },
   mediaName: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   mediaMeta: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 4 },
+  mediaActionGroup: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  mediaAction: { alignItems: 'center', justifyContent: 'center', minWidth: 38, gap: 2 },
+  mediaActionText: { fontFamily: 'Inter_600SemiBold', fontSize: 10 },
   progressTrack: { height: 8, borderRadius: 10, overflow: 'hidden', marginTop: 22 },
   progressFill: { height: '100%', borderRadius: 10 },
   progressCopy: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, marginTop: 9 },

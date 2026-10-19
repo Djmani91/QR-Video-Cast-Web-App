@@ -1468,7 +1468,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
           setError('The direct connection was interrupted. Reconnect and try again.');
         } else if (peer.connectionState === 'failed') {
           setStatus('failed');
-          setError('A direct connection could not be made. Check that both devices are on the same Wi-Fi network.');
+          setError('A direct connection failed. Your router may block devices from talking to each other. Check that neither device is on guest Wi-Fi or a VPN, and that Wi-Fi client isolation is off. FrameCast does not relay media.');
         } else if (peer.connectionState === 'connecting') {
           setStatus('connecting');
         }
