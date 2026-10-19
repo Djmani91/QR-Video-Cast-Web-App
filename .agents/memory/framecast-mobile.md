@@ -17,6 +17,12 @@ For the phone website, do not clear a populated file input while its selected fi
 
 **How to apply:** Keep valid picker selections alive. For browser live video, let the media element read the original Blob on demand: do not take an eager whole-file snapshot or run redundant head/tail probes. Confirm an actual decoded phone frame with a bounded startup wait; surface decoder, autoplay, and cloud-only file problems separately. For photo transfers, keep readability checks and any temporary snapshots bounded across the whole queue. Discard unusable references with an explicit reselect action, never persist or upload media.
 
+For EAS builds, the FrameCast mobile project needs its actual Expo owner/project link; a running Expo preview or the workspace's local Expo identity does not prove that an EAS project is linked. Do not guess the owner from the GitHub URL or create a project under Replit's local account.
+
+**Why:** The local Expo CLI authenticated as a Replit-private account, while the mobile app configuration has no EAS project ID and Expo could not find a FrameCast project under the checked names.
+
+**How to apply:** Inspect the app's `owner` and `extra.eas.projectId`, then verify with the Expo build service. If they are absent or the project cannot be found, request the exact Expo project URL before building.
+
 The user wants returning to the same phone browser to reconnect to the same TV automatically, without refreshing, re-entering the code, or rescanning. Keep pairing and selected media until the user explicitly disconnects; a one-minute transport grace window is not a pairing timeout.
 
 **Why:** The user reports that briefly leaving the browser made later video sends fail and required repeated TV refreshes and QR scanning.
