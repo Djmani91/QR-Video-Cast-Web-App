@@ -234,6 +234,7 @@ export default function HomeScreen() {
   const [sentQueueCount, setSentQueueCount] = useState(0);
   const [queueRunning, setQueueRunning] = useState(false);
   const [error, setError] = useState('');
+  const [transferNotice, setTransferNotice] = useState('');
   const [videoLink, setVideoLink] = useState('');
   const [videoLinkError, setVideoLinkError] = useState('');
   const [checkingVideoLink, setCheckingVideoLink] = useState(false);
@@ -569,6 +570,7 @@ export default function HomeScreen() {
       }
       videoStreamingRef.current = false;
       setVideoStreaming(false);
+      setTransferNotice('');
       transferComplete.current = false;
 
       const peer = createPeerConnection();
@@ -582,6 +584,7 @@ export default function HomeScreen() {
           if (packet.framecast === 'streaming') {
             videoStreamingRef.current = true;
             setVideoStreaming(true);
+            setTransferNotice('');
             if (urlCastActiveRef.current) {
               transferComplete.current = true;
               setStage('sent');
@@ -589,15 +592,24 @@ export default function HomeScreen() {
           }
           if (packet.framecast === 'stream-error') {
             setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
+            setTransferNotice('');
             urlCastActiveRef.current = false;
             setStage('paired');
             closePeer();
             return;
           }
           if (packet.framecast === 'received') {
+            if (packet.playback === 'playing') {
+              videoStreamingRef.current = true;
+              setVideoStreaming(true);
+              setTransferNotice('The TV started the video after the full transfer.');
+            }
             const resolve = mediaAckResolverRef.current;
             mediaAckResolverRef.current = null;
             resolve?.(packet.playback ?? 'displayed');
+          }
+          if (packet.framecast === 'buffered') {
+            setTransferNotice(packet.message || 'This video will start after the transfer finishes.');
           }
         } catch {
           // Ignore non-protocol messages on the media channel.
@@ -708,8 +720,8 @@ export default function HomeScreen() {
                   await new Promise((resolve) => setTimeout(resolve, 150));
                 }
                 if (transferRun !== transferRunRef.current) return;
-                if (!videoStreamingRef.current) {
-                  throw new Error('The TV did not start the video stream. Check its format and keep both devices awake.');
+          if (!videoStreamingRef.current) {
+                    throw new Error('The TV did not start the video. Check its format and keep both devices awake.');
                 }
               } else {
                 const playback = await acknowledgement;
@@ -931,9 +943,9 @@ export default function HomeScreen() {
                     ? sentQueueCount === mediaQueue.length
                       ? `${mediaQueue.length} photos sent in order.`
                       : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
-                    : selectedMedia?.kind === 'video' ? 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
+                    : selectedMedia?.kind === 'video' ? transferNotice ? 'The TV started the video after it finished sending.' : 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
                 : selectedMedia?.kind === 'video'
-                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : 'Instant playback needs a stream-ready H.264/AAC fragmented MP4.'
+                  ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : 'Videos that cannot stream immediately transfer first, then play. Larger videos need a stream-ready format.'
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
@@ -1193,6 +1205,7 @@ export default function HomeScreen() {
           </Text>
         </View>
 
+        {transferNotice ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
         {error ? (
           <View style={[styles.errorBox, { backgroundColor: '#FCEBE6' }]} testID="text-error">
             <Ionicons name="alert-circle-outline" size={18} color={activeColors.destructive} />

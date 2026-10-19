@@ -295,6 +295,7 @@ function useSignalSender(roomId: string) {
 const MAX_MEDIA_SIZE_BYTES = 256 * 1024 * 1024;
 const MAX_MEDIA_QUEUE_SIZE_BYTES = 256 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 8 * 1024 * 1024 * 1024;
+const BUFFERED_VIDEO_FALLBACK_MAX_BYTES = 128 * 1024 * 1024;
 const MEDIA_CHUNK_SIZE_BYTES = 32 * 1024;
 const DATA_CHANNEL_BUFFER_LIMIT_BYTES = 512 * 1024;
 
@@ -708,21 +709,31 @@ function TvPage() {
                         channel.close();
                         return;
                       }
+                      let streamMode = kind === 'video';
                       if (kind === 'video') {
-                        const streamError = 'For instant playback, choose a stream-ready H.264/AAC fragmented MP4. This video format cannot be played while it is arriving.';
+                        const streamError = 'This video cannot stream immediately and is too large for safe buffering. Use a stream-ready H.264/AAC fragmented MP4 or a video under 128 MB.';
                         if (!packet.streamCandidate || typeof MediaSource === 'undefined' || !MediaSource.isTypeSupported) {
-                          setError(streamError);
-                          setStatus('failed');
-                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: streamError }));
-                          window.setTimeout(() => stopPeer(), 1200);
-                          return;
+                          if (packet.size > BUFFERED_VIDEO_FALLBACK_MAX_BYTES) {
+                            setError(streamError);
+                            setStatus('failed');
+                            if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: streamError }));
+                            window.setTimeout(() => stopPeer(), 1200);
+                            return;
+                          }
+                          streamMode = false;
+                          setError('');
+                          if (channel.readyState === 'open') {
+                            channel.send(JSON.stringify({ framecast: 'buffered', message: 'This video will play after it finishes sending to the TV.' }));
+                          }
                         }
                         const video = videoRef.current;
                         if (!video) {
-                          setError('The TV browser could not open a streaming video player.');
-                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: 'The TV browser could not open a streaming video player.' }));
+                          const messageText = 'The TV browser could not open its video player. Refresh the TV page and try again.';
+                          setError(messageText);
+                          if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'stream-error', message: messageText }));
                           return;
                         }
+                        if (streamMode && video) {
                         const mediaSource = new MediaSource();
                         const url = URL.createObjectURL(mediaSource);
                         mediaObjectUrlsRef.current.push(url);
@@ -762,13 +773,45 @@ function TvPage() {
                           initTimer: 0,
                           fail: failVideoStream,
                         };
+                        const fallbackToBufferedVideo = (messageText: string) => {
+                          if (session.failed) return;
+                          if (session.initialized) {
+                            failVideoStream(messageText);
+                            return;
+                          }
+                          const transfer = mediaTransferRef.current;
+                          if (!transfer || transfer.size > BUFFERED_VIDEO_FALLBACK_MAX_BYTES) {
+                            failVideoStream('This video is not stream-ready and is too large for safe TV buffering. Use a stream-ready H.264/AAC fragmented MP4 or a video under 128 MB.');
+                            return;
+                          }
+                          session.failed = true;
+                          window.clearTimeout(session.initTimer);
+                          transfer.streamMode = false;
+                          transfer.chunks.push(...session.initialChunks);
+                          session.initialChunks = [];
+                          videoStreamRef.current = null;
+                          setVideoStreamActive(false);
+                          setPlaying(false);
+                          setError('');
+                          video.pause();
+                          video.removeAttribute('src');
+                          video.load();
+                          URL.revokeObjectURL(session.url);
+                          mediaObjectUrlsRef.current = mediaObjectUrlsRef.current.filter((objectUrl) => objectUrl !== session.url);
+                          if (channel.readyState === 'open') {
+                            channel.send(JSON.stringify({ framecast: 'buffered', message: 'This video will play after it finishes sending to the TV.' }));
+                          }
+                        };
+                        session.fail = fallbackToBufferedVideo;
                         videoStreamRef.current = session;
                         setVideoStreamActive(true);
-                        video.addEventListener('error', () => failVideoStream('The TV browser rejected this video stream. Try a stream-ready H.264/AAC fragmented MP4.'), { once: true });
+                        video.addEventListener('error', () => {
+                          if (!session.failed) failVideoStream('The TV browser rejected this video stream. Try a stream-ready H.264/AAC fragmented MP4.');
+                        }, { once: true });
                         const initializeSourceBuffer = () => {
                           if (session.failed || session.initialized || !session.info || mediaSource.readyState !== 'open') return;
                           if (!session.info.isFragmented) {
-                            failVideoStream('This video is not fragmented for streaming. Choose a stream-ready H.264/AAC MP4.');
+                            fallbackToBufferedVideo('This video is not fragmented for instant streaming.');
                             return;
                           }
                           const tracks = session.info.tracks.filter((track) => track.video || track.audio);
@@ -776,7 +819,7 @@ function TvPage() {
                           const codecs = tracks.map((track) => track.codec).filter((codec): codec is string => Boolean(codec));
                           const contentType = `video/mp4; codecs="${codecs.join(',')}"`;
                           if (!hasVideo || codecs.length === 0 || !MediaSource.isTypeSupported(contentType)) {
-                            failVideoStream('The TV cannot stream this video codec. Use H.264 video with AAC audio in a fragmented MP4.');
+                            fallbackToBufferedVideo('The TV cannot stream this video codec immediately.');
                             return;
                           }
                           try {
@@ -794,20 +837,21 @@ function TvPage() {
                               if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
                             }).catch(() => failVideoStream('The TV could not start this live video stream. Check its video and audio format.'));
                           } catch {
-                            failVideoStream('The TV browser cannot create a streaming video buffer for this format.');
+                            fallbackToBufferedVideo('The TV browser cannot stream this video format immediately.');
                           }
                         };
                         parser.onReady = (info) => {
                           session.info = info;
                           initializeSourceBuffer();
                         };
-                        parser.onError = () => failVideoStream('The video file is not a valid stream-ready MP4.');
+                        parser.onError = () => fallbackToBufferedVideo('The video could not be opened as an instant stream.');
                         mediaSource.addEventListener('sourceopen', initializeSourceBuffer, { once: true });
                         if (mediaSource.readyState === 'open') initializeSourceBuffer();
                         session.initTimer = window.setTimeout(
-                          () => failVideoStream('This video did not provide a playable stream quickly. Choose a stream-ready H.264/AAC fragmented MP4.'),
+                          () => fallbackToBufferedVideo('This video did not provide a stream header quickly.'),
                           12_000,
                         );
+                      }
                       }
                       mediaTransferRef.current = {
                         name: packet.name || `Photo ${receivedImagesRef.current.length + 1}`,
@@ -817,7 +861,7 @@ function TvPage() {
                         size: packet.size,
                         received: 0,
                         chunks: [],
-                        streamMode: kind === 'video',
+                        streamMode,
                       };
                       setMediaKind(kind);
                       setTransferProgress(0);
@@ -831,15 +875,20 @@ function TvPage() {
                       }
                       if (transfer.kind === 'video' && transfer.streamMode) {
                         const stream = videoStreamRef.current;
-                        if (!stream || !stream.initialized || stream.failed) {
+                        if (stream && !stream.initialized && !stream.failed) {
+                          stream.fail('The video did not become stream-ready before transfer completed.');
+                        }
+                        if (transfer.streamMode && (!stream || !stream.initialized || stream.failed)) {
                           setError('The TV could not start this video as a live stream. Choose a stream-ready H.264/AAC fragmented MP4.');
                           return;
                         }
-                        stream.complete = true;
-                        mediaTransferRef.current = null;
-                        setTransferProgress(100);
-                        if (videoRef.current) drainVideoStream(stream, videoRef.current);
-                        return;
+                        if (transfer.streamMode && stream) {
+                          stream.complete = true;
+                          mediaTransferRef.current = null;
+                          setTransferProgress(100);
+                          if (videoRef.current) drainVideoStream(stream, videoRef.current);
+                          return;
+                        }
                       }
                       const url = URL.createObjectURL(new Blob(transfer.chunks, { type: transfer.mimeType }));
                       mediaObjectUrlsRef.current.push(url);
@@ -909,16 +958,18 @@ function TvPage() {
                       const initialBytes = stream.initialChunks.reduce((total, chunk) => total + chunk.byteLength, 0);
                       if (initialBytes > 4 * 1024 * 1024) {
                         stream.fail('The video has no small stream header at its start. Choose a stream-ready fragmented MP4.');
-                        return;
+                        if (transfer.streamMode) return;
                       }
-                      const parserChunk = message.data.slice(0) as ArrayBuffer & { fileStart: number };
-                      parserChunk.fileStart = stream.fileOffset;
-                      stream.fileOffset += message.data.byteLength;
-                      try {
-                        stream.parser.appendBuffer(parserChunk);
-                      } catch {
-                        stream.fail('The TV could not parse this video as a live fragmented MP4 stream.');
-                        return;
+                      if (transfer.streamMode) {
+                        const parserChunk = message.data.slice(0) as ArrayBuffer & { fileStart: number };
+                        parserChunk.fileStart = stream.fileOffset;
+                        stream.fileOffset += message.data.byteLength;
+                        try {
+                          stream.parser.appendBuffer(parserChunk);
+                        } catch {
+                          stream.fail('The TV could not parse this video as a live fragmented MP4 stream.');
+                          if (transfer.streamMode) return;
+                        }
                       }
                     }
                     if (stream.initialized && videoRef.current) drainVideoStream(stream, videoRef.current);
@@ -1237,6 +1288,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [objectUrl, setObjectUrl] = useState('');
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [error, setError] = useState('');
+  const [transferNotice, setTransferNotice] = useState('');
   const [progress, setProgress] = useState(0);
   const [sentToTv, setSentToTv] = useState(false);
   const [videoStreaming, setVideoStreaming] = useState(false);
@@ -1412,6 +1464,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
       }
     }
     setError('');
+    setTransferNotice('');
     setStatus('connecting');
     setProgress(0);
     setSentToTv(false);
@@ -1457,6 +1510,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
           if (packet.framecast === 'streaming') {
             videoStreamingRef.current = true;
             setVideoStreaming(true);
+            setTransferNotice('');
             if (urlCastActiveRef.current) {
               transferCompleteRef.current = true;
               setProgress(100);
@@ -1465,13 +1519,22 @@ function PhonePage({ roomId }: { roomId?: string }) {
           }
           if (packet.framecast === 'stream-error') {
             setError(packet.message || 'This video cannot stream in the TV browser. Choose a stream-ready H.264/AAC fragmented MP4.');
+            setTransferNotice('');
             setStatus('failed');
             stopPeer();
             return;
           }
+          if (packet.framecast === 'buffered') {
+            setTransferNotice(packet.message || 'This video will start after the transfer finishes.');
+          }
           if (packet.framecast === 'received') {
             if (packet.playback === 'failed') {
               setError('The video reached the TV, but its browser could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
+            }
+            if (packet.playback === 'playing') {
+              videoStreamingRef.current = true;
+              setVideoStreaming(true);
+              setTransferNotice('The TV started the video after the full transfer.');
             }
             const resolve = mediaAckResolverRef.current;
             mediaAckResolverRef.current = null;
@@ -1820,6 +1883,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 </span>
               </div>
             )}
+            {transferNotice && status === 'connected' && <p className="support-note" role="status" data-testid="text-transfer-notice">{transferNotice}</p>}
             {isUrlPlayback && status === 'connected' && (
               <div className="status-row" role="status" data-testid="status-video-link">
                 <span className="status-dot live" />
@@ -1904,7 +1968,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {mediaKind === 'video' && <p className="support-note">Instant playback needs a stream-ready H.264/AAC fragmented MP4. Other formats are stopped early with a warning.</p>}
+            {mediaKind === 'video' && <p className="support-note">Videos that cannot stream immediately transfer directly to the TV first, then play. Larger videos need a stream-ready format.</p>}
             {!fileSupported && <p className="support-note" role="note">This browser does not support local media previews.</p>}
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
