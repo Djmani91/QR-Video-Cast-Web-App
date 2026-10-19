@@ -15,7 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { File as ExpoFile } from 'expo-file-system';
+import { File as ExpoFile, Paths } from 'expo-file-system';
 import { Ionicons } from '@expo/vector-icons';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { getYouTubeVideoId } from '@/lib/youtube';
@@ -34,7 +34,34 @@ type SelectedMedia = {
   mimeType: string;
   kind: 'video' | 'image';
   size?: number;
+  temporaryCopy?: boolean;
 };
+
+async function makePickerAssetReadable(uri: string, name: string) {
+  if (Platform.OS !== 'android' || !uri.startsWith('content://')) {
+    return { uri, temporaryCopy: false, size: undefined as number | undefined };
+  }
+
+  const extension = name.match(/\.[a-z0-9]{1,8}$/i)?.[0] ?? '';
+  const cacheFile = new ExpoFile(
+    Paths.cache,
+    `framecast-transfer-${Date.now()}-${Math.random().toString(36).slice(2, 9)}${extension}`,
+  );
+  try {
+    await new ExpoFile(uri).copy(cacheFile);
+    if (!cacheFile.exists || cacheFile.size <= 0) {
+      throw new Error('The temporary file copy was empty.');
+    }
+    return { uri: cacheFile.uri, temporaryCopy: true, size: cacheFile.size };
+  } catch {
+    try {
+      if (cacheFile.exists) cacheFile.delete();
+    } catch {
+      // Keep the original picker error out of the UI; the temporary copy is best-effort cleanup.
+    }
+    throw new Error('Android could not keep access to this selected file. Choose it again, or download it to the phone first if it is cloud-only.');
+  }
+}
 
 type DataChannelLike = {
   label: string;
@@ -248,6 +275,7 @@ export default function HomeScreen() {
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [preparingMedia, setPreparingMedia] = useState(false);
   const [remoteVideoPosition, setRemoteVideoPosition] = useState({ currentTime: 0, duration: 0, volume: 0 });
   const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
   const transferComplete = useRef(false);
@@ -255,6 +283,7 @@ export default function HomeScreen() {
   const mediaChannelRef = useRef<DataChannelLike | null>(null);
   const controlChannelRef = useRef<DataChannelLike | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
+  const temporaryMediaUrisRef = useRef(new Set<string>());
   const queueIndexRef = useRef(0);
   const queueRunningRef = useRef(false);
   const transferRunRef = useRef(0);
@@ -264,6 +293,19 @@ export default function HomeScreen() {
   const seenMessages = useRef(new Set<number>());
   const queuedIce = useRef<Record<string, unknown>[]>([]);
   const scanHandled = useRef(false);
+
+  const cleanupTemporaryCopies = useCallback((keepUris: Set<string> = new Set()) => {
+    for (const uri of temporaryMediaUrisRef.current) {
+      if (keepUris.has(uri)) continue;
+      try {
+        const file = new ExpoFile(uri);
+        if (file.exists) file.delete();
+      } catch {
+        // Temporary cache cleanup must not block disconnecting or selecting new media.
+      }
+      temporaryMediaUrisRef.current.delete(uri);
+    }
+  }, []);
 
   const messagesQuery = useGetCastRoomMessages(roomId, {
     query: {
@@ -305,7 +347,8 @@ export default function HomeScreen() {
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
     peerRef.current?.close();
-  }, []);
+    cleanupTemporaryCopies();
+  }, [cleanupTemporaryCopies]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -347,6 +390,7 @@ export default function HomeScreen() {
         setIsUrlPlayback(false);
         urlCastActiveRef.current = false;
         if (signal.payload.reason === 'new-room') {
+          cleanupTemporaryCopies();
           setRoomId('');
           setSelectedMedia(null);
           setMediaQueue([]);
@@ -362,7 +406,7 @@ export default function HomeScreen() {
         }
       }
     }
-  }, [messages, closePeer]);
+  }, [messages, closePeer, cleanupTemporaryCopies]);
 
   const joinRoom = (id: string) => {
     if (!id) {
@@ -370,6 +414,7 @@ export default function HomeScreen() {
       return;
     }
     closePeer(Boolean(peerRef.current));
+    cleanupTemporaryCopies();
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setRoomId(id);
@@ -435,6 +480,7 @@ export default function HomeScreen() {
 
   const selectMedia = (queue: SelectedMedia[]) => {
     if (!queue.length) return;
+    cleanupTemporaryCopies(new Set(queue.filter((media) => media.temporaryCopy).map((media) => media.uri)));
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setVideoLinkError('');
@@ -455,47 +501,73 @@ export default function HomeScreen() {
 
   const pickPhotos = async (append = false) => {
     setError('');
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: false,
-      allowsMultipleSelection: true,
-      selectionLimit: 30,
-      quality: 0.85,
-    });
-    if (result.canceled || !result.assets?.length) return;
-    const pickedPhotos: SelectedMedia[] = result.assets.map((asset, index) => ({
-      uri: asset.uri,
-      name: asset.fileName || `Photo ${index + 1}`,
-      mimeType: asset.mimeType || 'image/jpeg',
-      kind: 'image',
-      size: asset.fileSize ?? undefined,
-    }));
     const existingPhotos = append ? mediaQueueRef.current.filter((media) => media.kind === 'image') : [];
-    const combinedPhotos = [...existingPhotos, ...pickedPhotos];
-    if (combinedPhotos.length > 30) {
-      setError('Choose up to 30 photos in one queue. Remove some and try again.');
-      return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 30,
+        quality: 0.85,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      if (existingPhotos.length + result.assets.length > 30) {
+        setError('Choose up to 30 photos in one queue. Remove some and try again.');
+        return;
+      }
+      setPreparingMedia(true);
+      const pickedPhotos: SelectedMedia[] = [];
+      for (const [index, asset] of result.assets.entries()) {
+        const name = asset.fileName || `Photo ${index + 1}`;
+        const cached = await makePickerAssetReadable(asset.uri, name);
+        if (cached.temporaryCopy) temporaryMediaUrisRef.current.add(cached.uri);
+        pickedPhotos.push({
+          uri: cached.uri,
+          name,
+          mimeType: asset.mimeType || 'image/jpeg',
+          kind: 'image',
+          size: cached.size ?? asset.fileSize ?? undefined,
+          temporaryCopy: cached.temporaryCopy,
+        });
+      }
+      selectMedia([...existingPhotos, ...pickedPhotos]);
+    } catch (mediaError) {
+      cleanupTemporaryCopies(new Set(mediaQueueRef.current.map((media) => media.uri)));
+      setError(mediaError instanceof Error ? mediaError.message : 'Could not read the selected photos. Choose them again and retry.');
+    } finally {
+      setPreparingMedia(false);
     }
-    selectMedia(combinedPhotos);
   };
 
   const pickVideo = async () => {
     setError('');
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'],
-      allowsEditing: false,
-      selectionLimit: 1,
-      quality: 1,
-    });
-    if (result.canceled || !result.assets?.[0]) return;
-    const asset = result.assets[0];
-    selectMedia([{
-      uri: asset.uri,
-      name: asset.fileName || 'Video',
-      mimeType: asset.mimeType || 'video/mp4',
-      kind: 'video',
-      size: asset.fileSize ?? undefined,
-    }]);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        selectionLimit: 1,
+        quality: 1,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      setPreparingMedia(true);
+      const asset = result.assets[0];
+      const name = asset.fileName || 'Video';
+      const cached = await makePickerAssetReadable(asset.uri, name);
+      if (cached.temporaryCopy) temporaryMediaUrisRef.current.add(cached.uri);
+      selectMedia([{
+        uri: cached.uri,
+        name,
+        mimeType: asset.mimeType || 'video/mp4',
+        kind: 'video',
+        size: cached.size ?? asset.fileSize ?? undefined,
+        temporaryCopy: cached.temporaryCopy,
+      }]);
+    } catch (mediaError) {
+      cleanupTemporaryCopies(new Set(mediaQueueRef.current.map((media) => media.uri)));
+      setError(mediaError instanceof Error ? mediaError.message : 'Could not read the selected video. Choose it again and retry.');
+    } finally {
+      setPreparingMedia(false);
+    }
   };
 
   const castVideoLink = async () => {
@@ -537,6 +609,7 @@ export default function HomeScreen() {
       return;
     }
     if (castUrl) {
+      cleanupTemporaryCopies();
       const hostname = new URL(castUrl).hostname;
       setSelectedMedia({ uri: castUrl, name: hostname || 'Video link', mimeType: 'video/url', kind: 'video' });
       setMediaQueue([]);
@@ -846,6 +919,7 @@ export default function HomeScreen() {
 
   const leaveRoom = () => {
     closePeer(true);
+    cleanupTemporaryCopies();
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setRoomId('');
@@ -1007,6 +1081,7 @@ export default function HomeScreen() {
               <>
                 <Pressable
                   onPress={() => void pickPhotos()}
+                  disabled={preparingMedia}
                   style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
                   testID="button-choose-photos"
                 >
@@ -1014,13 +1089,14 @@ export default function HomeScreen() {
                     <Ionicons name="images-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose up to 30 photos</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Select several in the picker, then send in order</Text>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : 'Choose up to 30 photos'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : 'Select several in the picker, then send in order'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
                 <Pressable
                   onPress={() => void pickVideo()}
+                  disabled={preparingMedia}
                   style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
                   testID="button-choose-video"
                 >
@@ -1028,8 +1104,8 @@ export default function HomeScreen() {
                     <Ionicons name="videocam-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose a video</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Instant play needs H.264/AAC fragmented MP4</Text>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing video on this phone…' : 'Choose a video'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Creating a temporary on-device copy' : 'Instant play needs H.264/AAC fragmented MP4'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -1037,7 +1113,7 @@ export default function HomeScreen() {
             )}
             {stage !== 'connecting' && stage !== 'sending' && (
               <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
-                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Play a video link</Text>
+                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Play a YouTube or video link</Text>
                 <TextInput
                   value={videoLink}
                   onChangeText={(value) => {
@@ -1152,7 +1228,7 @@ export default function HomeScreen() {
                     <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl(`video:volume:${Math.min(1, remoteVideoPosition.volume + 0.1).toFixed(1)}`)} accessibilityLabel="Raise TV volume">
                       <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Vol+</Text>
                     </Pressable>
-                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { setSelectedMedia(null); setStage('paired'); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
+                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { cleanupTemporaryCopies(); setSelectedMedia(null); setMediaQueue([]); mediaQueueRef.current = []; setStage('paired'); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
                       <Ionicons name="stop" size={18} color={activeColors.foreground} />
                       <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Stop</Text>
                     </Pressable>
