@@ -106,6 +106,8 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   video.playsInline = true;
   let stopped = false;
   const startupAbort = new AbortController();
+  let sourceLoadAbort: AbortController | null = null;
+  let drawingGeneration = 0;
   let rotation = 0;
   let fitMode: 'cover' | 'contain' = 'cover';
   let frame = 0;
@@ -145,6 +147,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   }
   function tick(now: number) {
     if (stopped) return;
+    const generation = drawingGeneration;
     const interval = 1000 / profile.frameRate;
     if (!video.paused && !video.ended && now - lastDraw >= interval - 0.5) {
       paint();
@@ -156,13 +159,17 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
         : now;
     }
     if (now - lastState >= 500) { emit(); lastState = now; }
-    schedule();
+    if (generation === drawingGeneration) schedule();
   }
   function schedule() {
     if (stopped) return;
+    const generation = drawingGeneration;
+    const callback = (now: number) => {
+      if (generation === drawingGeneration) tick(now);
+    };
     // Draw actual decoded pictures rather than racing a second display timer.
-    if (decoderClock) decoderFrame = video.requestVideoFrameCallback(tick);
-    else frame = requestAnimationFrame(tick);
+    if (decoderClock) decoderFrame = video.requestVideoFrameCallback(callback);
+    else frame = requestAnimationFrame(callback);
   }
   function redraw() { paint(); emit(); }
   const events = ['seeked', 'loadeddata', 'play', 'pause', 'ended'];
@@ -171,6 +178,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
     if (stopped) return;
     stopped = true;
     startupAbort.abort();
+    sourceLoadAbort?.abort();
     cancelAnimationFrame(frame);
     if (decoderClock) video.cancelVideoFrameCallback(decoderFrame);
     for (const event of events) video.removeEventListener(event, redraw);
@@ -194,6 +202,27 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   schedule();
   return {
     stream: output, ready, state, stop, profile: () => ({ ...profile }),
+    async replaceVideo(url: string) {
+      if (stopped) return;
+      sourceLoadAbort?.abort();
+      const abort = new AbortController();
+      sourceLoadAbort = abort;
+      drawingGeneration++;
+      cancelAnimationFrame(frame);
+      if (decoderClock) video.cancelVideoFrameCallback(decoderFrame);
+      video.pause();
+      rotation = 0;
+      lastDraw = -Infinity;
+      lastState = -Infinity;
+      video.src = url;
+      video.load();
+      try {
+        await waitForPhoneVideoFrame(video, Promise.all([graph.context.resume(), video.play()]), abort.signal);
+        if (!stopped && !abort.signal.aborted) { paint(); emit(); }
+      } finally {
+        if (sourceLoadAbort === abort && !stopped) schedule();
+      }
+    },
     setPreviewMuted(muted: boolean) { monitor.gain.value = muted ? 0 : 1; },
     async command(action: string) {
       if (stopped) return;

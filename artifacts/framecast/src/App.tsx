@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -25,6 +26,8 @@ import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, 
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
 import { configureVideoSender } from './lib/video-stream-quality';
+import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/video-playlist';
+import { VideoPlaylist } from './components/VideoPlaylist';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -2010,6 +2013,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [isUrlPlayback, setIsUrlPlayback] = useState(false);
   const [queueIndex, setQueueIndex] = useState(0);
   const [sentQueueCount, setSentQueueCount] = useState(0);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const videoQueueIndexRef = useRef(0);
+  const playlistBusyRef = useRef(false);
+  const playlistSwitchRunRef = useRef(0);
+  const lastEndedFileRef = useRef<File | null>(null);
+  const playlistEndedRef = useRef<() => void>(() => {});
   const [mediaKind, setMediaKind] = useState<MediaKind | null>(null);
   const [objectUrl, setObjectUrl] = useState('');
   const [status, setStatus] = useState<PeerStatus>('idle');
@@ -2055,6 +2064,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
+    playlistSwitchRunRef.current++;
+    playlistBusyRef.current = false;
+    setPlaylistLoading(false);
     connectionGrace.cancel();
     peerProbe.cancel();
     const sessionId = activeSessionRef.current;
@@ -2190,11 +2202,18 @@ function PhonePage({ roomId }: { roomId?: string }) {
     if (picker) picker.value = '';
   };
 
-  const chooseFiles = async (selected?: FileList | File[]) => {
+  const refreshPlaylistNotice = (index: number, length: number) => {
+    const live = phoneVideoStreamRef.current;
+    if (live && !live.state().ended) {
+      setTransferNotice(`Video ${index + 1} of ${length} in your playlist. The next video starts automatically.`);
+    }
+  };
+
+  const chooseFiles = async (selected?: FileList | File[], append = false) => {
     if (!selected?.length) return;
     const chosen = Array.from(selected);
-    if (chosen.length > 30) {
-      setError('Choose up to 30 photos at a time.');
+    if (chosen.length + (append ? fileQueueRef.current.length : 0) > MAX_PLAYLIST_ITEMS) {
+      setError('Choose up to 30 videos for a playlist, or up to 30 photos for a gallery.');
       return;
     }
     const selectedKinds = chosen.map((item) => item.type.startsWith('video/')
@@ -2202,8 +2221,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
       : item.type.startsWith('image/') ? 'image' : null);
     if (selectedKinds.some((kind) => kind === null)
       || selectedKinds.some((kind) => kind !== selectedKinds[0])
-      || (selectedKinds[0] === 'video' && chosen.length > 1)) {
-      setError('Choose up to 30 photos together, or choose one video.');
+      || (append && (selectedKinds[0] !== 'video' || mediaKind !== 'video'))) {
+      setError('Choose videos for a playlist, or photos for a gallery. Do not mix photos and videos in the same selection.');
       return;
     }
     const selectedKind = selectedKinds[0] as MediaKind;
@@ -2211,23 +2230,38 @@ function PhonePage({ roomId }: { roomId?: string }) {
       setError('The selected photos must total 256 MB or less. Choose fewer photos.');
       return;
     }
-    if (selectedKind === 'video' && chosen[0].size > MAX_VIDEO_SIZE_BYTES) {
-      setError('Videos must be 8 GB or smaller to stream directly.');
+    if (chosen.some(item => !item.size || (selectedKind === 'video' && item.size > MAX_VIDEO_SIZE_BYTES))) {
+      setError('Each video must be non-empty and 8 GB or smaller. Choose the original files on this phone.');
       return;
     }
-    recoveryWantedRef.current = false;
-    recoveryRef.current?.cancel();
-    hiddenPlaybackRef.current = null;
-    stopPeer(Boolean(peerRef.current));
+    if (!append) {
+      recoveryWantedRef.current = false;
+      recoveryRef.current?.cancel();
+      hiddenPlaybackRef.current = null;
+      stopPeer(Boolean(peerRef.current));
+    }
     const selectionRun = selectionRunRef.current;
     setPreparingSelection(true);
-    setStatus('paired');
-    setSentToTv(false);
-    setTransferNotice('');
+    if (!append) {
+      setStatus('paired');
+      setSentToTv(false);
+      setTransferNotice('');
+    }
     setError('');
     try {
       const preserved = await preserveBrowserSelection(chosen, () => selectionRun !== selectionRunRef.current, { liveVideo: selectedKind === 'video' });
       if (!preserved || selectionRun !== selectionRunRef.current) return;
+      if (append) {
+        if (fileQueueRef.current.length + preserved.length > MAX_PLAYLIST_ITEMS) {
+          setError('A playlist can contain up to 30 videos.');
+          return;
+        }
+        const next = [...fileQueueRef.current, ...preserved];
+        fileQueueRef.current = next;
+        setFileQueue(next);
+        refreshPlaylistNotice(videoQueueIndexRef.current, next.length);
+        return;
+      }
       setIsUrlPlayback(false);
       urlCastActiveRef.current = false;
       setVideoLinkError('');
@@ -2236,6 +2270,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
       fileQueueRef.current = preserved;
       setFileQueue(preserved);
       setQueueIndex(0);
+      videoQueueIndexRef.current = 0;
+      lastEndedFileRef.current = null;
       setSentQueueCount(0);
       setFile(preserved[0]);
       setMediaKind(selectedKind);
@@ -2247,16 +2283,33 @@ function PhonePage({ roomId }: { roomId?: string }) {
       setVideoStreaming(false);
       setError('');
     } catch {
-      if (selectionRun === selectionRunRef.current) discardUnreadableSelection();
+      if (selectionRun === selectionRunRef.current) {
+        if (append) setError('These videos could not be added. Your existing playlist is kept; download the originals onto this phone and select them again.');
+        else discardUnreadableSelection();
+      }
     } finally {
       if (selectionRun === selectionRunRef.current) setPreparingSelection(false);
     }
   };
 
+  const publishVideoState = (state: PhoneVideoState) => {
+    if (playlistBusyRef.current) return;
+    // Keep the TV's live player running between tracks: pausing it at every
+    // file boundary can make native TV fullscreen close.
+    if (state.ended && playlistNeighbour(fileQueueRef.current.length, videoQueueIndexRef.current, 1) !== null) {
+      playlistEndedRef.current();
+      return;
+    }
+    const channel = controlChannelRef.current;
+    if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'live-state', ...state }));
+    if (state.ended) playlistEndedRef.current();
+  };
+
   const connect = async (remoteUrl?: string, options: { automatic?: boolean; resume?: PhoneVideoState } = {}) => {
     if (preparingSelection) return;
     const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
-    const queuedFiles = castUrl ? [] : fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
+    const allFiles = fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
+    const queuedFiles = castUrl ? [] : mediaKind === 'video' ? allFiles.slice(videoQueueIndexRef.current, videoQueueIndexRef.current + 1) : allFiles;
     if (!castUrl && (!queuedFiles.length || !mediaKind)) {
       setError('Choose photos or a video first, then connect to the TV.');
       return;
@@ -2293,7 +2346,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setIsUrlPlayback(Boolean(castUrl));
     videoStreamingRef.current = false;
     setVideoStreaming(false);
-    setQueueIndex(0);
+    setQueueIndex(castUrl || mediaKind !== 'video' ? 0 : videoQueueIndexRef.current);
     setSentQueueCount(0);
     stopPeer();
     urlCastActiveRef.current = Boolean(castUrl);
@@ -2317,8 +2370,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
         const live = startPhoneVideoStream(video, graph, {
           previewMuted: muted,
           onState: (state) => {
-            const channel = controlChannelRef.current;
-            if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'live-state', ...state }));
+            if (transferRun !== transferRunRef.current) return;
+            publishVideoState(state);
           },
           onError: (message) => {
             if (transferRun !== transferRunRef.current) return;
@@ -2774,6 +2827,118 @@ function PhonePage({ roomId }: { roomId?: string }) {
     }
   };
 
+  const showPlaylistPreview = (index: number) => {
+    const selected = fileQueueRef.current[index];
+    if (!selected) return null;
+    const url = URL.createObjectURL(selected);
+    videoQueueIndexRef.current = index;
+    // Commit src before play(): a later React src update would otherwise abort
+    // the new video's pending play promise, particularly in mobile Safari.
+    flushSync(() => {
+      setQueueIndex(index);
+      setFile(selected);
+      setObjectUrl(url);
+      setProgress(0);
+      setError('');
+    });
+    return url;
+  };
+
+  const playPlaylistItem = async (index: number) => {
+    if (playlistBusyRef.current || preparingSelection) return;
+    if (index < 0 || index >= fileQueueRef.current.length) return;
+    playlistBusyRef.current = true;
+    setPlaylistLoading(true);
+    lastEndedFileRef.current = null;
+    hiddenPlaybackRef.current = null;
+    const run = ++playlistSwitchRunRef.current;
+    const live = phoneVideoStreamRef.current;
+    const url = showPlaylistPreview(index);
+    if (!url) { playlistBusyRef.current = false; setPlaylistLoading(false); return; }
+    try {
+      if (!live || peerRef.current?.connectionState !== 'connected') {
+        await connect();
+        return;
+      }
+      setTransferNotice(`Opening video ${index + 1} of ${fileQueueRef.current.length}…`);
+      await live.replaceVideo(url);
+      if (run !== playlistSwitchRunRef.current || phoneVideoStreamRef.current !== live) return;
+      for (const sender of peerRef.current?.getSenders() ?? []) {
+        if (sender.track?.kind === 'video') {
+          void configureVideoSender(sender, live.profile()).catch(error => console.warn('Playlist video encoder tuning unavailable.', error));
+        }
+      }
+      setSentToTv(true);
+      setVideoSeekDraft(null);
+      setTransferNotice(`Playing video ${index + 1} of ${fileQueueRef.current.length}. The next video starts automatically.`);
+    } catch (cause) {
+      if (run !== playlistSwitchRunRef.current) return;
+      setError(`${cause instanceof Error ? cause.message : 'This video could not be opened.'} Your playlist is kept. Tap this video to retry, or choose Next.`);
+    } finally {
+      if (run === playlistSwitchRunRef.current) {
+        playlistBusyRef.current = false;
+        setPlaylistLoading(false);
+        if (live && phoneVideoStreamRef.current === live) publishVideoState(live.state());
+      }
+    }
+  };
+
+  playlistEndedRef.current = () => {
+    if (playlistBusyRef.current || !pairingActiveRef.current || !phoneVideoStreamRef.current) return;
+    const index = videoQueueIndexRef.current;
+    const ended = fileQueueRef.current[index];
+    if (!ended || ended === lastEndedFileRef.current) return;
+    lastEndedFileRef.current = ended;
+    const next = playlistNeighbour(fileQueueRef.current.length, index, 1);
+    if (next !== null) void playPlaylistItem(next);
+    else setTransferNotice('Playlist finished. Choose a video to play again, restart the playlist, or add more videos.');
+  };
+
+  const reorderPlaylist = (from: number, to: number) => {
+    if (playlistBusyRef.current) return;
+    const active = fileQueueRef.current[videoQueueIndexRef.current];
+    const next = movePlaylistItem(fileQueueRef.current, from, to);
+    fileQueueRef.current = next;
+    setFileQueue(next);
+    if (phoneVideoStreamRef.current || recoveryWantedRef.current) {
+      const index = Math.max(0, next.indexOf(active));
+      videoQueueIndexRef.current = index;
+      setQueueIndex(index);
+      refreshPlaylistNotice(index, next.length);
+    } else showPlaylistPreview(0);
+  };
+
+  const removePlaylistItem = (index: number) => {
+    if (playlistBusyRef.current) return;
+    const previous = fileQueueRef.current;
+    const active = previous[videoQueueIndexRef.current];
+    const next = previous.filter((_, position) => position !== index);
+    fileQueueRef.current = next;
+    setFileQueue(next);
+    if (!next.length) {
+      recoveryWantedRef.current = false;
+      recoveryRef.current?.cancel();
+      stopPeer(true);
+      setFile(null);
+      setObjectUrl('');
+      setMediaKind(null);
+      setQueueIndex(0);
+      videoQueueIndexRef.current = 0;
+      setSentToTv(false);
+      setStatus('paired');
+      setTransferNotice('');
+      setError('');
+    } else if (previous[index] === active) {
+      if (phoneVideoStreamRef.current) void playPlaylistItem(Math.min(index, next.length - 1));
+      else showPlaylistPreview(Math.min(index, next.length - 1));
+    } else {
+      const activeIndex = Math.max(0, next.indexOf(active));
+      videoQueueIndexRef.current = activeIndex;
+      setQueueIndex(activeIndex);
+      refreshPlaylistNotice(activeIndex, next.length);
+    }
+  };
+
   const sendPhotoControl = (action: string) => {
     const channel = controlChannelRef.current;
     if (channel?.readyState === 'open') channel.send(action);
@@ -2811,12 +2976,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
     ? sentToTv
       ? error
         ? 'Connected. The TV received the file but could not play it.'
-        : fileQueue.length > 1
+        : mediaKind === 'image' && fileQueue.length > 1
           ? `All ${fileQueue.length} photos are shown on the TV.`
           : `Connected. Your ${mediaKind === 'image' ? 'photo is on' : 'video is playing on'} the TV.`
       : progress >= 99
         ? 'Connected. Waiting for the TV to finish opening the file…'
-        : fileQueue.length > 1
+        : mediaKind === 'image' && fileQueue.length > 1
           ? `Sending photo ${queueIndex + 1} of ${fileQueue.length}${progress ? ` · ${progress}%` : '…'}`
           : `Connected. Sending your ${mediaKind === 'image' ? 'photo' : 'video'} to the TV${progress ? ` · ${progress}%` : '…'}`
     : status === 'connecting'
@@ -2839,7 +3004,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
           <div className="phone-heading">
             <span className="eyebrow">You’re joining a FrameCast screen</span>
             <h1>Send it to the TV.</h1>
-          <p>Select photos or a video stored on this phone, or paste a video link. Local files go directly to the TV; for a link, the TV opens the source itself.</p>
+          <p>Select photos or a video playlist stored on this phone, or paste a video link. Local files go directly to the TV; for a link, the TV opens the source itself.</p>
           </div>
           <div className="phone-card">
             {file && objectUrl ? (
@@ -2870,16 +3035,16 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   <img className="video-preview photo-preview" src={objectUrl} alt={`Selected photo: ${file.name}`} data-testid="image-local-preview" />
                 )}
                 <div className="file-details">
-                  <strong data-testid="text-selected-file">{fileQueue.length > 1 ? `Photo ${queueIndex + 1} of ${fileQueue.length}` : file.name}</strong>
-                  <span>{(file.size / 1024 / 1024).toFixed(1)} MB{fileQueue.length > 1 ? ` · ${fileQueue.length} photos selected` : ''}</span>
+                  <strong data-testid="text-selected-file">{fileQueue.length > 1 ? `${mediaKind === 'video' ? 'Video' : 'Photo'} ${queueIndex + 1} of ${fileQueue.length} · ${file.name}` : file.name}</strong>
+                  <span>{(file.size / 1024 / 1024).toFixed(1)} MB{fileQueue.length > 1 ? ` · ${fileQueue.length} ${mediaKind === 'video' ? 'videos' : 'photos'} selected` : ''}</span>
                 </div>
                 <button type="button" className="button-quiet" onClick={() => document.getElementById('video-file-input')?.click()} data-testid="button-change-content"><RefreshCw size={14} /> Change selection</button>
               </>
             ) : (
               <label className="dropzone" htmlFor="video-file-input" data-testid="control-content-picker">
                 <span className="drop-icon"><FileVideo2 size={22} /><ImageIcon size={17} /></span>
-                <strong>Choose up to 30 photos, or one video</strong>
-                <span>Photos are sent in order without reopening the library</span>
+                <strong>Choose up to 30 photos or videos</strong>
+                <span>Select videos together to make a playlist, or choose a photo gallery</span>
               </label>
             )}
             <input
@@ -2892,10 +3057,16 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 // Clearing here can revoke an Android picker grant before transfer.
                 void chooseFiles(Array.from(event.currentTarget.files ?? []));
               }}
-              aria-label="Choose up to 30 photos or one video"
+              aria-label="Choose up to 30 photos or videos"
               data-testid="input-content-file"
             />
             {preparingSelection && <p role="status" data-testid="status-reading-selection">Reading your selection on this phone… Nothing is uploaded.</p>}
+            {mediaKind === 'video' && fileQueue.length > 0 && <VideoPlaylist
+              files={fileQueue} activeIndex={queueIndex} busy={playlistLoading || preparingSelection || status === 'connecting'}
+              playing={Boolean(phoneVideoStreamRef.current) && status === 'connected'}
+              onPlay={index => void playPlaylistItem(index)} onMove={reorderPlaylist} onRemove={removePlaylistItem}
+              onAdd={files => void chooseFiles(files, true)}
+            />}
             <div className="video-link-card" data-testid="video-link-card">
               <label htmlFor="video-link-input">Or paste a YouTube or video link</label>
               <div className="video-link-actions">
@@ -2934,10 +3105,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 <span className="status-dot live" />
                 <span className="status-text">
                   {sentToTv
-                    ? error ? 'TV received the file but could not play it.' : fileQueue.length > 1 ? `${fileQueue.length} photos shown on TV.` : `${mediaKind === 'image' ? 'Photo shown' : 'Video playing'} on TV.`
+                    ? error ? 'Playback needs attention. Your selection is kept.' : fileQueue.length > 1 ? mediaKind === 'video' ? `Video ${queueIndex + 1} of ${fileQueue.length} playing on TV.` : `${fileQueue.length} photos shown on TV.` : `${mediaKind === 'image' ? 'Photo shown' : 'Video playing'} on TV.`
                     : progress >= 99
                       ? 'Transfer complete. Waiting for the TV to open the file…'
-                      : fileQueue.length > 1
+                      : mediaKind === 'image' && fileQueue.length > 1
                         ? `Sending photo ${queueIndex + 1} of ${fileQueue.length}${progress ? ` · ${progress}%` : '…'}`
                         : `Connected · sending ${mediaKind === 'image' ? 'photo' : 'video'}${progress ? ` · ${progress}%` : '…'}`}
                 </span>
@@ -2952,15 +3123,15 @@ function PhonePage({ roomId }: { roomId?: string }) {
             )}
             <div className="phone-actions">
               {file && (
-                <button type="button" className="button-primary" onClick={() => void connect()} disabled={preparingSelection || status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
+                <button type="button" className="button-primary" onClick={() => void (mediaKind === 'video' && fileQueue.length > 1 ? playPlaylistItem(status === 'connected' ? 0 : videoQueueIndexRef.current) : connect())} disabled={playlistLoading || preparingSelection || status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
                   {status === 'connecting' ? <RefreshCw size={16} className="animate-spin" /> : status === 'connected' ? <Check size={16} /> : <ArrowUpRight size={16} />}
                   {status === 'connecting'
                     ? 'Connecting…'
                     : status === 'connected'
-                      ? sentToTv ? fileQueue.length > 1 ? `Replay ${fileQueue.length} photos` : mediaKind === 'image' ? 'Photo sent to TV' : 'Sent to TV' : 'Sending to TV…'
+                      ? sentToTv ? fileQueue.length > 1 ? mediaKind === 'video' ? 'Restart playlist' : `Replay ${fileQueue.length} photos` : mediaKind === 'image' ? 'Photo sent to TV' : 'Sent to TV' : 'Sending to TV…'
                       : status === 'failed' || status === 'disconnected'
                         ? 'Try again'
-                        : mediaKind === 'image' ? 'Show photo on TV' : 'Play video on TV'}
+                        : mediaKind === 'image' ? 'Show photo on TV' : fileQueue.length > 1 ? 'Play playlist on TV' : 'Play video on TV'}
                 </button>
               )}
               {pairingActiveRef.current && (

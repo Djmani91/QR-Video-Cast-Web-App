@@ -26,3 +26,9 @@ Drive compatibility rendering from decoded video frames where available. A displ
 **Why:** The user reported soft, jerky TV playback. A nominal frame-rate cap sampled on a phone display clock can silently deliver fewer, unevenly spaced pictures; increasing resolution or bitrate alone does not fix that. Full-resolution phone decoding plus canvas encoding also has a real processing cost.
 
 **How to apply:** Preserve the upright phone-rendering path, bound its output to Full HD rather than attempting 4K encoding, avoid a Full HD upscale for lower-resolution sources, and allow quality adaptation to protect motion. Describe resolution as a target, not verified TV delivery or original-file quality; actual resolution depends on the source, encoder, network and receiver.
+
+The user wants phone-selected videos to form an ordered playlist: first one video, then the next automatically. Keep playlist playback within the existing TV session.
+
+**Why:** Reopening the receiver for each item would interrupt the sequential experience and can lose the TV's native fullscreen state. The standing privacy requirement still applies to a playlist.
+
+**How to apply:** Keep playlist selections on the phone for the current session, read only the item being played, and retain the receiver's playback connection across item boundaries. Do not upload the queue, prepare every movie before starting, or require another QR scan between items.

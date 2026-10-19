@@ -25,6 +25,7 @@ function setup({ decoderClock = false } = {}) {
     muted: true, volume: 1, playsInline: true,
     async play() { this.paused = false; this.dispatchEvent(new Event('play')); },
     pause() { this.paused = true; this.dispatchEvent(new Event('pause')); },
+    load() { this.currentTime = 0; this.ended = false; this.readyState = 2; },
   });
   if (decoderClock) {
     video.requestVideoFrameCallback = fn => { events.push(['decoder-frame']); frames.set(++id, fn); return id; };
@@ -237,5 +238,60 @@ test('an already-queued decoder callback cannot redraw or reschedule after disco
     late(500);
     assert.equal(f.calls.length, 0);
     assert.equal(f.frames.size, 0);
+  } finally { f.restore(); }
+});
+
+test('playlist switches reuse the same audio/video tracks and restart the source clock', async () => {
+  const f = setup({ decoderClock: true });
+  try {
+    await f.live.ready;
+    await f.live.command('play');
+    await f.live.command('video:rotate');
+    f.video.currentTime = 25;
+    const tracks = [...f.live.stream.getTracks()];
+    const oldCallback = [...f.frames.values()][0];
+    await f.live.replaceVideo('blob:next-playlist-video');
+    assert.equal(f.video.src, 'blob:next-playlist-video');
+    assert.equal(f.video.currentTime, 0);
+    assert.equal(f.video.paused, false);
+    assert.equal(f.live.state().rotation, 0);
+    assert.deepEqual(f.live.stream.getTracks(), tracks);
+    assert.ok(tracks.every(track => !track.stopped));
+    assert.equal(f.frames.size, 1);
+    f.calls.length = 0;
+    oldCallback(500);
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.frames.size, 1);
+    f.step(500);
+    assert.equal(f.calls.filter(call => call[0] === 'drawImage').length, 1);
+  } finally { f.restore(); }
+});
+
+test('disconnect aborts a playlist video that is still opening', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    f.video.play = () => new Promise(() => {});
+    const loading = f.live.replaceVideo('blob:cloud-video');
+    const rejected = assert.rejects(loading, { name: 'AbortError' });
+    f.live.stop();
+    await rejected;
+    assert.equal(f.frames.size, 0);
+    assert.ok(f.tracks.every(track => track.stopped));
+  } finally { f.restore(); }
+});
+
+test('an unreadable playlist item reports its error without destroying the reusable TV tracks', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    f.video.error = { code: 4 };
+    await assert.rejects(f.live.replaceVideo('blob:unsupported'), /could not decode/i);
+    assert.ok(f.tracks.every(track => !track.stopped));
+    f.video.error = null;
+    await f.live.replaceVideo('blob:working-next-video');
+    assert.equal(f.video.paused, false);
+    assert.ok(f.tracks.every(track => !track.stopped));
+    assert.equal(f.frames.size, 1);
   } finally { f.restore(); }
 });
