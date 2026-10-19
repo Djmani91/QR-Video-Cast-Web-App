@@ -207,6 +207,26 @@
 .waiting-panel { margin-top: 16px; min-height: 170px; border-radius: 16px; background: #18211d; display: grid; place-items: center; color: #f4f1e8; text-align: center; padding: 24px; }
 .waiting-panel p { color: #c2c9c1; font-size: 13px; line-height: 1.6; margin: 8px auto 0; max-width: 260px; }
 .tv-controls { display: flex; justify-content: center; gap: 8px; margin-top: 16px; }
+.photo-remote-controls { display: grid; gap: 8px; width: min(100%, 420px); margin: 12px auto; }
+.photo-remote-navigation { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.photo-remote-navigation .button-secondary { min-width: 66px; }
+.photo-remote-navigation span { color: hsl(var(--muted-foreground)); font: 600 12px/1 var(--app-font-mono); }
+.tv-photo-position,
+.tv-photo-counter {
+  color: #f4f1e8;
+  font: 600 12px/1.2 var(--app-font-mono);
+}
+.tv-photo-position {
+  position: absolute;
+  top: clamp(14px, 3vh, 38px);
+  right: clamp(14px, 3vw, 38px);
+  z-index: 3;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 99px;
+  background: rgba(10, 14, 11, .78);
+}
+.tv-photo-counter { align-self: center; padding: 0 4px; }
 .tv-immersive-playback {
   position: fixed;
   inset: 0;
@@ -291,7 +311,7 @@
   position: absolute;
   left: 50%;
   bottom: clamp(14px, 3vh, 38px);
-  z-index: 2;
+  z-index: 4;
   max-width: calc(100vw - 24px);
   margin: 0;
   padding: 8px;
@@ -302,6 +322,10 @@
   border-radius: 18px;
   background: rgba(10, 14, 11, .78);
   backdrop-filter: blur(12px);
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  animation: none;
 }
 .tv-immersive-playback .tv-controls .button-secondary {
   border-color: rgba(255, 255, 255, .18);

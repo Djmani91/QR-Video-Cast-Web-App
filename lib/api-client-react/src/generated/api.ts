@@ -23,7 +23,7 @@ import type {
   CastRoom,
   CastRoomLookupInput,
   CastRoomLookupResponse,
-  CastSignal,
+  CastRoomMessagesResponse,
   CastSignalInput,
   CastSignalReceipt,
   ErrorEnvelope,
@@ -309,9 +309,9 @@ export const getGetCastRoomMessagesUrl = (roomId: string,) => {
 /**
  * @summary Read new connection messages for one peer
  */
-export const getCastRoomMessages = async (roomId: string, options?: Parameters<typeof customFetch>[1]): Promise<CastSignal[]> => {
+export const getCastRoomMessages = async (roomId: string, options?: Parameters<typeof customFetch>[1]): Promise<CastRoomMessagesResponse> => {
 
-  return customFetch<CastSignal[]>(getGetCastRoomMessagesUrl(roomId),
+  return customFetch<CastRoomMessagesResponse>(getGetCastRoomMessagesUrl(roomId),
   {
     ...options,
     method: 'GET'

@@ -128,6 +128,10 @@ export default function HomeScreen() {
   const [scanning, setScanning] = useState(false);
   const [roomId, setRoomId] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const [mediaQueue, setMediaQueue] = useState<SelectedMedia[]>([]);
+  const [queueIndex, setQueueIndex] = useState(0);
+  const [sentQueueCount, setSentQueueCount] = useState(0);
+  const [queueRunning, setQueueRunning] = useState(false);
   const [error, setError] = useState('');
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
   const [sentBytes, setSentBytes] = useState(0);
@@ -137,6 +141,11 @@ export default function HomeScreen() {
   const peerRef = useRef<PeerLike | null>(null);
   const mediaChannelRef = useRef<DataChannelLike | null>(null);
   const controlChannelRef = useRef<DataChannelLike | null>(null);
+  const mediaQueueRef = useRef<SelectedMedia[]>([]);
+  const queueIndexRef = useRef(0);
+  const queueRunningRef = useRef(false);
+  const transferRunRef = useRef(0);
+  const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
   const seenMessages = useRef(new Set<number>());
   const queuedIce = useRef<Record<string, unknown>[]>([]);
   const scanHandled = useRef(false);
@@ -148,7 +157,7 @@ export default function HomeScreen() {
       enabled: Boolean(roomId),
     },
   });
-  const messages = (messagesQuery.data ?? []) as SignalMessage[];
+  const messages = (messagesQuery.data?.messages ?? []) as SignalMessage[];
 
   const sendSignal = useCallback((type: CastSignalType, payload: Record<string, unknown> = {}) => {
     if (!roomId) return;
@@ -159,6 +168,9 @@ export default function HomeScreen() {
   }, [roomId]);
 
   const closePeer = useCallback((notifyTv = false) => {
+    transferRunRef.current += 1;
+    mediaAckResolverRef.current?.('interrupted');
+    mediaAckResolverRef.current = null;
     if (notifyTv && roomId) sendSignal('close', {});
     transferComplete.current = true;
     mediaChannelRef.current?.close();
@@ -212,8 +224,20 @@ export default function HomeScreen() {
         }
       } else if (signal.type === 'close') {
         closePeer();
-        setStage('paired');
-        setError('The TV ended this connection.');
+        if (signal.payload.reason === 'new-room') {
+          setRoomId('');
+          setSelectedMedia(null);
+          setMediaQueue([]);
+          mediaQueueRef.current = [];
+          setSentQueueCount(0);
+          queueRunningRef.current = false;
+          setQueueRunning(false);
+          setStage('join');
+          setError('The TV started a new room. Scan its new code to reconnect.');
+        } else {
+          setStage('paired');
+          setError('The TV ended this connection.');
+        }
       }
     }
   }, [messages, closePeer]);
@@ -226,6 +250,12 @@ export default function HomeScreen() {
     closePeer(true);
     setRoomId(id);
     setSelectedMedia(null);
+    setMediaQueue([]);
+    mediaQueueRef.current = [];
+    queueRunningRef.current = false;
+    setQueueRunning(false);
+    setQueueIndex(0);
+    setSentQueueCount(0);
     setStage('paired');
     setSentBytes(0);
     setTotalBytes(0);
@@ -279,49 +309,91 @@ export default function HomeScreen() {
     });
   };
 
-  const pickMedia = async () => {
+  const selectMedia = (queue: SelectedMedia[]) => {
+    if (!queue.length) return;
+    queueRunningRef.current = false;
+    setQueueRunning(false);
+    closePeer(true);
+    mediaQueueRef.current = queue;
+    queueIndexRef.current = 0;
+    setMediaQueue(queue);
+    setQueueIndex(0);
+    setSentQueueCount(0);
+    setSelectedMedia(queue[0]);
+    setStage('paired');
+    setSentBytes(0);
+    setTotalBytes(0);
+    setError('');
+  };
+
+  const pickPhotos = async () => {
     setError('');
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'],
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 30,
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    selectMedia(result.assets.map((asset, index) => ({
+      uri: asset.uri,
+      name: asset.fileName || `Photo ${index + 1}`,
+      mimeType: asset.mimeType || 'image/jpeg',
+      kind: 'image',
+      size: asset.fileSize ?? undefined,
+    })));
+  };
+
+  const pickVideo = async () => {
+    setError('');
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
       allowsEditing: false,
       selectionLimit: 1,
       quality: 1,
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    const mediaKind = asset.type === 'video' ? 'video' : 'image';
-    setSelectedMedia({
+    selectMedia([{
       uri: asset.uri,
-      name: asset.fileName || (mediaKind === 'video' ? 'Video' : 'Photo'),
-      mimeType: asset.mimeType || (mediaKind === 'video' ? 'video/mp4' : 'image/jpeg'),
-      kind: mediaKind,
+      name: asset.fileName || 'Video',
+      mimeType: asset.mimeType || 'video/mp4',
+      kind: 'video',
       size: asset.fileSize ?? undefined,
-    });
-    closePeer(true);
-    setStage('paired');
-    setSentBytes(0);
-    setTotalBytes(0);
+    }]);
   };
 
   const startTransfer = async () => {
-    if (!roomId || !selectedMedia) {
-      setError('Choose a video or photo first.');
+    const queue = mediaQueueRef.current.length ? mediaQueueRef.current : selectedMedia ? [selectedMedia] : [];
+    if (!roomId || !queue.length) {
+      setError('Choose photos or a video first.');
       return;
     }
     setError('');
     setStage('connecting');
     setSentBytes(0);
     setTotalBytes(0);
+    queueRunningRef.current = queue.length > 1;
+    setQueueRunning(queueRunningRef.current);
+    setSentQueueCount(0);
     closePeer();
+    const transferRun = transferRunRef.current;
     queuedIce.current = [];
     try {
-      const file = new ExpoFile(selectedMedia.uri);
-      const fileSize = file.size || selectedMedia.size || 0;
-      if (!fileSize) throw new Error('The selected file size could not be read.');
-      if (fileSize > MAX_TRANSFER_BYTES) {
-        throw new Error('This first version supports files up to 256 MB. Choose a shorter or smaller video.');
+      let totalQueueBytes = 0;
+      for (const media of queue) {
+        const queuedFile = new ExpoFile(media.uri);
+        const queuedSize = queuedFile.size || media.size || 0;
+        if (!queuedSize) throw new Error(`Could not read “${media.name}”. Choose it again and retry.`);
+        if (queuedSize > MAX_TRANSFER_BYTES) {
+          throw new Error('This version supports files up to 256 MB. Choose a shorter or smaller video.');
+        }
+        totalQueueBytes += queuedSize;
+        if (totalQueueBytes > MAX_TRANSFER_BYTES) {
+          throw new Error('The selected photos must total 256 MB or less. Choose fewer photos.');
+        }
       }
-      setTotalBytes(fileSize);
       transferComplete.current = false;
 
       const peer = createPeerConnection();
@@ -331,11 +403,11 @@ export default function HomeScreen() {
       mediaChannel.onmessage = (event) => {
         if (typeof event.data !== 'string') return;
         try {
-          const packet = JSON.parse(event.data) as { framecast?: string };
+          const packet = JSON.parse(event.data) as { framecast?: string; playback?: string };
           if (packet.framecast === 'received') {
-            transferComplete.current = true;
-            setSentBytes(fileSize);
-            setStage('sent');
+            const resolve = mediaAckResolverRef.current;
+            mediaAckResolverRef.current = null;
+            resolve?.(packet.playback ?? 'displayed');
           }
         } catch {
           // Ignore non-protocol messages on the media channel.
@@ -351,32 +423,83 @@ export default function HomeScreen() {
         void (async () => {
           try {
             setStage('sending');
-            mediaChannel.send(JSON.stringify({
-              framecast: 'metadata',
-              name: selectedMedia.name,
-              mimeType: selectedMedia.mimeType,
-              kind: selectedMedia.kind,
-              size: fileSize,
-            }));
-            for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
-              if (mediaChannel.readyState !== 'open') throw new Error('The TV connection closed during transfer.');
+            for (let index = 0; index < queue.length; index += 1) {
+              if (transferRun !== transferRunRef.current) return;
+              const media = queue[index];
+              queueIndexRef.current = index;
+              setQueueIndex(index);
+              setSelectedMedia(media);
+              const file = new ExpoFile(media.uri);
+              const fileSize = file.size || media.size || 0;
+              if (!fileSize) throw new Error(`Could not read “${media.name}”. Choose it again and retry.`);
+              if (fileSize > MAX_TRANSFER_BYTES) {
+                throw new Error('This version supports files up to 256 MB. Choose a shorter or smaller video.');
+              }
+              setTotalBytes(fileSize);
+              setSentBytes(0);
+              mediaChannel.send(JSON.stringify({
+                framecast: 'metadata',
+                name: media.name,
+                mimeType: media.mimeType,
+                kind: media.kind,
+                size: fileSize,
+              }));
+              for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
+                if (transferRun !== transferRunRef.current || mediaChannel.readyState !== 'open') return;
+                await waitForBuffer(mediaChannel);
+                const part = await file.slice(offset, Math.min(offset + FILE_CHUNK_SIZE, fileSize)).arrayBuffer();
+                if (transferRun !== transferRunRef.current) return;
+                mediaChannel.send(part);
+                const count = Math.min(offset + part.byteLength, fileSize);
+                setSentBytes(count);
+              }
+              const acknowledgement = new Promise<string>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                  mediaAckResolverRef.current = null;
+                  reject(new Error('The TV did not confirm the photo. Check that its screen is awake and try again.'));
+                }, 60_000);
+                mediaAckResolverRef.current = (playback) => {
+                  clearTimeout(timeout);
+                  resolve(playback);
+                };
+              });
               await waitForBuffer(mediaChannel);
-              const part = await file.slice(offset, Math.min(offset + FILE_CHUNK_SIZE, fileSize)).arrayBuffer();
-              mediaChannel.send(part);
-              const count = Math.min(offset + part.byteLength, fileSize);
-              setSentBytes(count);
+              mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+              const playback = await acknowledgement;
+              if (transferRun !== transferRunRef.current) return;
+              if (playback === 'failed') {
+                throw new Error('The TV received the video but could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
+              }
+              setSentQueueCount(index + 1);
+              setSentBytes(fileSize);
+              if (index < queue.length - 1 && queueRunningRef.current) {
+                await new Promise((resolve) => setTimeout(resolve, 1600));
+              }
+              if (index < queue.length - 1 && !queueRunningRef.current) break;
             }
-            await waitForBuffer(mediaChannel);
-            mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
-            setSentBytes(fileSize);
+            if (transferRun !== transferRunRef.current) return;
+            if (queueRunningRef.current) {
+              queueIndexRef.current = 0;
+              setQueueIndex(0);
+              setSelectedMedia(queue[0]);
+            }
+            transferComplete.current = true;
+            queueRunningRef.current = false;
+            setQueueRunning(false);
+            setStage('sent');
           } catch (transferError) {
+            if (transferRun !== transferRunRef.current) return;
+            queueRunningRef.current = false;
+            setQueueRunning(false);
             setStage('paired');
             setError(transferError instanceof Error ? transferError.message : 'The video could not be sent. Try again.');
           }
         })();
       };
       mediaChannel.onclose = () => {
-        if (!transferComplete.current) {
+        if (!transferComplete.current && transferRun === transferRunRef.current) {
+          queueRunningRef.current = false;
+          setQueueRunning(false);
           setStage('paired');
           setError('The direct transfer was interrupted. Keep both devices awake and try again.');
         }
@@ -385,40 +508,64 @@ export default function HomeScreen() {
         if (event.candidate) sendSignal('ice', event.candidate.toJSON());
       };
       peer.onconnectionstatechange = () => {
+        if (transferRun !== transferRunRef.current) return;
         if (peer.connectionState === 'failed') {
+          queueRunningRef.current = false;
+          setQueueRunning(false);
           setStage('paired');
           setError('A direct connection could not be made. Check both devices are on the same Wi-Fi network.');
         } else if (peer.connectionState === 'disconnected') {
+          queueRunningRef.current = false;
+          setQueueRunning(false);
           setStage('paired');
           setError('The direct connection was interrupted. Reconnect and try again.');
         }
       };
       const offer = await peer.createOffer();
+      if (transferRun !== transferRunRef.current) return;
       await peer.setLocalDescription(offer);
+      if (transferRun !== transferRunRef.current) return;
       sendSignal('offer', {
         type: offer.type,
         sdp: offer.sdp,
-        mediaKind: selectedMedia.kind,
+        mediaKind: queue[0].kind,
         transport: 'data-channel',
       });
     } catch (transferError) {
+      if (transferRun !== transferRunRef.current) return;
       closePeer();
+      queueRunningRef.current = false;
+      setQueueRunning(false);
       setStage('paired');
       setError(transferError instanceof Error ? transferError.message : 'Could not start the direct transfer.');
     }
   };
 
-  const sendPlaybackControl = (action: 'play' | 'pause') => {
+  const sendPlaybackControl = (action: string) => {
     const channel = controlChannelRef.current;
     if (channel?.readyState !== 'open') return;
     channel.send(action);
-    setPaused(action === 'pause');
+    if (action === 'play' || action === 'pause') setPaused(action === 'pause');
+  };
+
+  const showQueuePhoto = (index: number) => {
+    if (index < 0 || index >= sentQueueCount) return;
+    queueIndexRef.current = index;
+    setQueueIndex(index);
+    setSelectedMedia(mediaQueueRef.current[index] ?? selectedMedia);
+    sendPlaybackControl(`photo:show:${index}`);
   };
 
   const leaveRoom = () => {
     closePeer(true);
     setRoomId('');
     setSelectedMedia(null);
+    setMediaQueue([]);
+    mediaQueueRef.current = [];
+    queueRunningRef.current = false;
+    setQueueRunning(false);
+    setQueueIndex(0);
+    setSentQueueCount(0);
     setStage('join');
     setCode('');
     setSentBytes(0);
@@ -525,9 +672,15 @@ export default function HomeScreen() {
               <View style={[styles.connectedDot, { backgroundColor: stage === 'paired' ? activeColors.accent : activeColors.primary }]} />
               <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
             </View>
-            <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? 'It’s on the TV.' : 'Choose what to play.'}</Text>
+            <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
             <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>
-              {stage === 'sent' ? 'The TV starts playing automatically when the transfer finishes.' : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
+              {stage === 'sent'
+                ? mediaQueue.length > 1
+                  ? sentQueueCount === mediaQueue.length
+                    ? `${mediaQueue.length} photos sent in order.`
+                    : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
+                  : 'The TV starts playing automatically when the transfer finishes.'
+                : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
             {selectedMedia ? (
@@ -537,37 +690,70 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.mediaCopy}>
                   <Text numberOfLines={1} style={[styles.mediaName, { color: activeColors.foreground }]}>{selectedMedia.name}</Text>
-                  <Text style={[styles.mediaMeta, { color: activeColors.mutedForeground }]}>{selectedMedia.size ? formatBytes(selectedMedia.size) : selectedMedia.kind === 'video' ? 'Video' : 'Photo'}</Text>
+                  <Text style={[styles.mediaMeta, { color: activeColors.mutedForeground }]}>
+                    {mediaQueue.length > 1
+                      ? `Photo ${queueIndex + 1} of ${mediaQueue.length} · ${selectedMedia.size ? formatBytes(selectedMedia.size) : 'Photo'}`
+                      : selectedMedia.size ? formatBytes(selectedMedia.size) : selectedMedia.kind === 'video' ? 'Video' : 'Photo'}
+                  </Text>
                 </View>
-                <Pressable onPress={() => void pickMedia()} accessibilityLabel="Choose different media" testID="button-change-media">
+                <Pressable onPress={() => void (selectedMedia.kind === 'video' ? pickVideo() : pickPhotos())} accessibilityLabel="Choose different media" testID="button-change-media">
                   <Ionicons name="swap-horizontal-outline" size={21} color={activeColors.mutedForeground} />
                 </Pressable>
               </View>
             ) : (
-              <Pressable
-                onPress={() => void pickMedia()}
-                style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
-                testID="button-choose-media"
-              >
-                <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
-                  <Ionicons name="images-outline" size={23} color={activeColors.primary} />
-                </View>
-                <View style={styles.scanButtonCopy}>
-                  <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose photo or video</Text>
-                  <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>From your phone’s library</Text>
-                </View>
-                <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
-              </Pressable>
+              <>
+                <Pressable
+                  onPress={() => void pickPhotos()}
+                  style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
+                  testID="button-choose-photos"
+                >
+                  <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
+                    <Ionicons name="images-outline" size={23} color={activeColors.primary} />
+                  </View>
+                  <View style={styles.scanButtonCopy}>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose up to 30 photos</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Send them to the TV in order</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
+                </Pressable>
+                <Pressable
+                  onPress={() => void pickVideo()}
+                  style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
+                  testID="button-choose-video"
+                >
+                  <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
+                    <Ionicons name="videocam-outline" size={23} color={activeColors.primary} />
+                  </View>
+                  <View style={styles.scanButtonCopy}>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Choose a video</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Send one video to the TV</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
+                </Pressable>
+              </>
             )}
 
-            {(stage === 'sending' || stage === 'sent') && selectedMedia?.kind === 'video' && (
+            {(stage === 'sending' || stage === 'sent') && (selectedMedia?.kind === 'video' || mediaQueue.length > 1) && (
               <View style={[styles.progressTrack, { backgroundColor: activeColors.secondary }]} testID="transfer-progress">
                 <View style={[styles.progressFill, { backgroundColor: activeColors.primary, width: `${stage === 'sent' ? 100 : progress}%` }]} />
               </View>
             )}
             {stage === 'sending' && totalBytes ? (
-              <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{formatBytes(sentBytes)} of {formatBytes(totalBytes)} sent · keep this app open</Text>
+              <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
+                {mediaQueue.length > 1 ? `Photo ${queueIndex + 1} of ${mediaQueue.length} · ` : ''}
+                {formatBytes(sentBytes)} of {formatBytes(totalBytes)} sent · keep this app open
+              </Text>
             ) : null}
+            {queueRunning && stage === 'sending' && (
+              <Pressable
+                onPress={() => { queueRunningRef.current = false; setQueueRunning(false); }}
+                style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]}
+                testID="button-stop-photo-queue"
+              >
+                <Ionicons name="stop-outline" size={18} color={activeColors.foreground} />
+                <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Stop after this photo</Text>
+              </Pressable>
+            )}
 
             {stage === 'sent' && selectedMedia?.kind === 'video' && (
               <View style={styles.playbackRow}>
@@ -582,14 +768,55 @@ export default function HomeScreen() {
               </View>
             )}
 
-            {stage !== 'sending' && stage !== 'connecting' && stage !== 'sent' && selectedMedia && (
+            {stage === 'sent' && selectedMedia?.kind === 'image' && sentQueueCount > 1 && (
+              <>
+                <View style={styles.playbackRow} testID="photo-remote-navigation">
+                  <Pressable
+                    style={[styles.secondaryButton, { backgroundColor: activeColors.secondary, opacity: queueIndex === 0 ? 0.45 : 1 }]}
+                    onPress={() => showQueuePhoto(queueIndex - 1)}
+                    disabled={queueIndex === 0}
+                    accessibilityLabel="Previous photo on TV"
+                    testID="button-phone-photo-previous"
+                  >
+                    <Ionicons name="chevron-back" size={18} color={activeColors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Back</Text>
+                  </Pressable>
+                  <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{queueIndex + 1} / {sentQueueCount}</Text>
+                  <Pressable
+                    style={[styles.secondaryButton, { backgroundColor: activeColors.secondary, opacity: queueIndex >= sentQueueCount - 1 ? 0.45 : 1 }]}
+                    onPress={() => showQueuePhoto(queueIndex + 1)}
+                    disabled={queueIndex >= sentQueueCount - 1}
+                    accessibilityLabel="Next photo on TV"
+                    testID="button-phone-photo-next"
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Next</Text>
+                    <Ionicons name="chevron-forward" size={18} color={activeColors.foreground} />
+                  </Pressable>
+                </View>
+                <View style={styles.playbackRow} testID="photo-remote-zoom">
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:zoom-out')} accessibilityLabel="Zoom out on TV" testID="button-phone-photo-zoom-out">
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>−</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:zoom-reset')} accessibilityLabel="Reset TV photo zoom" testID="button-phone-photo-zoom-reset">
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Fit</Text>
+                  </Pressable>
+                  <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('photo:zoom-in')} accessibilityLabel="Zoom in on TV" testID="button-phone-photo-zoom-in">
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>+</Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+
+            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && (stage !== 'sent' || mediaQueue.length > 1) && (
               <Pressable
                 onPress={() => void startTransfer()}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
                 testID="button-send-to-tv"
               >
                 <Ionicons name="play" size={18} color={activeColors.primaryForeground} />
-                <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>Send to TV</Text>
+                <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
+                  {stage === 'sent' && mediaQueue.length > 1 ? `Replay ${mediaQueue.length} photos` : mediaQueue.length > 1 ? `Send ${mediaQueue.length} photos to TV` : 'Send to TV'}
+                </Text>
               </Pressable>
             )}
 
@@ -608,7 +835,7 @@ export default function HomeScreen() {
         <View style={[styles.privacyNote, { borderTopColor: activeColors.border }]}>
           <Ionicons name="shield-checkmark-outline" size={18} color={activeColors.primary} />
           <Text style={[styles.privacyText, { color: activeColors.mutedForeground }]}>
-            Pairing signals expire after 10 minutes. Photos and videos travel directly between devices and are not stored on the server. Keep both devices on the same Wi-Fi.
+            Pairing stays active while in use and expires after 4 hours without activity. Photos and videos travel directly between devices and are not stored on the server. Keep both devices on the same Wi-Fi.
           </Text>
         </View>
 

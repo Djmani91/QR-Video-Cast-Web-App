@@ -186,13 +186,6 @@ function PhoneJoinPage() {
   );
 }
 
-function readableExpiry(expiresAt: string) {
-  const date = new Date(expiresAt);
-  return Number.isNaN(date.getTime())
-    ? 'Temporary room'
-    : `Closes ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-}
-
 function useSignalSender(roomId: string) {
   const sendSignal = useSendCastRoomMessage();
   const sendRef = useRef(sendSignal.mutate);
@@ -203,6 +196,7 @@ function useSignalSender(roomId: string) {
 }
 
 const MAX_MEDIA_SIZE_BYTES = 256 * 1024 * 1024;
+const MAX_MEDIA_QUEUE_SIZE_BYTES = 256 * 1024 * 1024;
 const MEDIA_CHUNK_SIZE_BYTES = 32 * 1024;
 const DATA_CHANNEL_BUFFER_LIMIT_BYTES = 512 * 1024;
 
@@ -219,6 +213,35 @@ function getMediaMimeType(file: File, kind: MediaKind) {
   if (extension === 'webp') return 'image/webp';
   if (extension === 'gif') return 'image/gif';
   return 'image/jpeg';
+}
+
+async function preparePhotoForTransfer(file: File): Promise<File> {
+  if (file.type !== 'image/jpeg' || file.size < 1_500_000) return file;
+  const previewUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = previewUrl;
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error('This photo could not be prepared.'));
+    });
+    const largestSide = Math.max(image.naturalWidth, image.naturalHeight);
+    const scale = Math.min(1, 2560 / largestSide);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return file;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const compressed = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.84));
+    if (!compressed || compressed.size >= file.size) return file;
+    const baseName = file.name.replace(/\.[^.]+$/, '');
+    return new File([compressed], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(previewUrl);
+  }
 }
 
 async function waitForDataChannelBuffer(channel: RTCDataChannel) {
@@ -249,9 +272,12 @@ function TvPage() {
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
-  const mediaObjectUrlRef = useRef('');
-  const mediaTransferRef = useRef<{ mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[] } | null>(null);
-  const [receivedImageUrl, setReceivedImageUrl] = useState('');
+  const mediaObjectUrlsRef = useRef<string[]>([]);
+  const mediaTransferRef = useRef<{ name: string; mimeType: string; kind: MediaKind; size: number; received: number; chunks: ArrayBuffer[] } | null>(null);
+  const [receivedImages, setReceivedImages] = useState<{ url: string; name: string }[]>([]);
+  const receivedImagesRef = useRef<{ url: string; name: string }[]>([]);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imageZoom, setImageZoom] = useState(1);
   const [transferProgress, setTransferProgress] = useState<number | null>(null);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
@@ -264,7 +290,7 @@ function TvPage() {
       enabled: Boolean(roomId),
     },
   });
-  const messages = messagesQuery.data ?? [];
+  const messages = messagesQuery.data?.messages ?? [];
 
   const stopPeer = useCallback(() => {
     controlChannelRef.current?.close();
@@ -274,9 +300,12 @@ function TvPage() {
     peerRef.current = null;
     mediaTransferRef.current = null;
     setTransferProgress(null);
-    setReceivedImageUrl('');
-    if (mediaObjectUrlRef.current) URL.revokeObjectURL(mediaObjectUrlRef.current);
-    mediaObjectUrlRef.current = '';
+    receivedImagesRef.current = [];
+    setReceivedImages([]);
+    setCurrentImageIndex(0);
+    setImageZoom(1);
+    for (const objectUrl of mediaObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
+    mediaObjectUrlsRef.current = [];
     if (videoRef.current) {
       videoRef.current.srcObject = null;
       videoRef.current.removeAttribute('src');
@@ -326,6 +355,14 @@ function TvPage() {
     if (createRoomError) setError('A pairing room could not be created. Check your connection and try again.');
   }, [createRoomError]);
 
+  const serverExpiry = messagesQuery.data?.expiresAt;
+  useEffect(() => {
+    if (!roomId || !serverExpiry) return;
+    setRoom((current) => current?.id === roomId && current.expiresAt !== serverExpiry
+      ? { ...current, expiresAt: serverExpiry }
+      : current);
+  }, [roomId, serverExpiry]);
+
   useEffect(() => {
     if (!roomId) return;
     for (const signal of messages) {
@@ -355,9 +392,9 @@ function TvPage() {
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
                   if (typeof message.data === 'string') {
-                    let packet: { framecast?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                    let packet: { framecast?: string; name?: string; mimeType?: string; kind?: MediaKind; size?: number };
                     try {
-                      packet = JSON.parse(message.data) as { framecast?: string; mimeType?: string; kind?: MediaKind; size?: number };
+                      packet = JSON.parse(message.data) as { framecast?: string; name?: string; mimeType?: string; kind?: MediaKind; size?: number };
                     } catch {
                       setError('The phone sent an unreadable media transfer message.');
                       return;
@@ -369,6 +406,7 @@ function TvPage() {
                         return;
                       }
                       mediaTransferRef.current = {
+                        name: packet.name || `Photo ${receivedImagesRef.current.length + 1}`,
                         mimeType: packet.mimeType,
                         kind: packet.kind === 'image' ? 'image' : 'video',
                         size: packet.size,
@@ -386,19 +424,27 @@ function TvPage() {
                         return;
                       }
                       const url = URL.createObjectURL(new Blob(transfer.chunks, { type: transfer.mimeType }));
-                      if (mediaObjectUrlRef.current) URL.revokeObjectURL(mediaObjectUrlRef.current);
-                      mediaObjectUrlRef.current = url;
+                      mediaObjectUrlsRef.current.push(url);
                       if (transfer.kind === 'image') {
                         if (videoRef.current) {
                           videoRef.current.srcObject = null;
                           videoRef.current.removeAttribute('src');
                           videoRef.current.load();
                         }
-                        setReceivedImageUrl(url);
+                        const images = [...receivedImagesRef.current, { url, name: transfer.name }];
+                        receivedImagesRef.current = images;
+                        setReceivedImages(images);
+                        setImageZoom(1);
                         if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'displayed' }));
                       } else if (videoRef.current) {
-                        setReceivedImageUrl('');
+                        receivedImagesRef.current = [];
+                        setReceivedImages([]);
+                        setCurrentImageIndex(0);
+                        videoRef.current.pause();
                         videoRef.current.srcObject = null;
+                        videoRef.current.removeAttribute('src');
+                        videoRef.current.muted = true;
+                        setMuted(true);
                         videoRef.current.src = url;
                         videoRef.current.load();
                         void videoRef.current.play().then(() => {
@@ -406,7 +452,7 @@ function TvPage() {
                           if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'playing' }));
                         }).catch(() => {
                           setPlaying(false);
-                          setError('The TV received this video, but its browser could not play the file format. Try an MP4 video encoded with H.264.');
+                          setError('The TV received the video but could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
                           if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'received', playback: 'failed' }));
                         });
                       }
@@ -427,13 +473,32 @@ function TvPage() {
               } else {
                 controlChannelRef.current = channel;
                 channel.onmessage = (message) => {
-                  if (message.data === 'pause' && videoRef.current) {
+                  const command = String(message.data);
+                  if (command === 'photo:next') {
+                    setCurrentImageIndex((index) => Math.min(receivedImagesRef.current.length - 1, index + 1));
+                    setImageZoom(1);
+                  } else if (command === 'photo:previous') {
+                    setCurrentImageIndex((index) => Math.max(0, index - 1));
+                    setImageZoom(1);
+                  } else if (command.startsWith('photo:show:')) {
+                    const index = Number(command.slice('photo:show:'.length));
+                    if (Number.isInteger(index) && index >= 0 && index < receivedImagesRef.current.length) {
+                      setCurrentImageIndex(index);
+                      setImageZoom(1);
+                    }
+                  } else if (command === 'photo:zoom-in') {
+                    setImageZoom((zoom) => Math.min(4, Number((zoom + 0.25).toFixed(2))));
+                  } else if (command === 'photo:zoom-out') {
+                    setImageZoom((zoom) => Math.max(1, Number((zoom - 0.25).toFixed(2))));
+                  } else if (command === 'photo:zoom-reset') {
+                    setImageZoom(1);
+                  } else if (command === 'pause' && videoRef.current) {
                     videoRef.current.pause();
                     setPlaying(false);
-                  } else if (message.data === 'play' && videoRef.current) {
+                  } else if (command === 'play' && videoRef.current) {
                     void videoRef.current.play().catch(() => setPlaying(false));
                     setPlaying(true);
-                  } else if (message.data === 'stop' && videoRef.current) {
+                  } else if (command === 'stop' && videoRef.current) {
                     videoRef.current.pause();
                     videoRef.current.currentTime = 0;
                     setPlaying(false);
@@ -490,12 +555,14 @@ function TvPage() {
   }, [messages, roomId, send, stopPeer]);
 
   const startRoom = () => {
+    if (room) send('tv', 'close', { reason: 'new-room' });
+    stopPeer();
+    queuedCandidates.current = [];
     setError('');
+    setStatus('idle');
     createRoomMutation();
   };
   const reconnect = () => {
-    stopPeer();
-    setStatus('idle');
     startRoom();
   };
   const phoneUrl = room ? `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/send/${encodeURIComponent(room.id)}` : '';
@@ -548,8 +615,21 @@ function TvPage() {
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
             />
-            {status === 'connected' && mediaKind === 'image' && receivedImageUrl && (
-              <img className="image-preview" src={receivedImageUrl} alt="Photo shared from the guest phone" />
+            {status === 'connected' && mediaKind === 'image' && receivedImages[currentImageIndex] && (
+              <>
+                <img
+                  className="image-preview"
+                  src={receivedImages[currentImageIndex].url}
+                  alt={receivedImages[currentImageIndex].name}
+                  style={{ transform: `scale(${imageZoom})` }}
+                  data-testid="image-tv-current"
+                />
+                {receivedImages.length > 1 && (
+                  <div className="tv-photo-position" aria-live="polite" data-testid="text-tv-photo-position">
+                    Photo {currentImageIndex + 1} of {receivedImages.length}
+                  </div>
+                )}
+              </>
             )}
             {status === 'connected' && transferProgress !== null && transferProgress < 100 && (
               <div className="tv-transfer-status" role="status" data-testid="status-tv-transfer">
@@ -565,7 +645,7 @@ function TvPage() {
                   : <div className="qr-empty"><Smartphone size={28} /><span>{roomExpired ? 'This pairing code has expired' : 'Your pairing code will appear here'}</span></div>}
               </div>
             )}
-              <p className="pair-prompt">{status === 'connected' ? transferProgress !== null && transferProgress < 100 ? 'Receiving directly from the phone. Playback starts when the transfer is complete.' : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
+              <p className="pair-prompt">{status === 'connected' ? transferProgress !== null && transferProgress < 100 ? 'Receiving directly from the phone. Playback starts when the transfer is complete.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
             {!room || status === 'failed' || roomExpired ? (
               <button type="button" className="button-primary" onClick={startRoom} disabled={creatingRoom} data-testid="button-create-room">
                 {creatingRoom ? <RefreshCw size={16} className="animate-spin" /> : status === 'failed' || roomExpired ? <RefreshCw size={16} /> : <ArrowUpRight size={16} />}
@@ -577,6 +657,20 @@ function TvPage() {
                   {browserFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                   {browserFullscreen ? 'Exit full screen' : 'Full screen'}
                 </button>
+                {mediaKind === 'image' && receivedImages.length > 1 && <>
+                  <button className="button-secondary" type="button" onClick={() => {
+                    setCurrentImageIndex((index) => Math.max(0, index - 1));
+                    setImageZoom(1);
+                  }} aria-label="Previous photo" data-testid="button-tv-photo-previous">Previous</button>
+                  <span className="tv-photo-counter">{currentImageIndex + 1} / {receivedImages.length}</span>
+                  <button className="button-secondary" type="button" onClick={() => {
+                    setCurrentImageIndex((index) => Math.min(receivedImages.length - 1, index + 1));
+                    setImageZoom(1);
+                  }} aria-label="Next photo" data-testid="button-tv-photo-next">Next</button>
+                  <button className="button-secondary" type="button" onClick={() => setImageZoom((zoom) => Math.max(1, Number((zoom - 0.25).toFixed(2))))} aria-label="Zoom out" data-testid="button-tv-photo-zoom-out">−</button>
+                  <button className="button-secondary" type="button" onClick={() => setImageZoom(1)} aria-label="Reset zoom" data-testid="button-tv-photo-zoom-reset">Fit</button>
+                  <button className="button-secondary" type="button" onClick={() => setImageZoom((zoom) => Math.min(4, Number((zoom + 0.25).toFixed(2))))} aria-label="Zoom in" data-testid="button-tv-photo-zoom-in">+</button>
+                </>}
                 {mediaKind === 'video' && <>
                 <button className="button-secondary" type="button" onClick={() => {
                   const video = videoRef.current;
@@ -607,7 +701,7 @@ function TvPage() {
             ) : room ? (
               <button className="button-quiet" type="button" onClick={reconnect} data-testid="button-tv-new-room"><RefreshCw size={14} /> New room</button>
             ) : null}
-            {room && <div className="room-meta"><span>CODE <strong className="room-code" data-testid="text-room-code">{room.code}</strong></span><span data-testid="text-room-expiry">{roomExpired ? 'Room expired' : readableExpiry(room.expiresAt)}</span></div>}
+            {room && <div className="room-meta"><span>CODE <strong className="room-code" data-testid="text-room-code">{room.code}</strong></span><span data-testid="text-room-expiry">{roomExpired ? 'Room expired' : '4-hour idle timeout'}</span></div>}
             {room && status !== 'connected' && <div className="room-link" data-testid="text-room-link">{phoneUrl}</div>}
             <div className="status-row" role="status" aria-live="polite" data-testid="status-tv-connection">
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
@@ -630,7 +724,7 @@ function TvPage() {
           </section>
           <aside className="privacy-note">
             <LockKeyhole size={18} />
-              <div><strong>Same Wi-Fi, direct connection.</strong><p>Both devices need to be on the same Wi-Fi network. Pairing messages stay in memory for up to 10 minutes; the video or photo streams directly between devices.</p></div>
+              <div><strong>Same Wi-Fi, direct connection.</strong><p>Both devices need to be on the same Wi-Fi network. The room stays active while in use and expires after 4 hours without activity. Photos and videos travel directly between devices.</p></div>
           </aside>
         </div>
       </main>
@@ -640,6 +734,7 @@ function TvPage() {
 
 function PhonePage({ roomId }: { roomId?: string }) {
   const validRoomId = roomId ?? '';
+  const [, setLocation] = useLocation();
   const send = useSignalSender(validRoomId);
   const messagesQuery = useGetCastRoomMessages(validRoomId, {
     query: {
@@ -649,6 +744,9 @@ function PhonePage({ roomId }: { roomId?: string }) {
     },
   });
   const [file, setFile] = useState<File | null>(null);
+  const [fileQueue, setFileQueue] = useState<File[]>([]);
+  const [queueIndex, setQueueIndex] = useState(0);
+  const [sentQueueCount, setSentQueueCount] = useState(0);
   const [mediaKind, setMediaKind] = useState<MediaKind | null>(null);
   const [objectUrl, setObjectUrl] = useState('');
   const [status, setStatus] = useState<PeerStatus>('idle');
@@ -662,14 +760,18 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const controlChannelRef = useRef<RTCDataChannel | null>(null);
   const transferRunRef = useRef(0);
   const transferCompleteRef = useRef(false);
+  const mediaAckResolverRef = useRef<((playback: string) => void) | null>(null);
+  const fileQueueRef = useRef<File[]>([]);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<RTCIceCandidateInit[]>([]);
-  const messages = messagesQuery.data ?? [];
+  const messages = messagesQuery.data?.messages ?? [];
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
   const stopPeer = useCallback((sendClose = false) => {
     transferRunRef.current += 1;
     transferCompleteRef.current = true;
+    mediaAckResolverRef.current?.('interrupted');
+    mediaAckResolverRef.current = null;
     if (sendClose) send('phone', 'close', {});
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
@@ -680,10 +782,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
     peerRef.current = null;
   }, [send]);
 
+  useEffect(() => () => stopPeer(), [stopPeer]);
   useEffect(() => () => {
-    stopPeer();
     if (objectUrl) URL.revokeObjectURL(objectUrl);
-  }, [objectUrl, stopPeer]);
+  }, [objectUrl]);
 
   useEffect(() => {
     if (!validRoomId) return;
@@ -720,25 +822,55 @@ function PhonePage({ roomId }: { roomId?: string }) {
         }
       } else if (signal.type === 'close') {
         stopPeer();
+        if (signal.payload.reason === 'new-room') {
+          setLocation('/connect');
+          return;
+        }
         setStatus('disconnected');
-        setError('The TV ended the direct connection. You can send the media again to reconnect.');
+        setFile(null);
+        setFileQueue([]);
+        fileQueueRef.current = [];
+        setQueueIndex(0);
+        setSentQueueCount(0);
+        setMediaKind(null);
+        setProgress(0);
+        setSentToTv(false);
+        setError(signal.payload.reason === 'new-room'
+          ? 'The TV started a new room. Scan its new code to reconnect.'
+          : 'The TV ended the direct connection.');
       }
     }
-  }, [messages, stopPeer]);
+  }, [messages, setLocation, stopPeer]);
 
-  const chooseFile = (selected?: File) => {
-    if (!selected) return;
-    const selectedKind: MediaKind | null = selected.type.startsWith('video/')
-      ? 'video'
-      : selected.type.startsWith('image/') ? 'image' : null;
-    if (!selectedKind) {
-      setError('Choose a video or photo to send to the TV.');
+  const chooseFiles = (selected?: FileList | File[]) => {
+    if (!selected?.length) return;
+    const chosen = Array.from(selected);
+    if (chosen.length > 30) {
+      setError('Choose up to 30 photos at a time.');
       return;
     }
+    const selectedKinds = chosen.map((item) => item.type.startsWith('video/')
+      ? 'video'
+      : item.type.startsWith('image/') ? 'image' : null);
+    if (selectedKinds.some((kind) => kind === null)
+      || selectedKinds.some((kind) => kind !== selectedKinds[0])
+      || (selectedKinds[0] === 'video' && chosen.length > 1)) {
+      setError('Choose up to 30 photos together, or choose one video.');
+      return;
+    }
+    if (chosen.reduce((total, item) => total + item.size, 0) > MAX_MEDIA_QUEUE_SIZE_BYTES) {
+      setError('The selected photos must total 256 MB or less. Choose fewer photos.');
+      return;
+    }
+    const selectedKind = selectedKinds[0] as MediaKind;
     stopPeer(Boolean(peerRef.current));
     if (objectUrl) URL.revokeObjectURL(objectUrl);
-    const nextUrl = URL.createObjectURL(selected);
-    setFile(selected);
+    const nextUrl = URL.createObjectURL(chosen[0]);
+    fileQueueRef.current = chosen;
+    setFileQueue(chosen);
+    setQueueIndex(0);
+    setSentQueueCount(0);
+    setFile(chosen[0]);
     setMediaKind(selectedKind);
     setObjectUrl(nextUrl);
     setStatus('paired');
@@ -748,22 +880,27 @@ function PhonePage({ roomId }: { roomId?: string }) {
   };
 
   const connect = async () => {
-    if (!file || !mediaKind) {
-      setError('Choose a video or photo first, then connect to the TV.');
+    const queuedFiles = fileQueueRef.current.length ? fileQueueRef.current : file ? [file] : [];
+    if (!queuedFiles.length || !mediaKind) {
+      setError('Choose photos or a video first, then connect to the TV.');
       return;
     }
-    if (file.size <= 0) {
-      setError('This file is empty. Choose a different photo or video.');
-      return;
-    }
-    if (file.size > MAX_MEDIA_SIZE_BYTES) {
-      setError('This first version supports files up to 256 MB. Choose a smaller video or photo.');
-      return;
+    for (const selected of queuedFiles) {
+      if (selected.size <= 0) {
+        setError('One of the selected files is empty. Choose it again and retry.');
+        return;
+      }
+      if (selected.size > MAX_MEDIA_SIZE_BYTES) {
+        setError('Files must be under 256 MB each. Choose a smaller video or photo.');
+        return;
+      }
     }
     setError('');
     setStatus('connecting');
     setProgress(0);
     setSentToTv(false);
+    setQueueIndex(0);
+    setSentQueueCount(0);
     stopPeer();
     queuedCandidates.current = [];
     transferCompleteRef.current = false;
@@ -782,12 +919,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
         try {
           const packet = JSON.parse(event.data) as { framecast?: string; playback?: string };
           if (packet.framecast === 'received') {
-            transferCompleteRef.current = true;
-            setProgress(100);
-            setSentToTv(true);
             if (packet.playback === 'failed') {
-              setError('The file reached the TV, but its browser could not play this format. Try an MP4 video encoded with H.264.');
+              setError('The video reached the TV, but its browser could not play it. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
             }
+            const resolve = mediaAckResolverRef.current;
+            mediaAckResolverRef.current = null;
+            resolve?.(packet.playback ?? 'displayed');
           }
         } catch {
           setError('The TV returned an unreadable transfer response. Try sending the file again.');
@@ -798,33 +935,74 @@ function PhonePage({ roomId }: { roomId?: string }) {
         setStatus('connected');
         void (async () => {
           try {
-            const mimeType = getMediaMimeType(file, mediaKind);
-            mediaChannel.send(JSON.stringify({
-              framecast: 'metadata',
-              name: file.name,
-              mimeType,
-              kind: mediaKind,
-              size: file.size,
-            }));
-            let lastProgressUpdate = 0;
-            for (let offset = 0; offset < file.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
+            for (let index = 0; index < queuedFiles.length; index += 1) {
               if (transferRun !== transferRunRef.current) return;
+              const selected = queuedFiles[index];
+              const kind: MediaKind = selected.type.startsWith('video/') ? 'video' : 'image';
+              setQueueIndex(index);
+              setFile(selected);
+              setMediaKind(kind);
+              const nextUrl = URL.createObjectURL(selected);
+              setObjectUrl(nextUrl);
+              const outgoing = kind === 'image' ? await preparePhotoForTransfer(selected) : selected;
+              if (transferRun !== transferRunRef.current) return;
+              setProgress(0);
+              const mimeType = getMediaMimeType(outgoing, kind);
+              mediaChannel.send(JSON.stringify({
+                framecast: 'metadata',
+                name: outgoing.name,
+                mimeType,
+                kind,
+                size: outgoing.size,
+              }));
+              let lastProgressUpdate = 0;
+              for (let offset = 0; offset < outgoing.size; offset += MEDIA_CHUNK_SIZE_BYTES) {
+                if (transferRun !== transferRunRef.current) return;
+                await waitForDataChannelBuffer(mediaChannel);
+                const chunk = await outgoing.slice(offset, Math.min(offset + MEDIA_CHUNK_SIZE_BYTES, outgoing.size)).arrayBuffer();
+                if (transferRun !== transferRunRef.current) return;
+                mediaChannel.send(chunk);
+                const sentBytes = Math.min(offset + chunk.byteLength, outgoing.size);
+                const now = Date.now();
+                if (now - lastProgressUpdate > 120 || sentBytes === outgoing.size) {
+                  setProgress(Math.min(99, Math.round((sentBytes / outgoing.size) * 100)));
+                  lastProgressUpdate = now;
+                }
+              }
+              const acknowledgement = new Promise<string>((resolve, reject) => {
+                const timeout = window.setTimeout(() => {
+                  mediaAckResolverRef.current = null;
+                  reject(new Error('The TV did not confirm the file. Check that its screen is awake and try again.'));
+                }, 60_000);
+                mediaAckResolverRef.current = (playback) => {
+                  window.clearTimeout(timeout);
+                  resolve(playback);
+                };
+              });
               await waitForDataChannelBuffer(mediaChannel);
-              const chunk = await file.slice(offset, Math.min(offset + MEDIA_CHUNK_SIZE_BYTES, file.size)).arrayBuffer();
+              mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
+              const playback = await acknowledgement;
               if (transferRun !== transferRunRef.current) return;
-              mediaChannel.send(chunk);
-              const sentBytes = Math.min(offset + chunk.byteLength, file.size);
-              const now = Date.now();
-              if (now - lastProgressUpdate > 120 || sentBytes === file.size) {
-                setProgress(Math.min(99, Math.round((sentBytes / file.size) * 100)));
-                lastProgressUpdate = now;
+              if (playback === 'failed') {
+                throw new Error('The TV browser cannot play this video format. Try standard H.264 MP4 at 30 or 60 fps; some HEVC or high-frame-rate videos are not supported by TV browsers.');
+              }
+              setSentQueueCount(index + 1);
+              setProgress(100);
+              if (index < queuedFiles.length - 1) {
+                await new Promise((resolve) => window.setTimeout(resolve, 1600));
               }
             }
-            await waitForDataChannelBuffer(mediaChannel);
-            if (transferRun === transferRunRef.current) {
-              mediaChannel.send(JSON.stringify({ framecast: 'complete' }));
-              setProgress(99);
+            if (transferRun !== transferRunRef.current) return;
+            transferCompleteRef.current = true;
+            setSentQueueCount(queuedFiles.length);
+            if (queuedFiles.length > 1) {
+              setQueueIndex(0);
+              setFile(queuedFiles[0]);
+              setMediaKind('image');
+              setObjectUrl(URL.createObjectURL(queuedFiles[0]));
             }
+            setProgress(100);
+            setSentToTv(true);
           } catch (transferError) {
             if (transferRun !== transferRunRef.current) return;
             setStatus('failed');
@@ -868,22 +1046,46 @@ function PhonePage({ roomId }: { roomId?: string }) {
     }
   };
 
+  const sendPhotoControl = (action: string) => {
+    const channel = controlChannelRef.current;
+    if (channel?.readyState === 'open') channel.send(action);
+  };
+
+  const showQueuePhoto = (index: number) => {
+    if (index < 0 || index >= sentQueueCount) return;
+    const selected = fileQueueRef.current[index];
+    if (!selected) return;
+    setQueueIndex(index);
+    setFile(selected);
+    setMediaKind('image');
+    setObjectUrl(URL.createObjectURL(selected));
+    sendPhotoControl(`photo:show:${index}`);
+  };
+
   const disconnect = () => {
     stopPeer(true);
-    setStatus('disconnected');
+    fileQueueRef.current = [];
+    setFileQueue([]);
+    setFile(null);
+    setMediaKind(null);
     setProgress(0);
     setSentToTv(false);
     setError('');
+    setLocation('/connect');
   };
 
   const statusCopy = status === 'connected'
     ? sentToTv
       ? error
         ? 'Connected. The TV received the file but could not play it.'
-        : `Connected. Your ${mediaKind === 'image' ? 'photo is on' : 'video is playing on'} the TV.`
+        : fileQueue.length > 1
+          ? `All ${fileQueue.length} photos are shown on the TV.`
+          : `Connected. Your ${mediaKind === 'image' ? 'photo is on' : 'video is playing on'} the TV.`
       : progress >= 99
         ? 'Connected. Waiting for the TV to finish opening the file…'
-        : `Connected. Sending your ${mediaKind === 'image' ? 'photo' : 'video'} to the TV${progress ? ` · ${progress}%` : '…'}`
+        : fileQueue.length > 1
+          ? `Sending photo ${queueIndex + 1} of ${fileQueue.length}${progress ? ` · ${progress}%` : '…'}`
+          : `Connected. Sending your ${mediaKind === 'image' ? 'photo' : 'video'} to the TV${progress ? ` · ${progress}%` : '…'}`
     : status === 'connecting'
       ? 'Connecting directly to the TV… Keep this page open.'
       : status === 'paired'
@@ -904,7 +1106,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
           <div className="phone-heading">
             <span className="eyebrow">You’re joining a FrameCast screen</span>
             <h1>Send it to the TV.</h1>
-            <p>Choose a video or photo on this phone. It sends directly to the TV—your file stays right here. Keep both devices on the same Wi-Fi network.</p>
+          <p>Select up to 30 photos at once, or choose one video. Files go directly to the TV and stay on this phone. Keep both devices on the same Wi-Fi network.</p>
           </div>
           <div className="phone-card">
             {file && objectUrl ? (
@@ -927,14 +1129,17 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 ) : (
                   <img className="video-preview photo-preview" src={objectUrl} alt={`Selected photo: ${file.name}`} data-testid="image-local-preview" />
                 )}
-                <div className="file-details"><strong data-testid="text-selected-file">{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(1)} MB</span></div>
-                <button type="button" className="button-quiet" onClick={() => document.getElementById('video-file-input')?.click()} data-testid="button-change-content"><RefreshCw size={14} /> Choose different content</button>
+                <div className="file-details">
+                  <strong data-testid="text-selected-file">{fileQueue.length > 1 ? `Photo ${queueIndex + 1} of ${fileQueue.length}` : file.name}</strong>
+                  <span>{(file.size / 1024 / 1024).toFixed(1)} MB{fileQueue.length > 1 ? ` · ${fileQueue.length} photos selected` : ''}</span>
+                </div>
+                <button type="button" className="button-quiet" onClick={() => document.getElementById('video-file-input')?.click()} data-testid="button-change-content"><RefreshCw size={14} /> Change selection</button>
               </>
             ) : (
               <label className="dropzone" htmlFor="video-file-input" data-testid="control-content-picker">
                 <span className="drop-icon"><FileVideo2 size={22} /><ImageIcon size={17} /></span>
-                <strong>Choose a photo or video</strong>
-                <span>Media stays on your phone and is sent directly to the TV</span>
+                <strong>Choose up to 30 photos, or one video</strong>
+                <span>Photos are sent in order without reopening the library</span>
               </label>
             )}
             <input
@@ -942,8 +1147,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
               className="hidden-file"
               type="file"
               accept="video/*,image/*"
-              onChange={(event) => chooseFile(event.currentTarget.files?.[0])}
-              aria-label="Choose a photo or video"
+              multiple
+              onChange={(event) => {
+                chooseFiles(event.currentTarget.files ?? undefined);
+                event.currentTarget.value = '';
+              }}
+              aria-label="Choose up to 30 photos or one video"
               data-testid="input-content-file"
             />
             {file && status === 'connected' && (
@@ -951,21 +1160,23 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 <span className="status-dot live" />
                 <span className="status-text">
                   {sentToTv
-                    ? error ? 'TV received the file but could not play it.' : `${mediaKind === 'image' ? 'Photo shown' : 'Video playing'} on TV.`
+                    ? error ? 'TV received the file but could not play it.' : fileQueue.length > 1 ? `${fileQueue.length} photos shown on TV.` : `${mediaKind === 'image' ? 'Photo shown' : 'Video playing'} on TV.`
                     : progress >= 99
                       ? 'Transfer complete. Waiting for the TV to open the file…'
-                      : `Connected · sending ${mediaKind === 'image' ? 'photo' : 'video'}${progress ? ` · ${progress}%` : '…'}`}
+                      : fileQueue.length > 1
+                        ? `Sending photo ${queueIndex + 1} of ${fileQueue.length}${progress ? ` · ${progress}%` : '…'}`
+                        : `Connected · sending ${mediaKind === 'image' ? 'photo' : 'video'}${progress ? ` · ${progress}%` : '…'}`}
                 </span>
               </div>
             )}
             <div className="phone-actions">
               {file && (
-                <button type="button" className="button-primary" onClick={connect} disabled={status === 'connecting' || status === 'connected'} data-testid="button-connect-tv">
+                <button type="button" className="button-primary" onClick={connect} disabled={status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
                   {status === 'connecting' ? <RefreshCw size={16} className="animate-spin" /> : status === 'connected' ? <Check size={16} /> : <ArrowUpRight size={16} />}
                   {status === 'connecting'
                     ? 'Connecting…'
                     : status === 'connected'
-                      ? sentToTv ? (mediaKind === 'image' ? 'Photo sent to TV' : 'Sent to TV') : 'Sending to TV…'
+                      ? sentToTv ? fileQueue.length > 1 ? `Replay ${fileQueue.length} photos` : mediaKind === 'image' ? 'Photo sent to TV' : 'Sent to TV' : 'Sending to TV…'
                       : status === 'failed' || status === 'disconnected'
                         ? 'Try again'
                         : mediaKind === 'image' ? 'Show photo on TV' : 'Play video on TV'}
@@ -980,6 +1191,20 @@ function PhonePage({ roomId }: { roomId?: string }) {
                 {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{muted ? 'Preview muted' : 'Preview sound on'}
               </button>}
             </div>
+            {sentToTv && mediaKind === 'image' && sentQueueCount > 1 && (
+              <div className="photo-remote-controls" data-testid="photo-remote-controls">
+                <div className="photo-remote-navigation">
+                  <button type="button" className="button-secondary" onClick={() => showQueuePhoto(queueIndex - 1)} disabled={queueIndex === 0} aria-label="Previous photo on TV" data-testid="button-phone-photo-previous">Back</button>
+                  <span aria-live="polite">{queueIndex + 1} / {sentQueueCount}</span>
+                  <button type="button" className="button-secondary" onClick={() => showQueuePhoto(queueIndex + 1)} disabled={queueIndex >= sentQueueCount - 1} aria-label="Next photo on TV" data-testid="button-phone-photo-next">Next</button>
+                </div>
+                <div className="photo-remote-navigation">
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-out')} aria-label="Zoom out on TV" data-testid="button-phone-photo-zoom-out">−</button>
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-reset')} aria-label="Fit photo on TV" data-testid="button-phone-photo-zoom-reset">Fit</button>
+                  <button type="button" className="button-secondary" onClick={() => sendPhotoControl('photo:zoom-in')} aria-label="Zoom in on TV" data-testid="button-phone-photo-zoom-in">+</button>
+                </div>
+              </div>
+            )}
             <div className="status-row phone-status" role="status" aria-live="polite" data-testid="status-phone-connection">
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
@@ -988,7 +1213,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
             {error && <div className="error-banner" role="alert" data-testid="text-phone-error">{error}</div>}
             {messagesQuery.isError && <div className="error-banner" role="alert" data-testid="text-phone-poll-error">We can’t reach this pairing room right now. Make sure the TV page is still open.</div>}
           </div>
-          <div className="phone-footer"><LockKeyhole size={14} /> Photos and videos are never uploaded. Pairing signals are temporary and cleared after 10 minutes.</div>
+          <div className="phone-footer"><LockKeyhole size={14} /> Photos and videos are never uploaded. Pairing stays active while in use and expires after 4 hours without activity.</div>
         </section>
       </main>
     </div>

@@ -61,7 +61,8 @@ export const GetCastRoomMessagesParams = zod.object({
   "roomId": zod.coerce.string().uuid()
 })
 
-export const GetCastRoomMessagesResponseItem = zod.object({
+export const GetCastRoomMessagesResponse = zod.object({
+  "messages": zod.array(zod.object({
   "sequence": zod.number().int(),
   "from": zod.enum(['tv', 'phone']),
   "type": zod.enum(['offer', 'answer', 'ice', 'ready', 'close']),
@@ -75,8 +76,9 @@ export const GetCastRoomMessagesResponseItem = zod.object({
   "sdpMLineIndex": zod.number().int().nullish(),
   "usernameFragment": zod.string().nullish()
 })
+})),
+  "expiresAt": zod.coerce.date()
 })
-export const GetCastRoomMessagesResponse = zod.array(GetCastRoomMessagesResponseItem)
 
 
 /**

@@ -12,10 +12,12 @@ import {
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
-const ROOM_TTL_MS = 10 * 60 * 1000;
+const ROOM_IDLE_TTL_MS = 4 * 60 * 60 * 1000;
+const EXPIRY_DISPLAY_BUCKET_MS = 60 * 1000;
 const MAX_ACTIVE_ROOMS = 500;
-const MAX_MESSAGES_PER_ROOM = 64;
+const MAX_MESSAGES_PER_ROOM = 512;
 const MAX_SIGNAL_BYTES = 64 * 1024;
+const MAX_SIGNAL_HISTORY_BYTES = 512 * 1024;
 
 type Role = "tv" | "phone";
 type SignalType = "offer" | "answer" | "ice" | "ready" | "close";
@@ -33,6 +35,7 @@ type Room = {
   expiresAt: number;
   nextSequence: number;
   messages: Signal[];
+  signalBytes: number;
 };
 
 const rooms = new Map<string, Room>();
@@ -51,6 +54,12 @@ function clearExpiredRooms(now = Date.now()): void {
       lookupAttempts.delete(ip);
     }
   }
+}
+
+function refreshRoomExpiry(room: Room, now = Date.now()): string {
+  room.expiresAt = now + ROOM_IDLE_TTL_MS;
+  const displayExpiry = Math.ceil(room.expiresAt / EXPIRY_DISPLAY_BUCKET_MS) * EXPIRY_DISPLAY_BUCKET_MS;
+  return new Date(displayExpiry).toISOString();
 }
 
 function createUniqueCode(): string {
@@ -88,8 +97,8 @@ router.post("/cast/rooms", (_req, res): void => {
 
   const id = randomUUID();
   const code = createUniqueCode();
-  const expiresAt = Date.now() + ROOM_TTL_MS;
-  rooms.set(id, { id, code, expiresAt, nextSequence: 1, messages: [] });
+  const expiresAt = Date.now() + ROOM_IDLE_TTL_MS;
+  rooms.set(id, { id, code, expiresAt, nextSequence: 1, messages: [], signalBytes: 0 });
   roomIdsByCode.set(code, id);
 
   res.status(201).json(
@@ -115,11 +124,13 @@ router.post("/cast/rooms/lookup", (req, res): void => {
   }
 
   const roomId = roomIdsByCode.get(parsed.data.code);
-  if (!roomId || !rooms.has(roomId)) {
+  const room = roomId ? rooms.get(roomId) : undefined;
+  if (!room) {
     res.status(404).json({ error: "That code is invalid or has expired." });
     return;
   }
 
+  refreshRoomExpiry(room);
   res.json(LookupCastRoomByCodeResponse.parse({ roomId }));
 });
 
@@ -137,7 +148,8 @@ router.get("/cast/rooms/:roomId/messages", (req, res): void => {
     return;
   }
 
-  res.json(GetCastRoomMessagesResponse.parse(room.messages));
+  const expiresAt = refreshRoomExpiry(room);
+  res.json(GetCastRoomMessagesResponse.parse({ messages: room.messages, expiresAt }));
 });
 
 router.post("/cast/rooms/:roomId/messages", (req, res): void => {
@@ -160,13 +172,14 @@ router.post("/cast/rooms/:roomId/messages", (req, res): void => {
     return;
   }
 
-  if (Buffer.byteLength(JSON.stringify(parsed.data.payload), "utf8") > MAX_SIGNAL_BYTES) {
+  const signalBytes = Buffer.byteLength(JSON.stringify(parsed.data.payload), "utf8");
+  if (signalBytes > MAX_SIGNAL_BYTES) {
     res.status(413).json({ error: "Connection message is too large." });
     return;
   }
 
-  if (room.messages.length >= MAX_MESSAGES_PER_ROOM) {
-    res.status(429).json({ error: "This casting room has reached its message limit." });
+  if (room.messages.length >= MAX_MESSAGES_PER_ROOM || room.signalBytes + signalBytes > MAX_SIGNAL_HISTORY_BYTES) {
+    res.status(429).json({ error: "This room has reached its connection-message limit. Create a fresh room to continue." });
     return;
   }
 
@@ -177,6 +190,8 @@ router.post("/cast/rooms/:roomId/messages", (req, res): void => {
     payload: parsed.data.payload as Record<string, unknown>,
   };
   room.messages.push(signal);
+  room.signalBytes += signalBytes;
+  refreshRoomExpiry(room);
 
   res.status(201).json(SendCastRoomMessageResponse.parse({ sequence: signal.sequence }));
 });

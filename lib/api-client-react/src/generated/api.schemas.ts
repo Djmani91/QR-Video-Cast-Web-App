@@ -98,6 +98,11 @@ export interface CastSignal {
   payload: CastSignalPayload;
 }
 
+export interface CastRoomMessagesResponse {
+  messages: CastSignal[];
+  expiresAt: string;
+}
+
 export interface CastSignalInput {
   from: CastRole;
   type: CastSignalType;
