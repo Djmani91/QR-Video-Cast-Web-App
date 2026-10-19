@@ -15,7 +15,13 @@ The user confirmed video fullscreen works on their Samsung TV; the model was not
 
 **Why:** The user then showed sideways video despite working fullscreen. A TV's native media overlay can bypass CSS transforms, and fragmented-video rotation metadata is not handled consistently across TV players. Genuine portrait footage must not be stretched to landscape.
 
-**How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. When correcting orientation in the receiver, use a fullscreen playback container that retains the transform and upright controls. Retain a manual Rotate fallback for missing metadata. Do not claim the photo or orientation correction is confirmed on hardware until the user verifies it.
+**How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. The user reports correct laptop rendering but sideways Samsung rendering, so desktop CSS-transform checks are not proof of TV compatibility. Use decoded-pixel drawing in a fullscreen playback container for correction/cropping, keeping upright controls. Retain native playback for already-wide, unrotated footage and manual Rotate for missing metadata. Do not claim hardware compatibility until verified on the TV.
+
+The user wants videos to show horizontally and fill the TV screen. Default to Fill TV screen, keeping the picture upright and center-cropping portrait footage rather than stretching it or turning people sideways. Offer Fit whole video to restore the complete picture.
+
+**Why:** The user explicitly clarified that a narrow vertical picture is not the desired TV presentation, even when upright.
+
+**How to apply:** Treat orientation and aspect-ratio fill as separate controls. Explain that wide-screen filling of portrait footage crops the top/bottom; preserve the original media and make this display choice reversible.
 
 Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
 
