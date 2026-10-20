@@ -9,6 +9,12 @@ FrameCast supports photos and videos selected from the phone, direct video URLs,
 
 **How to apply:** For YouTube, pass the ordinary video URL to the TV and use YouTube's official embedded player; the TV connects to YouTube directly. Do not extract signed streams, proxy, or store media. Explain embedding, sign-in, autoplay, and TV-browser restrictions. Other video URLs stay source-to-TV. Native phone video still prefers local Wi-Fi byte-range playback. Phone-browser file playback uses real-time phone-side rendering; do not silently fall back to whole-film remuxing or transfer when its source stream is unavailable. Keep the phone visible while rendering; do not promise arbitrary codec support or uninterrupted background capture.
 
+Android website detection is an Android-only in-app browser that scans the top-level page's ordinary HTML video/source elements and public video metadata for HTTP(S) URLs. It does not inspect cross-origin frames or reverse-engineer blob, MSE, DRM, or hidden service streams. The TV fetches a user-selected source directly; the app must not upload or proxy media. Use a temporary/incognito WebView with caching disabled.
+
+**Why:** The user chose an Android in-app browser detector to find site videos while keeping FrameCast's peer-to-peer/no-media-storage model. Generic extraction cannot reliably cover every site, and hidden stream extraction would undermine the agreed privacy and compatibility boundaries.
+
+**How to apply:** Keep detection limited to openly exposed HTTP(S) sources, retain the official YouTube player path, and state when a site does not expose a TV-shareable source. For services such as TikTok that do not expose direct URLs, use an official player integration rather than scraping or bypassing protection.
+
 Keep a phone-hosted HTTP receiver on the same origin as its local HTTP media, instead of embedding local HTTP video inside the cloud HTTPS page.
 
 **Why:** Browser mixed-content restrictions can otherwise block an apparently valid local video URL. The user's comparison recording demonstrates the desired browser playback experience, but does not prove universal codec support or zero buffering.

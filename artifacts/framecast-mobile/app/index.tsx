@@ -36,6 +36,7 @@ import {
 import { useColors } from '@/hooks/useColors';
 import { CastTabs, type CastTab } from '@/components/CastTabs';
 import { AppSettings } from '@/components/AppSettings';
+import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
@@ -307,6 +308,7 @@ export default function HomeScreen() {
   const [error, setError] = useState('');
   const [transferNotice, setTransferNotice] = useState('');
   const [videoLink, setVideoLink] = useState('');
+  const [videoBrowserOpen, setVideoBrowserOpen] = useState(false);
   const [castTab, setCastTab] = useState<CastTab>('url');
   const [videoLinkError, setVideoLinkError] = useState('');
   const [checkingVideoLink, setCheckingVideoLink] = useState(false);
@@ -1371,6 +1373,20 @@ export default function HomeScreen() {
   const progress = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
   const activeColors = colors;
 
+  if (videoBrowserOpen && Platform.OS === 'android') {
+    return (
+      <VideoBrowser
+        initialUrl={videoLink}
+        onClose={() => setVideoBrowserOpen(false)}
+        onPlayVideo={(url) => {
+          setVideoLink(url);
+          setVideoBrowserOpen(false);
+          void startTransfer(url);
+        }}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: activeColors.background, paddingTop: Platform.OS === 'web' ? Math.max(insets.top, 67) : 0, paddingBottom: Platform.OS === 'web' ? Math.max(insets.bottom, 34) : 0 }]} testID="screen-framecast-mobile">
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -1638,6 +1654,23 @@ export default function HomeScreen() {
                   {checkingVideoLink ? <ActivityIndicator color={activeColors.primaryForeground} /> : <Ionicons name="play-outline" size={18} color={activeColors.primaryForeground} />}
                   <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>{checkingVideoLink ? 'Checking link…' : 'Play on TV'}</Text>
                 </Pressable>
+                {Platform.OS === 'android' ? (
+                  <Pressable
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setVideoLinkError('');
+                      setVideoBrowserOpen(true);
+                    }}
+                    disabled={checkingVideoLink}
+                    style={({ pressed }) => [styles.secondaryButton, { backgroundColor: activeColors.secondary, opacity: checkingVideoLink ? 0.5 : pressed ? 0.82 : 1 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Browse a website and detect a video"
+                    testID="button-open-video-browser"
+                  >
+                    <Ionicons name="globe-outline" size={17} color={activeColors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Browse & detect video</Text>
+                  </Pressable>
+                ) : null}
                 {videoLinkError ? (
                   <>
                     <Text style={[styles.urlHelp, { color: activeColors.accent }]} accessibilityRole="alert">{videoLinkError}</Text>
