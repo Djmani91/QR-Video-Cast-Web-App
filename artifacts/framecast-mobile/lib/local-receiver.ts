@@ -24,6 +24,7 @@ try{
  if(endpoint.protocol!=='https:' || new URL(config.returnUrl).origin!==endpoint.origin) throw Error();
 }catch(e){document.getElementById('notice').textContent='Invalid pairing address.';return;}
 var video=document.getElementById('video'),bar=document.getElementById('bar'),notice=document.getElementById('notice');
+video.style.objectFit='contain';
 var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='';
 var session=config.sessionId,fullscreenAttempted=false,fullscreenDenied=false;
 function post(type,payload){
@@ -67,6 +68,7 @@ function command(action){
  else if(action.indexOf('video:seek-by:')===0){var d=Number(action.slice(14));if(isFinite(d))video.currentTime=Math.max(0,Math.min(video.duration||Infinity,video.currentTime+d));}
  else if(action.indexOf('video:volume:')===0){var v=Number(action.slice(13));if(isFinite(v)){video.volume=Math.min(1,Math.max(0,v));video.muted=v===0;}}
  else if(action==='video:mute')video.muted=!video.muted;
+  else if(action==='video:fit:contain')video.style.objectFit='contain';
  else if(action==='video:fullscreen')fullscreen();
  state();
 }

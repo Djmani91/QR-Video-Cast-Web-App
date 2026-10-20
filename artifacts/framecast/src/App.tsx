@@ -1560,10 +1560,10 @@ function TvPage() {
                 channel.onmessage = (message) => {
                   if (peerRef.current !== peer) return;
                   const command = String(message.data);
-                  if (command === 'fullscreen:enter' || command === 'fullscreen:exit') {
+                  if (command === 'fullscreen:enter' || command === 'fullscreen:exit' || command === 'video:fullscreen') {
                     const video = videoRef.current;
                     const source = video?.srcObject || video?.currentSrc || video?.src;
-                    const entering = command === 'fullscreen:enter';
+                    const entering = command !== 'fullscreen:exit';
                     if (entering) autoFullscreen.allow(source);
                     else autoFullscreen.dismiss(source);
                     const request = entering

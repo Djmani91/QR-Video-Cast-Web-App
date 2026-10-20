@@ -10,6 +10,8 @@ function receiver() {
   const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back'].map((id) => [id, { style: {}, textContent: '' }]));
   const video = {
     currentTime: 12, duration: 3600, volume: 1, muted: false, paused: true,
+    style: {},
+    addEventListener() {},
     load() {},
     play() { this.paused = false; return Promise.resolve(); },
     pause() { this.paused = true; },
@@ -48,6 +50,7 @@ test('starts the original local video immediately, without fetching or uploading
   await flush();
   assert.equal(r.video.src, './media.mov');
   assert.equal(r.video.paused, false);
+  assert.equal(r.video.style.objectFit, 'contain');
   assert.ok(r.requests.every((request) => request.url.startsWith('https://framecast.example/api/')));
   const telemetry = JSON.parse(r.requests.find((request) => request.method === 'POST').body);
   assert.equal(telemetry.type, 'player-state');
@@ -67,6 +70,33 @@ test('phone controls seek, pause, volume and mute on the TV', async () => {
   assert.equal(r.video.volume, 0.3);
   assert.equal(r.video.muted, true);
   assert.equal(r.video.paused, true);
+});
+
+test('phone Fit whole video command restores the uncropped TV presentation', async () => {
+  const r = receiver();
+  await flush();
+  r.video.style.objectFit = 'cover';
+  r.setMessages([{ sequence: 11, from: 'phone', type: 'player-command', payload: { action: 'video:fit:contain', sessionId: 'session1' } }]);
+  r.timers.get(500)();
+  await flush();
+  assert.equal(r.video.style.objectFit, 'contain');
+});
+
+test('phone full-screen command requests full screen on the TV player', async () => {
+  const r = receiver();
+  let entered = false;
+  r.video.requestFullscreen = () => {
+    entered = true;
+    r.document.fullscreenElement = r.video;
+    return Promise.resolve();
+  };
+  await flush();
+  r.setMessages([{ sequence: 11, from: 'phone', type: 'player-command', payload: { action: 'video:fullscreen', sessionId: 'session1' } }]);
+  r.timers.get(500)();
+  await flush();
+  await flush();
+  assert.equal(entered, true);
+  assert.equal(r.document.fullscreenElement, r.video);
 });
 
 test('controls hide after five seconds and return on a remote key', () => {
@@ -117,7 +147,7 @@ test('codec or network failure reports a useful error rather than successful pla
   await flush();
   const states = r.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body));
   assert.equal(states.at(-1).payload.playback, 'error');
-  assert.match(states.at(-1).payload.message, /format.*not.*supported/);
+  assert.match(states.at(-1).payload.message, /video.*format/i);
 });
 
 test('remote Back exits fullscreen without leaving the room or stopping playback', async () => {

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Keyboard,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -285,6 +286,7 @@ export default function HomeScreen() {
   sendSignalRef.current = sendSignalMutation.mutate;
   const [code, setCode] = useState('');
   const [scanning, setScanning] = useState(false);
+  const [scannerStarting, setScannerStarting] = useState(false);
   const [roomId, setRoomId] = useState('');
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
@@ -596,16 +598,46 @@ export default function HomeScreen() {
   };
 
   const startScanner = async () => {
+    if (scannerStarting || scanning) return;
     setError('');
-    if (!cameraPermission?.granted) {
-      const permission = await requestCameraPermission();
+    setScannerStarting(true);
+    try {
+      const permission = cameraPermission?.granted
+        ? cameraPermission
+        : await requestCameraPermission();
       if (!permission.granted) {
-        setError('Camera access is needed to scan the TV code. You can still enter the five-digit code.');
+        if (!permission.canAskAgain && Platform.OS !== 'web') {
+          Alert.alert(
+            'Camera permission is off',
+            'Allow camera access in Settings to scan the TV code. You can still enter the five-digit code.',
+            [
+              { text: 'Not now', style: 'cancel' },
+              {
+                text: 'Open settings',
+                onPress: () => {
+                  void Linking.openSettings().catch(() => {
+                    setError('Could not open device settings. You can still enter the five-digit code.');
+                  });
+                },
+              },
+            ],
+          );
+        }
+        setError(permission.canAskAgain
+          ? 'Camera access is needed to scan the TV code. Allow it when your phone asks, or enter the five-digit code.'
+          : 'Camera access is turned off for FrameCast. Enable it in device Settings, or enter the five-digit code.');
         return;
       }
+      scanHandled.current = false;
+      setScanning(true);
+    } catch (scannerError) {
+      const reason = scannerError instanceof Error ? scannerError.message : '';
+      setError(reason
+        ? `The camera could not be opened: ${reason}. You can still enter the five-digit code.`
+        : 'The camera could not be opened. You can still enter the five-digit code.');
+    } finally {
+      setScannerStarting(false);
     }
-    scanHandled.current = false;
-    setScanning(true);
   };
 
   const submitCode = () => {
@@ -1377,6 +1409,12 @@ export default function HomeScreen() {
                     facing="back"
                     barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
                     onBarcodeScanned={({ data }) => handleScan(data)}
+                    onMountError={({ message }) => {
+                      setScanning(false);
+                      setError(message
+                        ? `The camera could not start: ${message}. You can still enter the five-digit code.`
+                        : 'The camera could not start. You can still enter the five-digit code.');
+                    }}
                     testID="camera-tv-qr-scanner"
                   />
                   <View pointerEvents="none" style={styles.scanOverlay}>
@@ -1396,14 +1434,17 @@ export default function HomeScreen() {
                 <Pressable
                   style={({ pressed }) => [styles.scanButton, { borderColor: activeColors.border, backgroundColor: pressed ? activeColors.secondary : activeColors.background }]}
                   onPress={() => void startScanner()}
+                  disabled={scannerStarting}
                   testID="button-scan-tv-qr"
                 >
                   <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
-                    <Ionicons name="scan-outline" size={23} color={activeColors.primary} />
+                    {scannerStarting
+                      ? <ActivityIndicator color={activeColors.primary} />
+                      : <Ionicons name="scan-outline" size={23} color={activeColors.primary} />}
                   </View>
                   <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Scan TV code</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>Use your phone camera</Text>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{scannerStarting ? 'Opening camera…' : 'Scan TV code'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{scannerStarting ? 'Allow camera access when asked' : 'Use your phone camera'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -1637,6 +1678,27 @@ export default function HomeScreen() {
 
             {(stage === 'sent' || videoStreaming) && selectedMedia?.kind === 'video' && (
               <View style={styles.videoRemoteControls} testID="video-remote-controls">
+                <View style={styles.playbackRow} testID="video-display-controls">
+                  <Pressable
+                    style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]}
+                    onPress={() => sendPlaybackControl('video:fit:contain')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Fit whole video on TV"
+                    testID="button-phone-video-fit"
+                  >
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Fit whole video</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]}
+                    onPress={() => sendPlaybackControl('video:fullscreen')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Enter full screen on TV"
+                    testID="button-phone-video-fullscreen"
+                  >
+                    <Ionicons name="expand-outline" size={18} color={activeColors.foreground} />
+                    <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Full screen on TV</Text>
+                  </Pressable>
+                </View>
                 <View style={styles.playbackRow}>
                   <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('video:seek-by:-10')} accessibilityLabel="Skip back 10 seconds on TV" testID="button-phone-video-back">
                     <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>−10s</Text>
