@@ -112,3 +112,17 @@ mtime_ms = 1792507482004
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/e259c5a3-7197-466f-b08b-1221dbc4d8cc/f061e7c1-5cd3-487e-a582-41c0c96548c6"
 storage_version_token = "1792507494535843"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NOqBIlSB-QeAZt_o4cKVG"
+uri = "file://generated-artifacts/framecast-android-updates/FrameCast-Android-test.apk"
+type = "unspecified"
+title = "FrameCast Android test APK"
+description = "Install this update over your previous test APK. It supports Android ARM phones (64-bit and 32-bit) and is signed with the same test certificate as the earlier APK. Do not upload this debug-signed build to Google Play."
+logical_id = "a4239a19-ea35-4c76-aa3f-ec28783b8487"
+content_hash = "sha256:f782262890b3c8374a9b31f28877a7b6b0045944947012b1831883208c65f5ab"
+size = 102241997
+mtime_ms = 1792512943969
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/a4239a19-ea35-4c76-aa3f-ec28783b8487/681051ad-92f8-4db9-93f8-bdf1bc792dc9"
+storage_version_token = "1792512961490525"
+content_type = "application/octet-stream"
