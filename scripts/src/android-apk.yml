@@ -34,7 +34,7 @@ jobs:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
       - name: Install Android native build tools
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "ndk;27.0.12077973" "cmake;3.22.1"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "build-tools;35.0.0" "ndk;27.1.12297006" "ndk;27.0.12077973" "cmake;3.22.1"
       - name: Install locked app dependencies
         run: pnpm install --frozen-lockfile
       - name: Type check app and API client

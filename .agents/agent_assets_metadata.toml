@@ -14,3 +14,31 @@ mtime_ms = 1792466394384
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/cdb2890b-71a5-4e47-822b-2cb7d1a8cbea/c4964766-6031-4665-8ba0-1644388d9760"
 storage_version_token = "1792483357852495"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "_muVWbKtTyfymWC0kT8KK"
+uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Android-test.apk"
+type = "unspecified"
+title = "FrameCast Android APK"
+description = "Install this APK directly on an Android phone. Package: com.tvcast.com. Test-signed build; the QR scanner camera permission is included."
+logical_id = "499f22f8-818b-4e3f-b469-36fff76975c8"
+content_hash = "sha256:773f6c9523175dd9b02ad973bbeb19028f9d5cbc5f9de2ba92e10285da7763c9"
+size = 101749825
+mtime_ms = 1792494108155
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/499f22f8-818b-4e3f-b469-36fff76975c8/4eef5d63-d7c3-48b8-a32b-5a9896225c7d"
+storage_version_token = "1792494147285473"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "NAgn1s0n47zaBBUX2nukv"
+uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Android-test.aab"
+type = "unspecified"
+title = "FrameCast Android AAB"
+description = "Android App Bundle for testing. Package: com.tvcast.com. This is test-signed and is not ready for Google Play publishing."
+logical_id = "4c06275a-3236-4f2f-8c73-0600aa902f6f"
+content_hash = "sha256:559c8e8f9a32152f20fb6edafc81afd58b077ad58bacb11c610d33f53af4f1a4"
+size = 71848374
+mtime_ms = 1792494108155
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/4c06275a-3236-4f2f-8c73-0600aa902f6f/a110c29a-be76-4e11-92c1-84b4f7c498e6"
+storage_version_token = "1792494148754124"
+content_type = "application/octet-stream"
