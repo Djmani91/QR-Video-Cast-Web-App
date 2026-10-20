@@ -47,28 +47,28 @@ content_type = "application/octet-stream"
 id = "CxaXElX3rFCFkdsLHVWqT"
 uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Play-Upload.aab"
 type = "unspecified"
-title = "FrameCast — Google Play upload (AAB)"
-description = "Upload this signed Android App Bundle in Google Play Console. Package: com.tvcast.com, version 1.0.0."
+title = "Download FrameCast AAB"
+description = "Direct download for uploading to Google Play Console."
 logical_id = "3f47ca6b-18d9-4427-b615-95b0e3d00797"
 content_hash = "sha256:1cca2c4f4c3c80dd43c1914313dc079d280dac888e3778d9073c77989fe417d5"
 size = 71848573
 mtime_ms = 1792495867753
-storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/3f47ca6b-18d9-4427-b615-95b0e3d00797/30236dd4-4436-4cd3-b7b5-2a6420133558"
-storage_version_token = "1792495983361734"
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/3f47ca6b-18d9-4427-b615-95b0e3d00797/7122ac29-8da5-46a6-8b62-3dbd6f74de26"
+storage_version_token = "1792498051774634"
 content_type = "application/octet-stream"
 
 [[outputs]]
 id = "0Crd_aRojvHjRIJGuMNvi"
 uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Play-Upload.apk"
 type = "unspecified"
-title = "FrameCast — signed APK for testing"
-description = "Install this APK directly on an Android device for testing. It is signed with the same upload key as the AAB."
+title = "Download FrameCast APK"
+description = "Direct download for installing and testing on Android."
 logical_id = "bfcbaf0a-05e9-49d8-b7ef-b0d701f17eb0"
 content_hash = "sha256:09d4ea067456eeb82695a9c78f74482a97131bc06b158c84e34f8111c2379e4d"
 size = 101749845
 mtime_ms = 1792495970981
-storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/bfcbaf0a-05e9-49d8-b7ef-b0d701f17eb0/5d897c1d-fe07-4a59-abed-db49201690ca"
-storage_version_token = "1792495985701891"
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/bfcbaf0a-05e9-49d8-b7ef-b0d701f17eb0/c4475664-e777-48bd-a4af-ac045c22fc00"
+storage_version_token = "1792498049271038"
 content_type = "application/octet-stream"
 
 [[outputs]]
