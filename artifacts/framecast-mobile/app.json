@@ -2,7 +2,7 @@
   "expo": {
     "name": "FrameCast Mobile",
     "slug": "framecast-mobile",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "framecast-mobile",
@@ -17,6 +17,7 @@
     },
     "android": {
       "package": "com.tvcast.com",
+      "versionCode": 2,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.FOREGROUND_SERVICE",

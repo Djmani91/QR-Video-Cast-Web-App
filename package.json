@@ -9,6 +9,11 @@
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
+  "pnpm": {
+    "patchedDependencies": {
+      "expo-modules-core@57.0.23": "patches/expo-modules-core@57.0.23.patch"
+    }
+  },
   "dependencies": {
     "@replit/connectors-sdk": "^0.4.3"
   },
