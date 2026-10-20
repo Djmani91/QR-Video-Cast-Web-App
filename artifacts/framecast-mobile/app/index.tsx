@@ -299,6 +299,7 @@ export default function HomeScreen() {
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
   const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
+  const autoSendAfterSelectionRef = useRef(false);
   const [mediaQueue, setMediaQueue] = useState<SelectedMedia[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
   const [sentQueueCount, setSentQueueCount] = useState(0);
@@ -672,6 +673,7 @@ export default function HomeScreen() {
     setSentBytes(0);
     setTotalBytes(0);
     setError('');
+    autoSendAfterSelectionRef.current = true;
   };
 
   const pickPhotos = async (append = false) => {
@@ -1151,6 +1153,12 @@ export default function HomeScreen() {
     }
   };
 
+  useEffect(() => {
+    if (!autoSendAfterSelectionRef.current || !roomId || preparingMedia || !selectedMedia) return;
+    autoSendAfterSelectionRef.current = false;
+    void startTransfer();
+  }, [roomId, preparingMedia, selectedMedia]);
+
   const sendPlaybackControl = (action: string) => {
     if (localSessionRef.current) {
       sendSignal('player-command', { sessionId: localSessionRef.current, action });
@@ -1172,6 +1180,7 @@ export default function HomeScreen() {
   };
 
   const leaveRoom = () => {
+    autoSendAfterSelectionRef.current = false;
     currentRoomRef.current = '';
     setBackgroundEnabled(false);
     void stopBackgroundCasting().catch(() => setError('Android could not stop background casting. Close FrameCast to end its service.'));
@@ -1580,7 +1589,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.scanButtonCopy}>
                     <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : 'Choose up to 30 photos'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : 'Select several in the picker, then send in order'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : 'Select photos and they appear on the TV automatically'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -1596,7 +1605,7 @@ export default function HomeScreen() {
                   </View>
                   <View style={styles.scanButtonCopy}>
                     <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing video on this phone…' : 'Choose a video'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Creating a temporary on-device copy' : 'Instant play needs H.264/AAC fragmented MP4'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Creating a temporary on-device copy' : 'Choose a video and it starts on the TV automatically'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -1802,15 +1811,15 @@ export default function HomeScreen() {
               </>
             )}
 
-            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (stage !== 'sent' || mediaQueue.length > 1 || Boolean(error)) && (
+            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (Boolean(error) || (stage === 'sent' && mediaQueue.length > 1)) && (
               <Pressable
                 onPress={() => void startTransfer()}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
                 testID="button-send-to-tv"
               >
-                <Ionicons name="play" size={18} color={activeColors.primaryForeground} />
+                <Ionicons name={error ? 'refresh' : 'play'} size={18} color={activeColors.primaryForeground} />
                 <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                  {stage === 'sent' && mediaQueue.length > 1 ? `Replay ${mediaQueue.length} photos` : mediaQueue.length > 1 ? `Send ${mediaQueue.length} photos to TV` : 'Send to TV'}
+                  {error ? 'Try again' : selectedMedia.kind === 'video' ? 'Replay playlist' : `Replay ${mediaQueue.length} photos`}
                 </Text>
               </Pressable>
             )}

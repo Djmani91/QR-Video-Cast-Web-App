@@ -2081,6 +2081,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const [fileQueue, setFileQueue] = useState<File[]>([]);
   const [preparingSelection, setPreparingSelection] = useState(false);
   const selectionRunRef = useRef(0);
+  const autoConnectAfterSelectionRef = useRef(false);
   const [videoLink, setVideoLink] = useState('');
   const [videoLinkError, setVideoLinkError] = useState('');
   const [checkingVideoLink, setCheckingVideoLink] = useState(false);
@@ -2358,6 +2359,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       const nextUrl = URL.createObjectURL(preserved[0]);
       fileQueueRef.current = preserved;
+      autoConnectAfterSelectionRef.current = true;
       setFileQueue(preserved);
       setQueueIndex(0);
       videoQueueIndexRef.current = 0;
@@ -2901,6 +2903,12 @@ function PhonePage({ roomId }: { roomId?: string }) {
   };
 
   useEffect(() => {
+    if (!autoConnectAfterSelectionRef.current || preparingSelection || status !== 'paired' || !validRoomId || !fileQueue.length) return;
+    autoConnectAfterSelectionRef.current = false;
+    void connect();
+  }, [connect, fileQueue.length, preparingSelection, status, validRoomId]);
+
+  useEffect(() => {
     const recovery = createSessionRecovery({
       active: () => pairingActiveRef.current && recoveryWantedRef.current,
       visible: () => document.visibilityState !== 'hidden' && navigator.onLine,
@@ -3132,6 +3140,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   };
 
   const disconnect = () => {
+    autoConnectAfterSelectionRef.current = false;
     pairingActiveRef.current = false;
     recoveryWantedRef.current = false;
     recoveryRef.current?.cancel();
@@ -3220,7 +3229,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <label className="dropzone" htmlFor="video-file-input" data-testid="control-content-picker">
                 <span className="drop-icon"><FileVideo2 size={22} /><ImageIcon size={17} /></span>
                 <strong>Choose up to 30 photos or videos</strong>
-                <span>Select videos together to make a playlist, or choose a photo gallery</span>
+                <span>Select photos or a video; playback starts on the TV automatically</span>
               </label>
             )}
             <input
@@ -3298,14 +3307,14 @@ function PhonePage({ roomId }: { roomId?: string }) {
               </div>
             )}
             <div className="phone-actions">
-              {file && (
+              {file && (status !== 'paired' || Boolean(error)) && (
                 <button type="button" className="button-primary" onClick={() => void (mediaKind === 'video' && fileQueue.length > 1 ? playPlaylistItem(status === 'connected' ? 0 : videoQueueIndexRef.current) : connect())} disabled={playlistLoading || preparingSelection || status === 'connecting' || (status === 'connected' && (!sentToTv || fileQueue.length <= 1))} data-testid="button-connect-tv">
                   {status === 'connecting' ? <RefreshCw size={16} className="animate-spin" /> : status === 'connected' ? <Check size={16} /> : <ArrowUpRight size={16} />}
                   {status === 'connecting'
                     ? 'Connecting…'
                     : status === 'connected'
                       ? sentToTv ? fileQueue.length > 1 ? mediaKind === 'video' ? 'Restart playlist' : `Replay ${fileQueue.length} photos` : mediaKind === 'image' ? 'Photo sent to TV' : 'Sent to TV' : 'Sending to TV…'
-                      : status === 'failed' || status === 'disconnected'
+                      : status === 'failed' || status === 'disconnected' || error
                         ? 'Try again'
                         : mediaKind === 'image' ? 'Show photo on TV' : fileQueue.length > 1 ? 'Play playlist on TV' : 'Play video on TV'}
                 </button>
