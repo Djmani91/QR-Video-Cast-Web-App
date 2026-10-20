@@ -19,6 +19,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { Directory, File as ExpoFile, Paths } from 'expo-file-system';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
@@ -37,6 +38,7 @@ import { AppSettings } from '@/components/AppSettings';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
+const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
 import {
   getGetCastRoomMessagesQueryKey,
   useGetCastRoomMessages,
@@ -287,10 +289,13 @@ export default function HomeScreen() {
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
   const [backgroundEnabled, setBackgroundEnabled] = useState(false);
+  const [backgroundPreference, setBackgroundPreference] = useState<boolean | null>(null);
+  const [backgroundPreferenceLoaded, setBackgroundPreferenceLoaded] = useState(false);
+  const backgroundStartedRoomRef = useRef('');
+  const backgroundPromptedRoomRef = useRef('');
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
   const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
-  const [backgroundStarting, setBackgroundStarting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [mediaQueue, setMediaQueue] = useState<SelectedMedia[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
@@ -352,6 +357,39 @@ export default function HomeScreen() {
       }
       temporaryMediaUrisRef.current.delete(uri);
     }
+  }, []);
+
+  const saveBackgroundPreference = useCallback(async (enabled: boolean) => {
+    setBackgroundPreference(enabled);
+    try {
+      await AsyncStorage.setItem(BACKGROUND_CASTING_PREFERENCE_KEY, enabled ? '1' : '0');
+    } catch {
+      setError('FrameCast could not save this background casting choice. Please check the app storage and try again.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!backgroundCastingAvailable) {
+      setBackgroundPreference(false);
+      setBackgroundPreferenceLoaded(true);
+      return;
+    }
+
+    let active = true;
+    void AsyncStorage.getItem(BACKGROUND_CASTING_PREFERENCE_KEY).then((saved) => {
+      if (!active) return;
+      setBackgroundPreference(saved === '1' ? true : saved === '0' ? false : null);
+      setBackgroundPreferenceLoaded(true);
+    }).catch(() => {
+      if (!active) return;
+      setBackgroundPreference(false);
+      setBackgroundPreferenceLoaded(true);
+      setError('FrameCast could not read the saved background casting setting. You can still cast while the app is open.');
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const messagesQuery = useGetCastRoomMessages(roomId, {
@@ -1182,10 +1220,59 @@ export default function HomeScreen() {
   useEffect(() => onBackgroundStopped(() => setBackgroundEnabled(false)), []);
   useEffect(() => {
     if (!roomId) {
+      backgroundStartedRoomRef.current = '';
+      backgroundPromptedRoomRef.current = '';
       setBackgroundEnabled(false);
       void stopBackgroundCasting().catch(() => undefined);
+      return;
     }
-  }, [roomId]);
+
+    if (!backgroundCastingAvailable || !backgroundPreferenceLoaded) return;
+
+    if (backgroundPreference === null) {
+      if (backgroundPromptedRoomRef.current === roomId) return;
+      backgroundPromptedRoomRef.current = roomId;
+      Alert.alert(
+        'Enable background casting?',
+        'Choose once. If enabled, FrameCast will stay active in the background on future TV sessions. Android shows a casting notification. Not now still lets you cast while FrameCast is open.',
+        [
+          { text: 'Not now', style: 'cancel', onPress: () => { void saveBackgroundPreference(false); } },
+          { text: 'Enable', onPress: () => { void saveBackgroundPreference(true); } },
+        ],
+        { cancelable: false },
+      );
+      return;
+    }
+
+    if (!backgroundPreference) {
+      backgroundStartedRoomRef.current = '';
+      setBackgroundEnabled(false);
+      void stopBackgroundCasting().catch(() => setError('Background casting could not stop. Tap Disconnect and try again.'));
+      return;
+    }
+
+    if (backgroundStartedRoomRef.current === roomId) return;
+
+    const startingRoom = roomId;
+    backgroundStartedRoomRef.current = startingRoom;
+    void startBackgroundCasting({
+      title: 'Connected to your TV',
+      paused: false,
+      position: 0,
+      duration: 0,
+    }).then(async () => {
+      if (currentRoomRef.current !== startingRoom) {
+        await stopBackgroundCasting();
+        return;
+      }
+      setBackgroundEnabled(true);
+    }).catch(reason => {
+      backgroundStartedRoomRef.current = '';
+      if (currentRoomRef.current === startingRoom) {
+        setError(reason instanceof Error ? reason.message : 'Background casting could not start. Allow notifications to keep the TV connected.');
+      }
+    });
+  }, [roomId, backgroundPreference, backgroundPreferenceLoaded, saveBackgroundPreference]);
   useEffect(() => {
     if (backgroundEnabled && roomId) {
       updateBackgroundCasting({
@@ -1196,30 +1283,6 @@ export default function HomeScreen() {
       });
     }
   }, [backgroundEnabled, roomId, selectedMedia?.name, paused, remoteVideoPosition.currentTime, remoteVideoPosition.duration]);
-
-  const enableBackground = () => {
-    Alert.alert(
-      'Keep casting in the background?',
-      'FrameCast will keep a visible casting notification with playback and disconnect controls while you use other apps. Your media stays on your phone. Android battery restrictions or force-stopping the app can still interrupt casting.',
-      [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'Enable', onPress: () => {
-          const startingRoom = roomId;
-          setBackgroundStarting(true);
-          void startBackgroundCasting({
-            title: selectedMedia?.name ?? 'Connected to your TV',
-            paused,
-            position: remoteVideoPosition.currentTime,
-            duration: remoteVideoPosition.duration,
-          }).then(async () => {
-            if (currentRoomRef.current !== startingRoom) await stopBackgroundCasting();
-            else setBackgroundEnabled(true);
-          }).catch(reason => setError(reason instanceof Error ? reason.message : 'Background casting could not start.'))
-            .finally(() => setBackgroundStarting(false));
-        } },
-      ],
-    );
-  };
 
   const startScreenMirror = async () => {
     if (Platform.OS !== 'android' || !roomId) {
@@ -1279,30 +1342,31 @@ export default function HomeScreen() {
             <Ionicons name="lock-closed-outline" size={13} color={activeColors.primary} />
             <Text style={[styles.privacyChipText, { color: activeColors.primary }]}>PRIVATE</Text>
           </View>
-          <AppSettings onClearLocalData={clearLocalData} clearDisabled={preparingMedia || checkingVideoLink} />
+          <AppSettings
+            onClearLocalData={clearLocalData}
+            clearDisabled={preparingMedia || checkingVideoLink}
+            showBackgroundCasting={backgroundCastingAvailable}
+            backgroundCastingEnabled={backgroundPreference === true}
+            onBackgroundCastingChange={saveBackgroundPreference}
+          />
         </View>
 
         {stage !== 'join' && <CastTabs value={castTab} onChange={setCastTab} />}
 
         {stage === 'join' && (
           <View style={styles.main}>
-            <Text style={[styles.kicker, { color: activeColors.primary }]}>PHONE COMPANION</Text>
-            <Text style={[styles.title, { color: activeColors.foreground }]}>Send it to the big screen.</Text>
-            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Pair your phone with FrameCast on your TV to share photos, videos or a video link.</Text>
+            <Text style={[styles.title, { color: activeColors.foreground }]}>Connect to your TV</Text>
+            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Open FrameCast in the TV browser, then scan its QR code or enter the five-digit code.</Text>
 
-            <View style={[styles.tvGuideCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="tv-pairing-instructions">
-              <Text style={[styles.tvGuideKicker, { color: activeColors.primary }]}>START ON YOUR TV</Text>
-              <Text style={[styles.tvGuideTitle, { color: activeColors.foreground }]}>Open FrameCast in the TV browser</Text>
-              <Text style={[styles.tvGuideCopy, { color: activeColors.mutedForeground }]}>Using the TV remote, open the Internet Browser and enter this address:</Text>
+            <View style={[styles.tvAddressHint, { backgroundColor: activeColors.secondary, borderColor: activeColors.border }]} testID="tv-pairing-instructions">
+              <Text style={[styles.tvAddressLabel, { color: activeColors.mutedForeground }]}>TV browser address</Text>
               <Text
-                style={[styles.tvGuideAddress, { color: activeColors.primary, backgroundColor: activeColors.secondary }]}
+                style={[styles.tvAddress, { color: activeColors.primary }]}
                 selectable
                 accessibilityRole="text"
                 accessibilityLabel={`FrameCast TV website address: ${TV_BROWSER_ADDRESS}. Press and hold to copy.`}
                 testID="tv-browser-address"
               >{TV_BROWSER_ADDRESS}</Text>
-              <Text style={[styles.tvGuideCopy, { color: activeColors.mutedForeground }]}>Press and hold the address to copy it, or type it into the TV’s address bar.</Text>
-              <Text style={[styles.tvGuideNext, { color: activeColors.foreground }]}>When the QR code and five-digit code appear on the TV, scan the QR code here or enter the code below.</Text>
             </View>
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
@@ -1347,7 +1411,7 @@ export default function HomeScreen() {
 
               <View style={styles.divider}>
                 <View style={[styles.dividerLine, { backgroundColor: activeColors.border }]} />
-                <Text style={[styles.dividerText, { color: activeColors.mutedForeground }]}>OR ENTER THE CODE</Text>
+                <Text style={[styles.dividerText, { color: activeColors.mutedForeground }]}>OR ENTER THE 5-DIGIT CODE</Text>
                 <View style={[styles.dividerLine, { backgroundColor: activeColors.border }]} />
               </View>
 
@@ -1391,7 +1455,13 @@ export default function HomeScreen() {
                     ? sentQueueCount === mediaQueue.length
                       ? `${mediaQueue.length} photos sent in order.`
                       : `${sentQueueCount} of ${mediaQueue.length} photos sent.`
-                    : selectedMedia?.kind === 'video' ? localPlayback ? 'The TV reads this video directly from your phone as it plays. Keep FrameCast open.' : transferNotice ? 'The TV started the video after it finished sending.' : 'The TV played the video while it arrived.' : 'The TV starts showing the photo automatically.'
+                    : selectedMedia?.kind === 'video'
+                      ? localPlayback
+                        ? backgroundEnabled
+                          ? 'The TV is playing directly from your phone. You can switch apps; the casting notification stays active until you disconnect.'
+                          : 'The TV is playing directly from your phone. Keep FrameCast open while it plays.'
+                        : transferNotice ? 'The TV started the video after it finished sending.' : 'The TV played the video while it arrived.'
+                      : 'The TV starts showing the photo automatically.'
                 : selectedMedia?.kind === 'video'
                   ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : Platform.OS !== 'web' ? 'Play directly over the same Wi-Fi without sending the whole file first. The TV must support the video format.' : 'MP4 and MOV videos are prepared on the phone for streaming. Other small videos transfer first; the TV must support their codec.'
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
@@ -1429,31 +1499,6 @@ export default function HomeScreen() {
                     </Text>
                   </Pressable>
                 )}
-              </View>
-            )}
-            {backgroundCastingAvailable && castTab !== 'screen' && (
-              <View style={[styles.videoLinkCard, { borderColor: activeColors.border }]} testID="card-background-casting">
-                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Background casting</Text>
-                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
-                  {backgroundEnabled
-                    ? 'Enabled. Use the casting notification to play, pause, skip, or disconnect while using other apps.'
-                    : 'Keep your TV connection active while using other apps, with playback controls in your notifications.'}
-                </Text>
-                <Pressable
-                  style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]}
-                  disabled={backgroundStarting}
-                  onPress={() => {
-                    if (!backgroundEnabled) enableBackground();
-                    else void stopBackgroundCasting().then(() => setBackgroundEnabled(false))
-                      .catch(() => setError('Background casting could not stop. Use Disconnect from this TV.'));
-                  }}
-                  accessibilityRole="button"
-                  testID="button-background-casting"
-                >
-                  <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>
-                    {backgroundStarting ? 'Enabling…' : backgroundEnabled ? 'Disable background casting' : 'Enable background casting'}
-                  </Text>
-                </Pressable>
               </View>
             )}
             {castTab !== 'url' && castTab !== 'screen' && ((castTab === 'videos' ? selectedMedia?.kind === 'video' && !isUrlPlayback : selectedMedia?.kind === 'image') && selectedMedia ? (
@@ -1576,7 +1621,7 @@ export default function HomeScreen() {
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
                 {mediaQueue.length > 1 ? `Photo ${queueIndex + 1} of ${mediaQueue.length} · ` : ''}
                 {videoStreaming ? 'The TV is playing while transfer continues · ' : ''}
-                {formatBytes(sentBytes)} of {formatBytes(totalBytes)} sent · keep this app open
+                {formatBytes(sentBytes)} of {formatBytes(totalBytes)} sent · {backgroundEnabled ? 'you can switch apps while casting' : 'keep FrameCast open'}
               </Text>
             ) : null}
             {queueRunning && stage === 'sending' && (
@@ -1761,12 +1806,9 @@ const styles = StyleSheet.create({
   kicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.4, marginBottom: 10 },
   title: { fontFamily: 'Inter_700Bold', fontSize: 32, lineHeight: 38, letterSpacing: -1.1 },
   subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 16 },
-  tvGuideCard: { borderWidth: 1, borderRadius: 22, padding: 15, marginBottom: 10, gap: 7 },
-  tvGuideKicker: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3 },
-  tvGuideTitle: { fontFamily: 'Inter_700Bold', fontSize: 17, lineHeight: 22 },
-  tvGuideCopy: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
-  tvGuideAddress: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 9, borderRadius: 10, fontFamily: 'Inter_600SemiBold', fontSize: 12, lineHeight: 17 },
-  tvGuideNext: { marginTop: 3, fontFamily: 'Inter_600SemiBold', fontSize: 12, lineHeight: 18 },
+  tvAddressHint: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 13, paddingVertical: 10, marginBottom: 12, gap: 3 },
+  tvAddressLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 0.7, textTransform: 'uppercase' },
+  tvAddress: { fontFamily: 'Inter_600SemiBold', fontSize: 13, lineHeight: 19 },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
   videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },

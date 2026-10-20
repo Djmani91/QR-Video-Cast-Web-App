@@ -59,11 +59,11 @@ The user wants returning to the same phone browser to reconnect to the same TV a
 
 **How to apply:** Separate pairing intent from an individual WebRTC peer. Probe the existing transport on return and recreate it automatically in the same room when stale. Preserve selected files and playback state in the live page; suppress overlapping repairs and ignore replies/candidates/closes from replaced sessions. An explicit Disconnect or TV room replacement must cancel recovery. Be clear that the OS can suspend playback/networking, closing the tab loses in-memory files, and server restarts or a genuinely expired room cannot be repaired from browser state alone.
 
-Deliver an installable Android APK for testing first; the user will request iOS after testing Android. They also want opt-in background casting that keeps the connection when the app is backgrounded, with playback controls accessible outside the app.
+Keep the phone's first screen connection-first: a concise TV browser instruction, QR scan, and code entry instead of a large marketing hero. Background casting is a saved one-time Android preference: ask once, then start automatically on later pairings while enabled; Disconnect stops only the current session.
 
-**Why:** The user explicitly requested Android first and described Web Video Caster's background permission and external playback controls as the desired experience.
+**Why:** The user clarified that customers should opt in once rather than enable background casting on every session, while keeping the TV connected when switching apps.
 
-**How to apply:** Prioritize Android and leave iOS unchanged until requested. Background casting needs real Android foreground-service/media-notification support, not just a permission popup or a browser wake lock. Do not imply an Expo preview is an APK, or promise continued casting after force-stop, network loss, or OS termination.
+**How to apply:** Persist the preference on the phone and expose it in Settings. On the first pairing show Enable/Not now once; if enabled, auto-start the Android foreground service for each room. Disconnect stops the service but preserves the preference. Keep the OS permission prompt and notification visible; do not promise casting after force-stop, network loss, or OS termination.
 
 Use neutral video-link wording, not YouTube-specific branding, in the mobile app's URL section.
 

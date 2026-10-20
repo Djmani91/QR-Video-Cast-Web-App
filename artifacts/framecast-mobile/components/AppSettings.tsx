@@ -1,11 +1,17 @@
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 
-type Props = { onClearLocalData: () => Promise<void>; clearDisabled?: boolean };
+type Props = {
+  onClearLocalData: () => Promise<void>;
+  clearDisabled?: boolean;
+  showBackgroundCasting: boolean;
+  backgroundCastingEnabled: boolean;
+  onBackgroundCastingChange: (enabled: boolean) => void;
+};
 type Phase = 'idle' | 'confirm' | 'busy' | 'success' | 'error';
 
 const HOW = [
@@ -13,7 +19,7 @@ const HOW = [
   'Open FrameCast in the TV browser, then scan its QR code or enter its pairing code.',
   'Choose URL, Videos or Images to pick what to show.',
   'Use this phone to play, pause, skip and control the TV.',
-  'Keep the app open while casting, or use supported Android background casting.',
+  'If enabled once, Android background casting starts automatically when you connect and stays active until you tap Disconnect.',
 ];
 
 const PRIVACY = [
@@ -23,7 +29,13 @@ const PRIVACY = [
   'Website and video links are opened by the TV directly from the original website and follow that site\u2019s policies.',
 ];
 
-export function AppSettings({ onClearLocalData, clearDisabled = false }: Props) {
+export function AppSettings({
+  onClearLocalData,
+  clearDisabled = false,
+  showBackgroundCasting,
+  backgroundCastingEnabled,
+  onBackgroundCastingChange,
+}: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
@@ -96,6 +108,30 @@ export function AppSettings({ onClearLocalData, clearDisabled = false }: Props) 
             </View>
 
             <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+              {showBackgroundCasting && (
+                <>
+                  <Text style={[styles.kicker, { color: colors.primary }]}>BACKGROUND CASTING</Text>
+                  <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} testID="setting-background-casting">
+                    <View style={styles.settingRow}>
+                      <View style={styles.settingCopy}>
+                        <Text style={[styles.subhead, { color: colors.foreground }]}>Keep the TV connected in the background</Text>
+                        <Text style={[styles.small, { color: colors.mutedForeground }]}>
+                          Choose once. It starts automatically after each TV connection; Disconnect ends that session. Android keeps a casting notification visible.
+                        </Text>
+                      </View>
+                      <Switch
+                        value={backgroundCastingEnabled}
+                        onValueChange={onBackgroundCastingChange}
+                        trackColor={{ false: colors.border, true: colors.primary }}
+                        thumbColor={colors.card}
+                        accessibilityLabel="Keep the TV connected in the background"
+                        testID="switch-background-casting"
+                      />
+                    </View>
+                  </View>
+                </>
+              )}
+
               <Text style={[styles.kicker, { color: colors.primary }]}>HOW IT WORKS</Text>
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 {HOW.map((t, i) => <Bullet key={i} n={i + 1} text={t} />)}
@@ -190,6 +226,8 @@ const styles = StyleSheet.create({
   kicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.2, marginTop: 10 },
   card: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
   row: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  settingCopy: { flex: 1, gap: 5 },
   num: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   numText: { fontFamily: 'Inter_700Bold', fontSize: 12 },
   body: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
