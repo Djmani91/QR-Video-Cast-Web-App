@@ -45,7 +45,7 @@
         "expo-image-picker",
         {
           "photosPermission": "FrameCast needs access to let you choose a photo or video to send to your TV.",
-          "cameraPermission": false,
+          "cameraPermission": "FrameCast uses the camera only to scan the TV pairing code.",
           "microphonePermission": false
         }
       ],

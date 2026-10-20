@@ -59,7 +59,8 @@ await writeFile(path.join(output, 'package.json'), `${JSON.stringify({
   name: 'framecast-android-build',
   private: true,
   packageManager: 'pnpm@10.26.1',
-  devDependencies: { typescript: originalRoot.devDependencies.typescript },
+  dependencies: originalRoot.dependencies,
+  devDependencies: originalRoot.devDependencies,
 }, null, 2)}\n`);
 await writeFile(path.join(output, '.gitignore'), [
   'node_modules', '.expo/', 'dist/', '*.tsbuildinfo', '.env', '.env.*',
