@@ -27,6 +27,11 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
+import {
+  BUFFERED_VIDEO_FALLBACK_MAX_BYTES,
+  LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS,
+  shouldUseBufferedVideoFallback,
+} from '@/lib/local-playback-fallback';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { getYouTubeVideoId } from '@/lib/youtube';
 import {
@@ -146,7 +151,6 @@ const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const FILE_CHUNK_SIZE = 32 * 1024;
 const MAX_TRANSFER_BYTES = 256 * 1024 * 1024;
 const MAX_VIDEO_SIZE_BYTES = 8 * 1024 * 1024 * 1024;
-const BUFFERED_VIDEO_FALLBACK_MAX_BYTES = 128 * 1024 * 1024;
 
 function createPeerConnection(): PeerLike {
   if (Platform.OS === 'web') {
@@ -911,7 +915,12 @@ export default function HomeScreen() {
     }
   };
 
-  const startTransfer = async (remoteUrl?: string, screenStream?: ScreenStreamLike, requestedQueueIndex?: number) => {
+  const startTransfer = async (
+    remoteUrl?: string,
+    screenStream?: ScreenStreamLike,
+    requestedQueueIndex?: number,
+    forceCompatibilityTransfer = false,
+  ) => {
     if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
     fullscreenAckTimerRef.current = null;
     setFullscreenNotice('');
@@ -968,7 +977,7 @@ export default function HomeScreen() {
     try {
       // Native phone -> TV HTTP byte ranges. The TV starts from a small buffer,
       // can seek anywhere, and does not wait for a complete WebRTC file copy.
-      if (!castUrl && queue.length === 1 && queue[0].kind === 'video' && Platform.OS !== 'web') {
+      if (!forceCompatibilityTransfer && !castUrl && queue.length === 1 && queue[0].kind === 'video' && Platform.OS !== 'web') {
         setTransferNotice('Opening the video directly over your Wi-Fi…');
         const stream = await trackMediaPreparation(startLocalStream(queue[0].uri, queue[0].name));
         if (transferRun !== transferRunRef.current) {
@@ -986,9 +995,15 @@ export default function HomeScreen() {
         setSentQueueCount((count) => Math.max(count, queueIndexOffset + 1));
         localOpenTimerRef.current = setTimeout(() => {
           if (localSessionRef.current !== stream.sessionId) return;
+          const fileSize = queue[0].size || 0;
+          if (shouldUseBufferedVideoFallback(fileSize)) {
+            setTransferNotice('The TV did not open direct playback. Retrying with a compatibility transfer…');
+            void startTransfer(undefined, undefined, requestedQueueIndex, true);
+            return;
+          }
           setStage('sent');
-          setError('The TV has not opened the video yet. Keep this app open, allow local-network access, and check that your Wi-Fi does not isolate devices.');
-        }, 25_000);
+          setError('The TV did not open direct playback. This large video cannot use the compatibility fallback; check the TV connection and try again.');
+        }, LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS);
         return;
       }
       let totalQueueBytes = 0;
@@ -1007,7 +1022,9 @@ export default function HomeScreen() {
       }
       videoStreamingRef.current = false;
       setVideoStreaming(false);
-      setTransferNotice('');
+      setTransferNotice(forceCompatibilityTransfer
+        ? 'Direct TV playback did not start. Sending this video through the compatibility transfer…'
+        : '');
       transferComplete.current = false;
 
       const peer = createPeerConnection();
