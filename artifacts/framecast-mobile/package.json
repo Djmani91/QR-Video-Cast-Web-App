@@ -62,6 +62,7 @@
     "expo-file-system": "~57.0.7",
     "expo-image-manipulator": "~57.0.21",
     "expo-keep-awake": "~57.0.2",
+    "expo-video": "~57.0.5",
     "mp4box": "^2.4.1",
     "react": "19.2.3",
     "react-native": "0.86.3",

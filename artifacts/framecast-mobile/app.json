@@ -59,7 +59,8 @@
           "microphonePermission": "FrameCast uses Android playback capture to send supported app audio directly to your TV during screen mirroring. It does not record microphone audio."
         }
       ],
-      "expo-dev-client"
+      "expo-dev-client",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,
