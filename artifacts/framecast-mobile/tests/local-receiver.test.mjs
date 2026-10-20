@@ -34,6 +34,8 @@ function receiver() {
     URL, Number, JSON, Math, Infinity, isFinite, decodeURIComponent, encodeURIComponent,
     document, location,
     setInterval(fn, delay) { timers.set(delay, fn); },
+    setTimeout(fn, delay) { timers.set(delay, fn); return delay; },
+    clearTimeout(delay) { timers.delete(delay); },
     fetch: async (url, options = {}) => {
       requests.push({ url, ...options });
       return { ok: true, json: async () => options.method === 'POST' ? { sequence: 99 } : { messages } };
@@ -99,6 +101,22 @@ test('phone full-screen command requests full screen on the TV player', async ()
   assert.equal(r.document.fullscreenElement, r.video);
 });
 
+test('phone full-screen command falls back to the TV document when video fullscreen is unavailable', async () => {
+  const r = receiver();
+  let entered = false;
+  r.document.documentElement.requestFullscreen = () => {
+    entered = true;
+    r.document.fullscreenElement = r.document.documentElement;
+    return Promise.resolve();
+  };
+  await flush();
+  r.setMessages([{ sequence: 11, from: 'phone', type: 'player-command', payload: { action: 'video:fullscreen', sessionId: 'session1' } }]);
+  r.timers.get(500)();
+  await flush();
+  assert.equal(entered, true);
+  assert.equal(r.document.fullscreenElement, r.document.documentElement);
+});
+
 test('controls hide after five seconds and return on a remote key', () => {
   const r = receiver();
   for (let i = 0; i < 5; i++) r.timers.get(1000)();
@@ -148,6 +166,21 @@ test('codec or network failure reports a useful error rather than successful pla
   const states = r.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body));
   assert.equal(states.at(-1).payload.playback, 'error');
   assert.match(states.at(-1).payload.message, /video.*format/i);
+});
+
+test('audio-only playback reports that the TV did not decode video frames', async () => {
+  const r = receiver();
+  await flush();
+  r.video.paused = false;
+  r.video.videoWidth = 0;
+  r.video.currentTime = 2;
+  r.video.onplaying();
+  await flush();
+  r.timers.get(2500)();
+  await flush();
+  const states = r.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body));
+  assert.equal(states.at(-1).payload.playback, 'error');
+  assert.match(states.at(-1).payload.message, /sound.*picture.*HEVC/i);
 });
 
 test('remote Back exits fullscreen without leaving the room or stopping playback', async () => {

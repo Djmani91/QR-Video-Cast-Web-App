@@ -532,9 +532,13 @@ function TvPage() {
     if (canvas) video.setAttribute('webkit-playsinline', '');
     else video.removeAttribute('webkit-playsinline');
   }, []);
-  const requestPlaybackFullscreen = useCallback((video: HTMLVideoElement) => {
-    if (canvasPlaybackRef.current && playbackStageRef.current) return requestMediaFullscreen(playbackStageRef.current);
-    return requestVideoFullscreen(video);
+  const requestPlaybackFullscreen = useCallback(async (video: HTMLVideoElement) => {
+    const stage = playbackStageRef.current;
+    if (canvasPlaybackRef.current && stage) return requestMediaFullscreen(stage);
+    if (await requestVideoFullscreen(video)) return true;
+    // A phone remote command is not a trusted TV gesture. Some TV browsers
+    // reject fullscreen on the media element but permit it on the stage.
+    return stage ? requestMediaFullscreen(stage) : false;
   }, []);
   const handleCanvasFailure = useCallback(() => {
     // A presentation enhancement must never stop the underlying TV decoder.

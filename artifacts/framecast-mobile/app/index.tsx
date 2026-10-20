@@ -321,6 +321,8 @@ export default function HomeScreen() {
   const [paused, setPaused] = useState(false);
   const [preparingMedia, setPreparingMedia] = useState(false);
   const [remoteVideoPosition, setRemoteVideoPosition] = useState({ currentTime: 0, duration: 0, volume: 0 });
+  const [fullscreenNotice, setFullscreenNotice] = useState('');
+  const fullscreenAckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
   const transferComplete = useRef(false);
   const peerRef = useRef<PeerLike | null>(null);
@@ -476,6 +478,17 @@ export default function HomeScreen() {
       seenMessages.current.add(signal.sequence);
       if (signal.type === 'player-state' && signal.payload.sessionId === localSessionRef.current) {
         const state = signal.payload;
+        if (state.message === 'FULLSCREEN_NEEDS_TV_REMOTE') {
+          if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+          fullscreenAckTimerRef.current = null;
+          setFullscreenNotice('This TV browser needs a button press on the TV. Press OK or Full screen on the TV remote.');
+        } else if (state.message === 'FULLSCREEN_OK') {
+          if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+          fullscreenAckTimerRef.current = null;
+          setFullscreenNotice('Full screen is active on the TV.');
+        } else if (state.message === 'FULLSCREEN_EXITED') {
+          setFullscreenNotice('Full screen closed on the TV.');
+        }
         if (state.playback !== 'opening') {
           if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
           localOpenTimerRef.current = null;
@@ -781,6 +794,9 @@ export default function HomeScreen() {
   };
 
   const startTransfer = async (remoteUrl?: string, screenStream?: ScreenStreamLike) => {
+    if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+    fullscreenAckTimerRef.current = null;
+    setFullscreenNotice('');
     const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
     const queue = castUrl || screenStream ? [] : mediaQueueRef.current.length ? mediaQueueRef.current : selectedMedia ? [selectedMedia] : [];
     if (!roomId || (!castUrl && !screenStream && !queue.length)) {
@@ -934,7 +950,18 @@ export default function HomeScreen() {
               duration?: number;
               paused?: boolean;
               volume?: number;
+              fullscreen?: boolean;
+              needsGesture?: boolean;
             };
+            if (packet.framecast === 'fullscreen-state') {
+              if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+              fullscreenAckTimerRef.current = null;
+              setFullscreenNotice(packet.fullscreen
+                ? 'Full screen is active on the TV.'
+                : packet.needsGesture
+                  ? 'This TV browser needs a button press on the TV. Press OK or Full screen on the TV remote.'
+                  : 'The TV did not enter full screen. Try the TV remote.');
+            }
             if (packet.framecast === 'video-state') {
               setRemoteVideoPosition({
                 currentTime: Number.isFinite(packet.currentTime) ? Math.max(0, packet.currentTime ?? 0) : 0,
@@ -1162,13 +1189,30 @@ export default function HomeScreen() {
   }, [roomId, preparingMedia, selectedMedia]);
 
   const sendPlaybackControl = (action: string) => {
+    if (action === 'video:fullscreen') {
+      if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+      setFullscreenNotice('Requesting full screen on the TV…');
+      fullscreenAckTimerRef.current = setTimeout(() => {
+        fullscreenAckTimerRef.current = null;
+        setFullscreenNotice((current) => current === 'Requesting full screen on the TV…'
+          ? 'If the TV did not switch, press OK or Full screen on the TV remote. Some TV browsers require a local button press.'
+          : current);
+      }, 3000);
+    }
     if (localSessionRef.current) {
       sendSignal('player-command', { sessionId: localSessionRef.current, action });
       if (action === 'play' || action === 'pause') setPaused(action === 'pause');
       return;
     }
     const channel = controlChannelRef.current;
-    if (channel?.readyState !== 'open') return;
+    if (channel?.readyState !== 'open') {
+      if (action === 'video:fullscreen') {
+        if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+        fullscreenAckTimerRef.current = null;
+        setFullscreenNotice('TV controls are reconnecting. Try again once connected.');
+      }
+      return;
+    }
     channel.send(action);
     if (action === 'play' || action === 'pause') setPaused(action === 'pause');
   };
@@ -1182,6 +1226,9 @@ export default function HomeScreen() {
   };
 
   const leaveRoom = () => {
+    if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
+    fullscreenAckTimerRef.current = null;
+    setFullscreenNotice('');
     autoSendAfterSelectionRef.current = false;
     currentRoomRef.current = '';
     setBackgroundEnabled(false);
@@ -1741,6 +1788,11 @@ export default function HomeScreen() {
                     <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Full screen on TV</Text>
                   </Pressable>
                 </View>
+                {fullscreenNotice ? (
+                  <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLabel={fullscreenNotice} testID="text-phone-fullscreen-notice">
+                    {fullscreenNotice}
+                  </Text>
+                ) : null}
                 <View style={styles.playbackRow}>
                   <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => sendPlaybackControl('video:seek-by:-10')} accessibilityLabel="Skip back 10 seconds on TV" testID="button-phone-video-back">
                     <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>−10s</Text>

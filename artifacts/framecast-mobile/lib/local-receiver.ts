@@ -25,7 +25,7 @@ try{
 }catch(e){document.getElementById('notice').textContent='Invalid pairing address.';return;}
 var video=document.getElementById('video'),bar=document.getElementById('bar'),notice=document.getElementById('notice');
 video.style.objectFit='contain';
-var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='';
+var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='',fullscreenFeedback='',videoOutputTimer=0;
 var session=config.sessionId,fullscreenAttempted=false,fullscreenDenied=false;
 function post(type,payload){
  return fetch(endpoint.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'tv',type:type,payload:payload})}).then(function(r){if(!r.ok)throw Error('Connection failed');return r.json();});
@@ -34,7 +34,7 @@ function state(){
  if(stateBusy||exiting)return;
  stateBusy=true;
  post('player-state',{sessionId:session,currentTime:video.currentTime||0,duration:isFinite(video.duration)?video.duration:0,
- volume:video.muted?0:video.volume,paused:video.paused,playback:playback,message:problem}).catch(function(){}).then(function(){stateBusy=false;});
+ volume:video.muted?0:video.volume,paused:video.paused,playback:playback,message:problem||fullscreenFeedback}).catch(function(){}).then(function(){stateBusy=false;});
 }
 function leave(after){
  exiting=true;video.pause();
@@ -43,22 +43,31 @@ function leave(after){
 }
 function reveal(){seconds=5;bar.style.display='flex';document.getElementById('timer').textContent='5';}
 function fullscreen(){
- var requests=[video.webkitEnterFullscreen,video.webkitEnterFullScreen,video.requestFullscreen,video.webkitRequestFullscreen,video.webkitRequestFullScreen];
+ var requests=[[video,video.webkitEnterFullscreen],[video,video.webkitEnterFullScreen],[video,video.requestFullscreen],[video,video.webkitRequestFullscreen],[video,video.webkitRequestFullScreen],
+  [document.documentElement,document.documentElement.requestFullscreen],[document.documentElement,document.documentElement.webkitRequestFullscreen],[document.documentElement,document.documentElement.webkitRequestFullScreen]];
+ fullscreenFeedback='FULLSCREEN_REQUESTED';
  function next(i){
-  if(i>=requests.length){fullscreenDenied=true;notice.textContent='Select Full screen with the TV remote. This browser needs a TV button press.';reveal();return;}
-  if(!requests[i]){next(i+1);return;}
-  try{Promise.resolve(requests[i].call(video)).then(function(){fullscreenDenied=false;notice.textContent='';},function(){next(i+1);});}catch(e){next(i+1);}
+  if(i>=requests.length){fullscreenDenied=true;fullscreenFeedback='FULLSCREEN_NEEDS_TV_REMOTE';notice.textContent='Press Full screen or OK on the TV remote. This TV browser requires its own button press.';reveal();state();return;}
+  var owner=requests[i][0],request=requests[i][1];
+  if(!request){next(i+1);return;}
+  try{Promise.resolve(request.call(owner)).then(function(){setTimeout(function(){if(isFullscreen()){fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_OK';notice.textContent='';state();}else next(i+1);},250);},function(){next(i+1);});}catch(e){next(i+1);}
  }
  next(0);
 }
 function isFullscreen(){
  return !!(document.fullscreenElement||document.webkitFullscreenElement||video.webkitDisplayingFullscreen||video.webkitPresentationMode==='fullscreen');
 }
+function fullscreenChanged(){
+ if(isFullscreen()){fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_OK';}
+ else if(fullscreenFeedback==='FULLSCREEN_OK')fullscreenFeedback='FULLSCREEN_EXITED';
+ state();
+}
+if(document.addEventListener){document.addEventListener('fullscreenchange',fullscreenChanged);document.addEventListener('webkitfullscreenchange',fullscreenChanged);}
 function exitFullscreen(){
  var native=video.webkitDisplayingFullscreen||video.webkitPresentationMode==='fullscreen';
  var request=native?(video.webkitExitFullscreen||video.webkitExitFullScreen):(document.exitFullscreen||document.webkitExitFullscreen||document.webkitCancelFullScreen);
  if(request){try{var result=request.call(native?video:document);if(result&&result.catch)result.catch(function(){});}catch(e){}}
- fullscreenDenied=false;reveal();
+ fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_EXITED';reveal();state();
 }
 function play(){var result=video.play();if(result&&result.catch)result.catch(function(){notice.textContent='Press Play on the TV remote to start with sound.';playback='blocked';state();reveal();});}
 function command(action){
@@ -69,7 +78,8 @@ function command(action){
  else if(action.indexOf('video:volume:')===0){var v=Number(action.slice(13));if(isFinite(v)){video.volume=Math.min(1,Math.max(0,v));video.muted=v===0;}}
  else if(action==='video:mute')video.muted=!video.muted;
   else if(action==='video:fit:contain')video.style.objectFit='contain';
- else if(action==='video:fullscreen')fullscreen();
+ else if(action==='video:fullscreen'||action==='fullscreen:enter')fullscreen();
+ else if(action==='fullscreen:exit')exitFullscreen();
  state();
 }
 function poll(){
@@ -114,13 +124,23 @@ document.onkeydown=function(e){
 document.onmousemove=reveal;document.onclick=reveal;document.ontouchstart=reveal;
 setInterval(function(){if(--seconds<=0)bar.style.display='none';else document.getElementById('timer').textContent=String(seconds);},1000);
 var networkRetryDeadline=0,networkRetryTimer=0,resumePosition=0,playedAtLeastOnce=false;
-video.onplaying=function(){playedAtLeastOnce=true;networkRetryDeadline=0;clearTimeout(networkRetryTimer);playback='playing';problem='';notice.textContent='';state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
+function checkVideoOutput(){
+ clearTimeout(videoOutputTimer);
+ videoOutputTimer=setTimeout(function(){
+  if(exiting||video.paused||video.ended||video.videoWidth>0||video.currentTime<1||!isFinite(video.duration))return;
+  playback='error';fullscreenFeedback='';
+  problem='The TV is playing sound but has not decoded a picture. This TV browser may not support this video format, such as HEVC/H.265. Try an H.264/AVC MP4 or a compatible TV player.';
+  notice.textContent=problem;video.pause();state();reveal();
+ },2500);
+}
+video.onplaying=function(){playedAtLeastOnce=true;networkRetryDeadline=0;clearTimeout(networkRetryTimer);playback='playing';problem='';notice.textContent='';checkVideoOutput();state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
 video.addEventListener('loadedmetadata',function(){if(resumePosition>0){video.currentTime=resumePosition;resumePosition=0;}});
-video.onwebkitendfullscreen=function(){fullscreenDenied=false;reveal();};
-video.onpause=function(){state();};
+video.onwebkitendfullscreen=function(){fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_EXITED';reveal();state();};
+video.onpause=function(){clearTimeout(videoOutputTimer);state();};
 video.onwaiting=function(){notice.textContent='Buffering from your phone…';};
-video.onended=function(){playback='ended';state();reveal();};
+video.onended=function(){clearTimeout(videoOutputTimer);playback='ended';state();reveal();};
 video.onerror=function(){
+  clearTimeout(videoOutputTimer);
  if(video.error&&(video.error.code===2||(playedAtLeastOnce&&video.error.code===4))&&!exiting){
   if(!networkRetryDeadline)networkRetryDeadline=Date.now()+60000;
   if(Date.now()<networkRetryDeadline){
