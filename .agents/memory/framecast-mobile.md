@@ -124,3 +124,9 @@ Keep upload signing strict: a configured upload password without its keystore mu
 **Why:** The workspace may have the Play-upload password configured even when a local test build has no upload-keystore path. Falling back silently would hide an incomplete production-signing setup.
 
 **How to apply:** Supply both signing inputs for a Play build. Scope any debug-test override to the individual command; do not delete the saved upload secret or weaken the signing plugin.
+
+For test APKs, preserve install compatibility by matching the signing certificate of the APK the user already has. If the prior test key is unavailable, a locally debug-signed APK will not update that install in place.
+
+**Why:** The prior test build's signing certificate did not match any debug or upload key retained in the workspace.
+
+**How to apply:** Compare the existing test APK's signer with the proposed build key before promising an in-place update. If they differ, tell the user that reinstalling may be required and that uninstalling clears app-local settings; use a stable test key for future builds.
