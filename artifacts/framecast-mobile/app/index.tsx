@@ -4,7 +4,10 @@ import {
   Alert,
   Keyboard,
   Linking,
+  NativeEventEmitter,
+  NativeModules,
   Platform,
+  PermissionsAndroid,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -104,7 +107,7 @@ type PeerLike = {
   onicecandidate: ((event: { candidate: { toJSON(): Record<string, unknown> } | null }) => void) | null;
   onconnectionstatechange: (() => void) | null;
   ondatachannel: ((event: { channel: DataChannelLike }) => void) | null;
-  createDataChannel(label: string): DataChannelLike;
+  createDataChannel(label: string, options?: { ordered?: boolean; maxRetransmits?: number }): DataChannelLike;
   addTrack(track: ScreenTrackLike, stream: ScreenStreamLike): unknown;
   createOffer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(description: { type: string; sdp?: string }): Promise<void>;
@@ -118,6 +121,25 @@ type ScreenStreamLike = {
   getTracks(): ScreenTrackLike[];
   getVideoTracks(): ScreenTrackLike[];
 };
+
+function decodeBase64AudioFrame(encoded: string): Uint8Array {
+  const input = encoded.replace(/[^A-Za-z0-9+/=]/g, '');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const padding = input.endsWith('==') ? 2 : input.endsWith('=') ? 1 : 0;
+  const bytes = new Uint8Array(Math.max(0, Math.floor(input.length * 3 / 4) - padding));
+  let output = 0;
+  for (let index = 0; index < input.length; index += 4) {
+    const a = alphabet.indexOf(input[index] || 'A');
+    const b = alphabet.indexOf(input[index + 1] || 'A');
+    const c = alphabet.indexOf(input[index + 2] || 'A');
+    const d = alphabet.indexOf(input[index + 3] || 'A');
+    const bits = (Math.max(0, a) << 18) | (Math.max(0, b) << 12) | (Math.max(0, c) << 6) | Math.max(0, d);
+    if (output < bytes.length) bytes[output++] = (bits >> 16) & 0xff;
+    if (output < bytes.length) bytes[output++] = (bits >> 8) & 0xff;
+    if (output < bytes.length) bytes[output++] = bits & 0xff;
+  }
+  return bytes;
+}
 
 type SignalMessage = {
   sequence: number;
@@ -299,6 +321,9 @@ export default function HomeScreen() {
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
   const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
+  const screenAudioChannelRef = useRef<DataChannelLike | null>(null);
+  const screenAudioSubscriptionRef = useRef<{ remove(): void } | null>(null);
+  const screenAudioAllowedRef = useRef(false);
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const autoSendAfterSelectionRef = useRef(false);
   const [mediaQueue, setMediaQueue] = useState<SelectedMedia[]>([]);
@@ -437,6 +462,11 @@ export default function HomeScreen() {
     transferComplete.current = true;
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
+    screenAudioSubscriptionRef.current?.remove();
+    screenAudioSubscriptionRef.current = null;
+    screenAudioChannelRef.current?.close();
+    screenAudioChannelRef.current = null;
+    void NativeModules.FrameCastBackground?.stopScreenAudioCapture?.().catch(() => undefined);
     mediaChannelRef.current = null;
     controlChannelRef.current = null;
     const screenStream = screenMirrorStreamRef.current;
@@ -457,6 +487,8 @@ export default function HomeScreen() {
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
     void stopLocalStream().catch(() => undefined);
     void stopBackgroundCasting().catch(() => undefined);
+    screenAudioSubscriptionRef.current?.remove();
+    void NativeModules.FrameCastBackground?.stopScreenAudioCapture?.().catch(() => undefined);
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
     peerRef.current?.close();
@@ -937,6 +969,42 @@ export default function HomeScreen() {
           // Ignore non-protocol messages on the media channel.
         }
       };
+      if (screenStream) {
+        const audioChannel = peer.createDataChannel('framecast-screen-audio', {
+          ordered: false,
+          maxRetransmits: 0,
+        });
+        screenAudioChannelRef.current = audioChannel;
+        audioChannel.onopen = () => {
+          if (!screenAudioAllowedRef.current) {
+            setTransferNotice('Screen mirroring is active without sound. Allow playback-audio access to mirror supported app audio.');
+            return;
+          }
+          const nativeAudio = NativeModules.FrameCastBackground;
+          if (!nativeAudio?.startScreenAudioCapture) {
+            setTransferNotice('Screen mirroring is active, but this Android build does not include playback-audio capture.');
+            return;
+          }
+          screenAudioSubscriptionRef.current?.remove();
+          const emitter = new NativeEventEmitter(nativeAudio);
+          screenAudioSubscriptionRef.current = emitter.addListener('framecast-screen-audio', (encoded: unknown) => {
+            if (typeof encoded !== 'string' || audioChannel.readyState !== 'open' || audioChannel.bufferedAmount > 16_000) return;
+            try {
+              audioChannel.send(decodeBase64AudioFrame(encoded));
+            } catch {
+              // Audio is best-effort; video mirroring stays active if a packet cannot be sent.
+            }
+          });
+          void nativeAudio.startScreenAudioCapture().then(
+            () => setTransferNotice('Mirroring your screen and supported app audio directly to the TV. Some apps block audio capture.'),
+            () => {
+              screenAudioSubscriptionRef.current?.remove();
+              screenAudioSubscriptionRef.current = null;
+              setTransferNotice('Screen mirroring is active without sound. This app may block audio capture.');
+            },
+          );
+        };
+      }
       const controlChannel = peer.createDataChannel('framecast-control');
       controlChannelRef.current = controlChannel;
       controlChannel.onmessage = (event) => {
@@ -1387,6 +1455,16 @@ export default function HomeScreen() {
       const nativeWebRTC = require('react-native-webrtc') as {
         mediaDevices: { getDisplayMedia(): Promise<ScreenStreamLike> };
       };
+      screenAudioAllowedRef.current = false;
+      if (Platform.Version >= 29) {
+        const audioPermission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, {
+          title: 'Allow playback audio for screen mirroring?',
+          message: 'FrameCast sends supported app playback audio directly to your TV. It does not record microphone audio.',
+          buttonPositive: 'Allow',
+          buttonNegative: 'Continue without sound',
+        });
+        screenAudioAllowedRef.current = audioPermission === PermissionsAndroid.RESULTS.GRANTED;
+      }
       stream = await nativeWebRTC.mediaDevices.getDisplayMedia();
       if (!stream.getVideoTracks().length) throw new Error('Android did not provide a screen video track.');
       if (!currentRoomRef.current) {
@@ -1411,6 +1489,7 @@ export default function HomeScreen() {
   };
 
   const stopScreenMirror = () => {
+    screenAudioAllowedRef.current = false;
     closePeer(true);
     setStage(roomId ? 'paired' : 'join');
     setTransferNotice('');
@@ -1584,7 +1663,7 @@ export default function HomeScreen() {
               <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="screen-mirroring-card">
                 <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Mirror your phone screen</Text>
                 <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
-                  Android will ask you to approve screen sharing. Everything visible on your phone, including notifications, can appear on the TV. Protected apps may block capture. This version mirrors the picture only, not app audio.
+                  Android asks you to approve screen sharing and playback-audio capture. Everything visible on your phone, including notifications, can appear on the TV. Supported app audio goes directly to the TV; protected apps may block video or sound. FrameCast does not record microphone audio.
                 </Text>
                 {screenMirrorActive ? (
                   <Pressable

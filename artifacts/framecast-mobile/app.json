@@ -26,10 +26,10 @@
         "android.permission.WAKE_LOCK",
         "android.permission.ACCESS_WIFI_STATE",
         "android.permission.CHANGE_WIFI_STATE",
-        "android.permission.CHANGE_NETWORK_STATE"
+        "android.permission.CHANGE_NETWORK_STATE",
+        "android.permission.RECORD_AUDIO"
       ],
       "blockedPermissions": [
-        "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.BLUETOOTH"
       ]
@@ -39,6 +39,7 @@
     },
     "plugins": [
       "./plugins/with-background-casting.cjs",
+      "./plugins/with-screen-audio-capture.cjs",
       "./plugins/with-android-upload-signing.cjs",
       "expo-router",
       "expo-camera",
@@ -47,14 +48,14 @@
         {
           "photosPermission": "FrameCast needs access to let you choose a photo or video to send to your TV.",
           "cameraPermission": "FrameCast uses the camera only to scan the TV pairing code.",
-          "microphonePermission": false
+          "microphonePermission": "FrameCast uses Android playback capture to send supported app audio directly to your TV. It does not record microphone audio."
         }
       ],
       [
         "@config-plugins/react-native-webrtc",
         {
           "cameraPermission": "FrameCast uses the camera only to scan the TV pairing code.",
-          "microphonePermission": "FrameCast does not record audio."
+          "microphonePermission": "FrameCast uses Android playback capture to send supported app audio directly to your TV during screen mirroring. It does not record microphone audio."
         }
       ],
       "expo-dev-client"

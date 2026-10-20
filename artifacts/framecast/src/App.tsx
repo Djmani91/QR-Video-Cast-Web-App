@@ -26,6 +26,7 @@ import { createAutoFullscreen } from './lib/auto-fullscreen';
 import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, type ScopedIceCandidate } from './lib/session-recovery';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
+import { createScreenMirrorAudioPlayer, type ScreenMirrorAudioPlayer } from './lib/screen-mirror-audio';
 import { configureVideoSender, preferHardwareVideoCodec } from './lib/video-stream-quality';
 import { monitorVideoStream, readVideoStats, type StreamHealth } from './lib/video-stream-health';
 import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/video-playlist';
@@ -1128,7 +1129,20 @@ function TvPage() {
             peer.ondatachannel = (event) => {
               if (peerRef.current !== peer) { event.channel.close(); return; }
               const channel = event.channel;
-              if (channel.label === 'framecast-media') {
+              if (channel.label === 'framecast-screen-audio') {
+                const audioPlayer = createScreenMirrorAudioPlayer();
+                screenMirrorAudioRef.current = audioPlayer;
+                channel.binaryType = 'arraybuffer';
+                channel.onmessage = (message) => {
+                  if (peerRef.current === peer) audioPlayer?.push(message.data);
+                };
+                channel.onclose = () => {
+                  if (screenMirrorAudioRef.current === audioPlayer) {
+                    audioPlayer?.close();
+                    screenMirrorAudioRef.current = null;
+                  }
+                };
+              } else if (channel.label === 'framecast-media') {
                 videoMediaChannelRef.current = channel;
                 channel.binaryType = 'arraybuffer';
                 channel.onmessage = (message) => {
@@ -2131,6 +2145,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const videoWarningRef = useRef('');
   const phoneVideoStreamRef = useRef<PhoneVideoStream | null>(null);
   const phoneAudioGraphRef = useRef<PhoneAudioGraph | null>(null);
+  const screenMirrorAudioRef = useRef<ScreenMirrorAudioPlayer | null>(null);
   const fileQueueRef = useRef<File[]>([]);
   const seenRef = useRef(new Set<number>());
   const queuedCandidates = useRef<ScopedIceCandidate[]>([]);
@@ -2168,6 +2183,8 @@ function PhonePage({ roomId }: { roomId?: string }) {
     activeSessionRef.current = null;
     phoneVideoStreamRef.current?.stop();
     phoneVideoStreamRef.current = null;
+    screenMirrorAudioRef.current?.close();
+    screenMirrorAudioRef.current = null;
     selectionRunRef.current += 1;
     setPreparingSelection(false);
     transferRunRef.current += 1;
