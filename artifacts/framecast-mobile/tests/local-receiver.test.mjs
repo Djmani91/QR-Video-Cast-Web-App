@@ -10,9 +10,9 @@ function receiver() {
   const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back'].map((id) => [id, { style: {}, textContent: '' }]));
   const video = {
     currentTime: 12, duration: 3600, volume: 1, muted: false, paused: true,
-    style: {},
-    addEventListener() {},
-    load() {},
+    readyState: 0, videoWidth: 1920, error: null, style: {}, listeners: {}, loadCount: 0,
+    addEventListener(name, listener) { this.listeners[name] = listener; },
+    load() { this.loadCount += 1; },
     play() { this.paused = false; return Promise.resolve(); },
     pause() { this.paused = true; },
   };
@@ -158,14 +158,44 @@ test('rejects public hosts disguised as a private address when switching videos'
   assert.equal(r.location.next, undefined);
 });
 
-test('codec or network failure reports a useful error rather than successful playback', async () => {
+test('a temporary initial video request failure is retried and can recover', async () => {
   const r = receiver();
+  await flush();
+  r.video.error = { code: 2 };
+  r.video.onerror();
+  await flush();
+  let states = r.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body));
+  assert.equal(states.at(-1).payload.playback, 'opening');
+  assert.match(r.elements.notice.textContent, /reopening/i);
+
+  r.timers.get(900)();
+  assert.equal(r.video.loadCount, 2);
+  r.video.readyState = 1;
+  r.video.listeners.loadedmetadata();
+  r.video.paused = false;
+  r.video.onplaying();
+  await flush();
+  states = r.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body));
+  assert.equal(states.at(-1).payload.playback, 'playing');
+});
+
+test('an unsupported format still fails clearly after bounded startup retries', async () => {
+  const r = receiver();
+  await flush();
+  r.video.error = { code: 4 };
+  r.video.onerror();
+  await flush();
+  r.timers.get(900)();
+  await flush();
+  r.video.onerror();
+  await flush();
+  r.timers.get(1800)();
   await flush();
   r.video.onerror();
   await flush();
   const states = r.requests.filter((request) => request.method === 'POST').map((request) => JSON.parse(request.body));
   assert.equal(states.at(-1).payload.playback, 'error');
-  assert.match(states.at(-1).payload.message, /video.*format/i);
+  assert.match(states.at(-1).payload.message, /format.*codec/i);
 });
 
 test('audio-only playback reports that the TV did not decode video frames', async () => {

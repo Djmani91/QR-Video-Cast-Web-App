@@ -123,7 +123,7 @@ document.onkeydown=function(e){
 };
 document.onmousemove=reveal;document.onclick=reveal;document.ontouchstart=reveal;
 setInterval(function(){if(--seconds<=0)bar.style.display='none';else document.getElementById('timer').textContent=String(seconds);},1000);
-var networkRetryDeadline=0,networkRetryTimer=0,resumePosition=0,playedAtLeastOnce=false;
+ var networkRetryDeadline=0,networkRetryTimer=0,startupRetryTimer=0,startupRetryCount=0,resumePosition=0,playedAtLeastOnce=false;
 function checkVideoOutput(){
  clearTimeout(videoOutputTimer);
  videoOutputTimer=setTimeout(function(){
@@ -134,14 +134,31 @@ function checkVideoOutput(){
  },2500);
 }
 video.onplaying=function(){playedAtLeastOnce=true;networkRetryDeadline=0;clearTimeout(networkRetryTimer);playback='playing';problem='';notice.textContent='';checkVideoOutput();state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
-video.addEventListener('loadedmetadata',function(){if(resumePosition>0){video.currentTime=resumePosition;resumePosition=0;}});
+ video.addEventListener('loadedmetadata',function(){
+  startupRetryCount=0;clearTimeout(startupRetryTimer);
+  if(resumePosition>0){video.currentTime=resumePosition;resumePosition=0;}
+ });
 video.onwebkitendfullscreen=function(){fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_EXITED';reveal();state();};
 video.onpause=function(){clearTimeout(videoOutputTimer);state();};
 video.onwaiting=function(){notice.textContent='Buffering from your phone…';};
 video.onended=function(){clearTimeout(videoOutputTimer);playback='ended';state();reveal();};
 video.onerror=function(){
   clearTimeout(videoOutputTimer);
- if(video.error&&(video.error.code===2||(playedAtLeastOnce&&video.error.code===4))&&!exiting){
+  var errorCode=video.error?video.error.code:0;
+  // TV browsers can briefly fail the first local-file request while a video
+  // is selected or the phone's server is being replaced. Reopen only during
+  // initial metadata loading, with a strict retry limit so unsupported codecs
+  // still fail promptly and honestly.
+  if(!playedAtLeastOnce&&video.readyState===0&&(errorCode===2||errorCode===4)&&startupRetryCount<2&&!exiting){
+   startupRetryCount++;
+   playback='opening';problem='';notice.textContent='Reopening the video from your phone…';state();
+   clearTimeout(startupRetryTimer);
+   startupRetryTimer=setTimeout(function(){
+    if(!exiting&&!playedAtLeastOnce&&video.readyState===0){video.load();play();}
+   },900*startupRetryCount);
+   return;
+  }
+  if(video.error&&(errorCode===2||(playedAtLeastOnce&&errorCode===4))&&!exiting){
   if(!networkRetryDeadline)networkRetryDeadline=Date.now()+60000;
   if(Date.now()<networkRetryDeadline){
    resumePosition=Math.max(resumePosition,video.currentTime||0);
@@ -149,7 +166,13 @@ video.onerror=function(){
    clearTimeout(networkRetryTimer);networkRetryTimer=setTimeout(function(){if(!exiting){video.load();play();}},2000);return;
   }
  }
- playback='error';problem='The TV could not play this video. Return to the phone app and retry; check the video format if the phone is already open.';notice.textContent=problem;state();reveal();
+  playback='error';
+  problem=errorCode===4
+   ? 'This TV browser does not support this video format or codec. Try a standard H.264/AVC MP4.'
+   : errorCode===3
+    ? 'The TV could not decode this video. Try a standard H.264/AVC MP4.'
+    : 'The TV could not read the video from your phone. Keep FrameCast open and try again.';
+  notice.textContent=problem;state();reveal();
 };
 video.src='./media'+(config.extension||'.mp4');
 video.load();play();setInterval(poll,500);setInterval(state,3000);poll();state();
