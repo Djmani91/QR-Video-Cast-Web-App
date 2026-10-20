@@ -42,3 +42,59 @@ mtime_ms = 1792494108155
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/4c06275a-3236-4f2f-8c73-0600aa902f6f/a110c29a-be76-4e11-92c1-84b4f7c498e6"
 storage_version_token = "1792494148754124"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "CxaXElX3rFCFkdsLHVWqT"
+uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Play-Upload.aab"
+type = "unspecified"
+title = "FrameCast — Google Play upload (AAB)"
+description = "Upload this signed Android App Bundle in Google Play Console. Package: com.tvcast.com, version 1.0.0."
+logical_id = "3f47ca6b-18d9-4427-b615-95b0e3d00797"
+content_hash = "sha256:1cca2c4f4c3c80dd43c1914313dc079d280dac888e3778d9073c77989fe417d5"
+size = 71848573
+mtime_ms = 1792495867753
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/3f47ca6b-18d9-4427-b615-95b0e3d00797/30236dd4-4436-4cd3-b7b5-2a6420133558"
+storage_version_token = "1792495983361734"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "0Crd_aRojvHjRIJGuMNvi"
+uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Play-Upload.apk"
+type = "unspecified"
+title = "FrameCast — signed APK for testing"
+description = "Install this APK directly on an Android device for testing. It is signed with the same upload key as the AAB."
+logical_id = "bfcbaf0a-05e9-49d8-b7ef-b0d701f17eb0"
+content_hash = "sha256:09d4ea067456eeb82695a9c78f74482a97131bc06b158c84e34f8111c2379e4d"
+size = 101749845
+mtime_ms = 1792495970981
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/bfcbaf0a-05e9-49d8-b7ef-b0d701f17eb0/5d897c1d-fe07-4a59-abed-db49201690ca"
+storage_version_token = "1792495985701891"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "s19OUhND2q3nIJRsEAqh1"
+uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Android-Upload-Key.jks"
+type = "unspecified"
+title = "FrameCast — upload keystore backup"
+description = "Password-protected signing key needed for future Android releases. Keep this file private and store it securely with your password; never commit or share it publicly."
+logical_id = "2b8b698b-001f-4e01-893a-60b689aec270"
+content_hash = "sha256:17f8fb7228154af7531ab0698527becceef90f9ca3200cc25d3aa9a9485cccd7"
+size = 2152
+mtime_ms = 1792495867757
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/2b8b698b-001f-4e01-893a-60b689aec270/3f74900f-43be-48e8-b245-2a6987e30a84"
+storage_version_token = "1792495986448725"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "yWxKthm-y5fmKPTF47kTl"
+uri = "file://generated-artifacts/framecast-android-downloads/FrameCast-Android-Upload-Certificate.pem"
+type = "unspecified"
+title = "FrameCast — upload certificate"
+description = "Public certificate for the upload key, if Google Play Console requests it."
+logical_id = "6c4ec0f5-9e3f-4e62-9098-d57594c46651"
+content_hash = "sha256:ad95d8f4daab9ab34366d231bae07470061ac0f3b38806ca621949c26dcad3dc"
+size = 1143
+mtime_ms = 1792495867757
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/6c4ec0f5-9e3f-4e62-9098-d57594c46651/af1589fa-b059-4ecb-8bc6-28b1b314c118"
+storage_version_token = "1792495987168678"
+content_type = "application/octet-stream"
