@@ -28,6 +28,18 @@ module.exports = function withBackgroundCasting(config) {
       }
       result.modResults.contents = result.modResults.contents.replace(marker, `${marker}\n              ${registration}`);
     }
+    const enableMediaProjectionService =
+      'com.oney.WebRTCModule.WebRTCModuleOptions.getInstance().enableMediaProjectionService = true';
+    if (!result.modResults.contents.includes(enableMediaProjectionService)) {
+      const marker = 'super.onCreate()';
+      if (!result.modResults.contents.includes(marker)) {
+        throw new Error('Cannot enable the WebRTC media projection service in this Android template.');
+      }
+      result.modResults.contents = result.modResults.contents.replace(
+        marker,
+        `${marker}\n    ${enableMediaProjectionService}`,
+      );
+    }
     return result;
   });
   return withDangerousMod(config, ['android', async result => {
