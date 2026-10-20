@@ -33,13 +33,13 @@ Preserve a populated default branch when uploading a clean Android source export
 
 **Why:** The repository gained existing project files while the clean source was being prepared, so the initially empty repository could no longer safely accept that export as its default branch.
 
-**How to apply:** Recheck remote refs before uploading. Build the allowlisted source separately and leave the existing default branch untouched unless the user explicitly approves integration or replacement.
+**How to apply:** Recheck remote refs before uploading. Build the allowlisted source separately and leave the existing default branch untouched unless the user explicitly approves integration or replacement. Before each later APK build, refresh the allowlisted native app sources and any new components from the working app into the separate build checkout. Expo preview edits do not automatically update that copy or an already-running build; state that distinction clearly when previewing newer UI.
 
-Verify authenticated repository access before promising GitHub changes; the source-control connection's active/healthy status alone is not proof of usable workspace credentials.
+Verify authenticated repository access before promising GitHub changes; the source-control connection's active/healthy status alone is not proof of usable workspace credentials. When the GitHub CLI uses a non-default config directory, raw Git HTTPS pushes need the Git credential helper registered from that same CLI config.
 
-**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed. A user reconnect did not fix the CLI; GitHub's official CLI browser sign-in did authorize repository administration.
+**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed. A user reconnect did not fix the CLI; GitHub's official CLI browser sign-in did authorize repository administration. In this workspace, `gh api` succeeded but Git's HTTPS push still failed until the CLI credential helper was set up.
 
-**How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated integration reconnects. Use GitHub CLI's official browser/device approval as an alternate authorization path; never request a raw token in chat. Confirm the intended account and private repository visibility before pushing.
+**How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated integration reconnects. Use GitHub CLI's official browser/device approval as an alternate authorization path; never request a raw token in chat. For a non-default config, export `GH_CONFIG_DIR` for `gh auth setup-git --hostname github.com` and the Git push. Confirm the intended account and private repository visibility before pushing.
 
 Keep CLI login configuration in an ignored, non-temporary location outside the clean source export, and have the upload ready before asking for browser approval.
 
@@ -64,3 +64,15 @@ Deliver an installable Android APK for testing first; the user will request iOS 
 **Why:** The user explicitly requested Android first and described Web Video Caster's background permission and external playback controls as the desired experience.
 
 **How to apply:** Prioritize Android and leave iOS unchanged until requested. Background casting needs real Android foreground-service/media-notification support, not just a permission popup or a browser wake lock. Do not imply an Expo preview is an APK, or promise continued casting after force-stop, network loss, or OS termination.
+
+Use neutral video-link wording, not YouTube-specific branding, in the mobile app's URL section.
+
+**Why:** The user requested different wording because they are concerned about Google Play review.
+
+**How to apply:** Keep titles, example addresses and instructional copy generic. Preserve supported official playback behavior and honest compatibility limitations; changing the wording is not a guarantee of store approval.
+
+Android screen mirroring uses the system MediaProjection consent prompt and the native WebRTC screen-capture API as a direct video track. This capture path does not include app or system audio.
+
+**Why:** The current native WebRTC display-capture API supplies a screen video track only; screen sharing must not be described as capturing sound.
+
+**How to apply:** Keep Android permission consent visible, send screen frames peer-to-peer, stop the track when sharing ends, and state clearly that mirrored audio is not available through this implementation.

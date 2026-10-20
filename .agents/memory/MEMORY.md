@@ -1,6 +1,7 @@
 - [FrameCast privacy](framecast-privacy.md) — video must remain peer-to-peer; do not persist user data or media.
 - [Samsung TV target](framecast-samsung.md) — start with Samsung's built-in browser, not a native Tizen app.
 - [FrameCast native companion](framecast-mobile.md) — native iOS/Android needs a custom WebRTC build; stage Android picker content URIs in temporary cache before transfer.
+- [FrameCast APK Git auth](framecast-mobile.md) — configure Git’s HTTPS credential helper with the same isolated GitHub CLI credentials used for authenticated API reads.
 - [FrameCast signaling contract](framecast-signaling.md) — explicitly define nested offer fields in OpenAPI; generated Zod strips undeclared signaling data.
 - [FrameCast production QueryClient](framecast-production-build.md) — Vite must bundle one TanStack Query context for the app and generated API hooks.
 - [FrameCast video playback](framecast-video-streaming.md) — local files stream directly; ordinary YouTube links use the official player, never stream extraction or proxying.

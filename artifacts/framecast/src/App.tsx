@@ -481,6 +481,7 @@ function TvPage() {
   const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
+  const [screenMirroring, setScreenMirroring] = useState(false);
   const receiverMediaKindRef = useRef(mediaKind);
   receiverMediaKindRef.current = mediaKind;
   const [error, setError] = useState('');
@@ -1114,6 +1115,7 @@ function TvPage() {
             setError('');
             setMediaKind(signal.payload.mediaKind === 'image' ? 'image' : 'video');
             stopPeer();
+            setScreenMirroring(signal.payload.mediaSource === 'screen');
             const peer = new RTCPeerConnection(rtcConfig);
             offerPeer = peer;
             peerRef.current = peer;
@@ -1809,6 +1811,7 @@ function TvPage() {
       } else if (signal.type === 'close') {
         if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
         stopPeer();
+        setScreenMirroring(false);
         setError('');
         setStatus('paired');
       }
@@ -1834,7 +1837,9 @@ function TvPage() {
   const phoneUrl = room ? `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/send/${encodeURIComponent(room.id)}` : '';
   const roomExpired = Boolean(room && new Date(room.expiresAt).getTime() <= clock);
   const statusCopy = status === 'connected'
-    ? transferProgress !== null && transferProgress < 100
+    ? screenMirroring
+      ? 'Phone screen mirrored live. Stop sharing from your phone when finished.'
+      : transferProgress !== null && transferProgress < 100
       ? photoPreviewVisible && mediaKind === 'image'
         ? 'Quick photo preview is on screen. The full photo is arriving directly.'
         : `Connected. Receiving the guest’s ${mediaKind === 'image' ? 'photo' : 'video'}…`

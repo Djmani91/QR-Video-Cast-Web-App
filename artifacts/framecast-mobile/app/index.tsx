@@ -16,7 +16,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { File as ExpoFile, Paths } from 'expo-file-system';
+import { Directory, File as ExpoFile, Paths } from 'expo-file-system';
+import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
@@ -31,6 +32,11 @@ import {
   updateBackgroundCasting,
 } from '@/lib/background-casting';
 import { useColors } from '@/hooks/useColors';
+import { CastTabs, type CastTab } from '@/components/CastTabs';
+import { AppSettings } from '@/components/AppSettings';
+import { clearFrameCastCache } from '@/lib/local-data-policy';
+
+const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
 import {
   getGetCastRoomMessagesQueryKey,
   useGetCastRoomMessages,
@@ -95,11 +101,18 @@ type PeerLike = {
   onconnectionstatechange: (() => void) | null;
   ondatachannel: ((event: { channel: DataChannelLike }) => void) | null;
   createDataChannel(label: string): DataChannelLike;
+  addTrack(track: ScreenTrackLike, stream: ScreenStreamLike): unknown;
   createOffer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(description: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(description: { type: string; sdp?: string }): Promise<void>;
   addIceCandidate(candidate: unknown): Promise<void>;
   close(): void;
+};
+
+type ScreenTrackLike = { stop(): void; onended?: (() => void) | null };
+type ScreenStreamLike = {
+  getTracks(): ScreenTrackLike[];
+  getVideoTracks(): ScreenTrackLike[];
 };
 
 type SignalMessage = {
@@ -262,6 +275,7 @@ async function resolveVideoLink(input: string) {
 export default function HomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const lookupRoom = useLookupCastRoomByCode();
   const sendSignalMutation = useSendCastRoomMessage();
@@ -273,6 +287,9 @@ export default function HomeScreen() {
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
   const [backgroundEnabled, setBackgroundEnabled] = useState(false);
+  const [screenMirrorActive, setScreenMirrorActive] = useState(false);
+  const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
+  const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
   const [backgroundStarting, setBackgroundStarting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [mediaQueue, setMediaQueue] = useState<SelectedMedia[]>([]);
@@ -282,6 +299,7 @@ export default function HomeScreen() {
   const [error, setError] = useState('');
   const [transferNotice, setTransferNotice] = useState('');
   const [videoLink, setVideoLink] = useState('');
+  const [castTab, setCastTab] = useState<CastTab>('url');
   const [videoLinkError, setVideoLinkError] = useState('');
   const [checkingVideoLink, setCheckingVideoLink] = useState(false);
   const [isUrlPlayback, setIsUrlPlayback] = useState(false);
@@ -303,6 +321,7 @@ export default function HomeScreen() {
   const peerRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
   const temporaryMediaUrisRef = useRef(new Set<string>());
+  const pendingMediaPreparationsRef = useRef(new Set<Promise<unknown>>());
   const queueIndexRef = useRef(0);
   const queueRunningRef = useRef(false);
   const transferRunRef = useRef(0);
@@ -312,6 +331,15 @@ export default function HomeScreen() {
   const seenMessages = useRef(new Set<number>());
   const queuedIce = useRef<Record<string, unknown>[]>([]);
   const scanHandled = useRef(false);
+
+  function trackMediaPreparation<T>(operation: Promise<T>): Promise<T> {
+    pendingMediaPreparationsRef.current.add(operation);
+    void operation.then(
+      () => pendingMediaPreparationsRef.current.delete(operation),
+      () => pendingMediaPreparationsRef.current.delete(operation),
+    );
+    return operation;
+  }
 
   const cleanupTemporaryCopies = useCallback((keepUris: Set<string> = new Set()) => {
     for (const uri of temporaryMediaUrisRef.current) {
@@ -366,6 +394,14 @@ export default function HomeScreen() {
     controlChannelRef.current?.close();
     mediaChannelRef.current = null;
     controlChannelRef.current = null;
+    const screenStream = screenMirrorStreamRef.current;
+    screenMirrorStreamRef.current = null;
+    screenStream?.getTracks().forEach((track) => {
+      track.onended = null;
+      track.stop();
+    });
+    setScreenMirrorActive(false);
+    setScreenMirrorStarting(false);
     peerRef.current?.close();
     peerRef.current = null;
   }, [roomId, sendSignal]);
@@ -454,6 +490,7 @@ export default function HomeScreen() {
           queueRunningRef.current = false;
           setQueueRunning(false);
           setStage('join');
+          setCastTab('url');
           setError('The TV started a new room. Scan its new code to reconnect.');
         } else {
           setStage('paired');
@@ -485,6 +522,7 @@ export default function HomeScreen() {
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setRoomId(id);
+    setCastTab('url');
     setSelectedMedia(null);
     setMediaQueue([]);
     mediaQueueRef.current = [];
@@ -668,10 +706,10 @@ export default function HomeScreen() {
     }
   };
 
-  const startTransfer = async (remoteUrl?: string) => {
+  const startTransfer = async (remoteUrl?: string, screenStream?: ScreenStreamLike) => {
     const castUrl = remoteUrl ? normalizeVideoLink(remoteUrl) : null;
-    const queue = castUrl ? [] : mediaQueueRef.current.length ? mediaQueueRef.current : selectedMedia ? [selectedMedia] : [];
-    if (!roomId || (!castUrl && !queue.length)) {
+    const queue = castUrl || screenStream ? [] : mediaQueueRef.current.length ? mediaQueueRef.current : selectedMedia ? [selectedMedia] : [];
+    if (!roomId || (!castUrl && !screenStream && !queue.length)) {
       setError('Choose photos or a video first.');
       return;
     }
@@ -702,7 +740,7 @@ export default function HomeScreen() {
       // can seek anywhere, and does not wait for a complete WebRTC file copy.
       if (!castUrl && queue.length === 1 && queue[0].kind === 'video' && Platform.OS !== 'web') {
         setTransferNotice('Opening the video directly over your Wi-Fi…');
-        const stream = await startLocalStream(queue[0].uri, queue[0].name);
+        const stream = await trackMediaPreparation(startLocalStream(queue[0].uri, queue[0].name));
         if (transferRun !== transferRunRef.current) {
           await stopLocalStream();
           return;
@@ -743,6 +781,20 @@ export default function HomeScreen() {
 
       const peer = createPeerConnection();
       peerRef.current = peer;
+      if (screenStream) {
+        screenMirrorStreamRef.current = screenStream;
+        screenStream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            if (screenMirrorStreamRef.current !== screenStream) return;
+            closePeer(true);
+            setStage('paired');
+            setTransferNotice('');
+          };
+          peer.addTrack(track, screenStream);
+        });
+        transferComplete.current = true;
+        setScreenMirrorActive(true);
+      }
       let connectedOnce = false;
       const holdInterruptedConnection = () => {
         if (peerRecoveryTimerRef.current) return;
@@ -845,7 +897,7 @@ export default function HomeScreen() {
               }
                const itemId = media.kind === 'image' ? `${Date.now()}-${index}` : undefined;
                if (media.kind === 'image') {
-                 const previewDataUrl = await createPhotoPreviewDataUrl(media.uri);
+                 const previewDataUrl = await trackMediaPreparation(createPhotoPreviewDataUrl(media.uri));
                  if (previewDataUrl && transferRun === transferRunRef.current) {
                    await waitForBuffer(mediaChannel);
                    mediaChannel.send(JSON.stringify({
@@ -960,7 +1012,7 @@ export default function HomeScreen() {
             queueRunningRef.current = false;
             setQueueRunning(false);
             setStage('paired');
-            setError(transferError instanceof Error ? transferError.message : 'The video could not be sent. Try again.');
+            setError(transferError instanceof Error ? transferError.message : screenStream ? 'The TV could not receive the mirrored screen. Try again.' : 'The video could not be sent. Try again.');
           }
         })();
       };
@@ -983,6 +1035,10 @@ export default function HomeScreen() {
         if (transferRun !== transferRunRef.current) return;
         if (peer.connectionState === 'connected') {
           connectedOnce = true;
+          if (screenMirrorStreamRef.current === screenStream) {
+            setStage('sent');
+            setTransferNotice('Your phone screen is mirrored to the TV. Use Stop mirroring when finished.');
+          }
           if (peerRecoveryTimerRef.current) setError('');
           if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
           peerRecoveryTimerRef.current = null;
@@ -1011,8 +1067,9 @@ export default function HomeScreen() {
       sendSignal('offer', {
         type: offer.type,
         sdp: offer.sdp,
-        mediaKind: castUrl ? 'video' : queue[0].kind,
-        transport: 'data-channel',
+        mediaKind: castUrl || screenStream ? 'video' : queue[0].kind,
+        transport: screenStream ? 'track' : 'data-channel',
+        ...(screenStream ? { mediaSource: 'screen' } : {}),
       });
     } catch (transferError) {
       if (transferRun !== transferRunRef.current) return;
@@ -1061,9 +1118,58 @@ export default function HomeScreen() {
     setQueueIndex(0);
     setSentQueueCount(0);
     setStage('join');
+    setCastTab('url');
     setCode('');
     setSentBytes(0);
     setError('');
+  };
+
+  const clearLocalData = async () => {
+    if (preparingMedia || checkingVideoLink) {
+      throw new Error('Finish preparing media or checking the link before clearing local data.');
+    }
+    const previousRoom = roomId;
+    leaveRoom();
+    setVideoLink('');
+    setVideoLinkError('');
+    setTransferNotice('');
+    setTotalBytes(0);
+    setScanning(false);
+    scanHandled.current = true;
+    lookupRoom.reset();
+    if (previousRoom) {
+      const queryKey = getGetCastRoomMessagesQueryKey(previousRoom);
+      await queryClient.cancelQueries({ queryKey });
+      queryClient.removeQueries({ queryKey });
+    }
+    // A native thumbnail/server operation can finish after Disconnect. Wait
+    // before sweeping its cache so it cannot recreate files after success.
+    if (pendingMediaPreparationsRef.current.size) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.allSettled([...pendingMediaPreparationsRef.current]),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('Media is still preparing. Close and reopen FrameCast, then try clearing local data again.')), 30_000);
+          }),
+        ]);
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
+      }
+    }
+    const services = await Promise.allSettled([stopBackgroundCasting(), stopLocalStream()]);
+    if (services.some(result => result.status === 'rejected')) {
+      throw new Error('A casting service could not stop. Close and reopen FrameCast, then try clearing local data again.');
+    }
+    if (Platform.OS !== 'web') {
+      const cache = new Directory(Paths.cache);
+      clearFrameCastCache(cache.uri, cache.list().map(entry => ({
+        name: entry.name,
+        uri: entry.uri,
+        directory: entry instanceof Directory,
+        delete: () => entry.delete(),
+      })));
+    }
   };
 
   const backgroundControlRef = useRef<(action: string) => void>(() => undefined);
@@ -1115,6 +1221,49 @@ export default function HomeScreen() {
     );
   };
 
+  const startScreenMirror = async () => {
+    if (Platform.OS !== 'android' || !roomId) {
+      setError('Connect to the TV before starting screen mirroring.');
+      return;
+    }
+    if (screenMirrorStarting || screenMirrorActive) return;
+    setScreenMirrorStarting(true);
+    setError('');
+    let stream: ScreenStreamLike | null = null;
+    try {
+      const nativeWebRTC = require('react-native-webrtc') as {
+        mediaDevices: { getDisplayMedia(): Promise<ScreenStreamLike> };
+      };
+      stream = await nativeWebRTC.mediaDevices.getDisplayMedia();
+      if (!stream.getVideoTracks().length) throw new Error('Android did not provide a screen video track.');
+      if (!currentRoomRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      await startTransfer(undefined, stream);
+      if (screenMirrorStreamRef.current !== stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    } catch (reason) {
+      if (stream && screenMirrorStreamRef.current !== stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      const message = reason instanceof Error ? reason.message : String(reason);
+      setError(message === 'NotAllowedError'
+        ? 'Screen sharing was cancelled. Tap Start screen mirroring to try again.'
+        : message || 'Could not start screen mirroring. Keep FrameCast open and try again.');
+    } finally {
+      setScreenMirrorStarting(false);
+    }
+  };
+
+  const stopScreenMirror = () => {
+    closePeer(true);
+    setStage(roomId ? 'paired' : 'join');
+    setTransferNotice('');
+    setError('');
+  };
+
   const progress = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
   const activeColors = colors;
 
@@ -1130,13 +1279,31 @@ export default function HomeScreen() {
             <Ionicons name="lock-closed-outline" size={13} color={activeColors.primary} />
             <Text style={[styles.privacyChipText, { color: activeColors.primary }]}>PRIVATE</Text>
           </View>
+          <AppSettings onClearLocalData={clearLocalData} clearDisabled={preparingMedia || checkingVideoLink} />
         </View>
+
+        {stage !== 'join' && <CastTabs value={castTab} onChange={setCastTab} />}
 
         {stage === 'join' && (
           <View style={styles.main}>
             <Text style={[styles.kicker, { color: activeColors.primary }]}>PHONE COMPANION</Text>
             <Text style={[styles.title, { color: activeColors.foreground }]}>Send it to the big screen.</Text>
-            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Pair with the FrameCast page open on your TV. Share photos or videos from this phone, or paste a video link for the TV to open directly.</Text>
+            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Pair your phone with FrameCast on your TV to share photos, videos or a video link.</Text>
+
+            <View style={[styles.tvGuideCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="tv-pairing-instructions">
+              <Text style={[styles.tvGuideKicker, { color: activeColors.primary }]}>START ON YOUR TV</Text>
+              <Text style={[styles.tvGuideTitle, { color: activeColors.foreground }]}>Open FrameCast in the TV browser</Text>
+              <Text style={[styles.tvGuideCopy, { color: activeColors.mutedForeground }]}>Using the TV remote, open the Internet Browser and enter this address:</Text>
+              <Text
+                style={[styles.tvGuideAddress, { color: activeColors.primary, backgroundColor: activeColors.secondary }]}
+                selectable
+                accessibilityRole="text"
+                accessibilityLabel={`FrameCast TV website address: ${TV_BROWSER_ADDRESS}. Press and hold to copy.`}
+                testID="tv-browser-address"
+              >{TV_BROWSER_ADDRESS}</Text>
+              <Text style={[styles.tvGuideCopy, { color: activeColors.mutedForeground }]}>Press and hold the address to copy it, or type it into the TV’s address bar.</Text>
+              <Text style={[styles.tvGuideNext, { color: activeColors.foreground }]}>When the QR code and five-digit code appear on the TV, scan the QR code here or enter the code below.</Text>
+            </View>
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
               {scanning ? (
@@ -1230,7 +1397,41 @@ export default function HomeScreen() {
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
-            {backgroundCastingAvailable && (
+            {castTab === 'screen' && (
+              <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="screen-mirroring-card">
+                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Mirror your phone screen</Text>
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
+                  Android will ask you to approve screen sharing. Everything visible on your phone, including notifications, can appear on the TV. Protected apps may block capture. This version mirrors the picture only, not app audio.
+                </Text>
+                {screenMirrorActive ? (
+                  <Pressable
+                    onPress={stopScreenMirror}
+                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.destructive, opacity: pressed ? 0.86 : 1 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Stop screen mirroring"
+                    testID="button-stop-screen-mirroring"
+                  >
+                    <Ionicons name="stop-circle-outline" size={20} color={activeColors.destructiveForeground} />
+                    <Text style={[styles.primaryButtonText, { color: activeColors.destructiveForeground }]}>Stop mirroring</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={() => void startScreenMirror()}
+                    disabled={!roomId || screenMirrorStarting || stage === 'connecting' || stage === 'sending'}
+                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Start screen mirroring"
+                    testID="button-start-screen-mirroring"
+                  >
+                    <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
+                    <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
+                      {screenMirrorStarting ? 'Waiting for permission…' : !roomId ? 'Connect to the TV first' : 'Start screen mirroring'}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+            {backgroundCastingAvailable && castTab !== 'screen' && (
               <View style={[styles.videoLinkCard, { borderColor: activeColors.border }]} testID="card-background-casting">
                 <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Background casting</Text>
                 <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
@@ -1255,7 +1456,7 @@ export default function HomeScreen() {
                 </Pressable>
               </View>
             )}
-            {selectedMedia ? (
+            {castTab !== 'url' && castTab !== 'screen' && ((castTab === 'videos' ? selectedMedia?.kind === 'video' && !isUrlPlayback : selectedMedia?.kind === 'image') && selectedMedia ? (
               <View style={[styles.mediaCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
                 <View style={[styles.mediaIcon, { backgroundColor: activeColors.secondary }]}>
                   <Ionicons name={selectedMedia.kind === 'video' ? 'videocam-outline' : 'image-outline'} size={24} color={activeColors.primary} />
@@ -1281,8 +1482,7 @@ export default function HomeScreen() {
                   </Pressable>
                 </View>
               </View>
-            ) : (
-              <>
+            ) : castTab === 'images' ? (
                 <Pressable
                   onPress={() => void pickPhotos()}
                   disabled={preparingMedia}
@@ -1298,6 +1498,7 @@ export default function HomeScreen() {
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
+            ) : (
                 <Pressable
                   onPress={() => void pickVideo()}
                   disabled={preparingMedia}
@@ -1313,11 +1514,10 @@ export default function HomeScreen() {
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
-              </>
-            )}
-            {stage !== 'connecting' && stage !== 'sending' && (
+            ))}
+            {castTab === 'url' && stage !== 'connecting' && stage !== 'sending' && (
               <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
-                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Play a YouTube or video link</Text>
+                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Play a video link</Text>
                 <TextInput
                   value={videoLink}
                   onChangeText={(value) => {
@@ -1325,7 +1525,7 @@ export default function HomeScreen() {
                     setVideoLinkError('');
                   }}
                   style={[styles.urlInput, { borderColor: activeColors.border, backgroundColor: activeColors.background, color: activeColors.foreground }]}
-                  placeholder="https://www.youtube.com/watch?v=..."
+                  placeholder="https://example.com/video"
                   placeholderTextColor={activeColors.mutedForeground}
                   keyboardType="url"
                   autoCapitalize="none"
@@ -1356,10 +1556,10 @@ export default function HomeScreen() {
                     </Pressable>
                   </>
                 ) : null}
-                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>Copy a YouTube link with Share → Copy link and paste it here. The TV opens YouTube’s official player. Some videos block embedding or autoplay; direct MP4/M3U8 links also work.</Text>
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>Paste a supported video or webpage link, then tap Play on TV. Playback depends on the website and your TV. Some links require sign-in or do not allow playback on another screen.</Text>
               </View>
             )}
-            {selectedMedia?.kind === 'image' && stage !== 'sending' && (
+            {castTab === 'images' && selectedMedia?.kind === 'image' && stage !== 'sending' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>
                 {mediaQueue.length > 1
                   ? `${mediaQueue.length} photos queued. You can add more or send them together.`
@@ -1495,7 +1695,7 @@ export default function HomeScreen() {
               </>
             )}
 
-            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && (stage !== 'sent' || mediaQueue.length > 1 || Boolean(error)) && (
+            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (stage !== 'sent' || mediaQueue.length > 1 || Boolean(error)) && (
               <Pressable
                 onPress={() => void startTransfer()}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
@@ -1514,8 +1714,15 @@ export default function HomeScreen() {
                 <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{localPlayback ? 'Opening the video over Wi-Fi…' : stage === 'connecting' ? 'Creating a direct connection…' : 'Sending directly to the TV…'}</Text>
               </View>
             )}
-            <Pressable onPress={leaveRoom} style={styles.leaveButton} testID="button-leave-room">
-              <Text style={[styles.leaveText, { color: activeColors.mutedForeground }]}>Disconnect from this TV</Text>
+            <Pressable
+              onPress={leaveRoom}
+              style={({ pressed }) => [styles.leaveButton, { backgroundColor: activeColors.destructive, opacity: pressed ? 0.85 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Disconnect from this TV"
+              testID="button-leave-room"
+            >
+              <Ionicons name="unlink-outline" size={21} color={activeColors.destructiveForeground} />
+              <Text style={[styles.leaveText, { color: activeColors.destructiveForeground }]}>Disconnect from this TV</Text>
             </Pressable>
           </View>
         )}
@@ -1523,7 +1730,7 @@ export default function HomeScreen() {
         <View style={[styles.privacyNote, { borderTopColor: activeColors.border }]}>
           <Ionicons name="shield-checkmark-outline" size={18} color={activeColors.primary} />
           <Text style={[styles.privacyText, { color: activeColors.mutedForeground }]}>
-            Pairing stays active while in use and expires after 4 hours without activity. Phone files travel directly to the TV and are not stored. For a video link, the TV requests playback from the original site.
+            Pairing stays active while in use and expires after 4 hours without activity. Phone media is not stored on our servers. Temporary on-device copies can be removed in Settings. For a video link, the TV requests playback from the original site.
           </Text>
         </View>
 
@@ -1550,10 +1757,16 @@ const styles = StyleSheet.create({
   brand: { fontFamily: 'Inter_700Bold', fontSize: 20, letterSpacing: -0.7 },
   privacyChip: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: '#E9F0E8' },
   privacyChipText: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 0.9 },
-  main: { paddingTop: 36, flexGrow: 1 },
+  main: { paddingTop: 24, flexGrow: 1 },
   kicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.4, marginBottom: 10 },
   title: { fontFamily: 'Inter_700Bold', fontSize: 32, lineHeight: 38, letterSpacing: -1.1 },
-  subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 26 },
+  subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 16 },
+  tvGuideCard: { borderWidth: 1, borderRadius: 22, padding: 15, marginBottom: 10, gap: 7 },
+  tvGuideKicker: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3 },
+  tvGuideTitle: { fontFamily: 'Inter_700Bold', fontSize: 17, lineHeight: 22 },
+  tvGuideCopy: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17 },
+  tvGuideAddress: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 9, borderRadius: 10, fontFamily: 'Inter_600SemiBold', fontSize: 12, lineHeight: 17 },
+  tvGuideNext: { marginTop: 3, fontFamily: 'Inter_600SemiBold', fontSize: 12, lineHeight: 18 },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
   videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },
@@ -1599,8 +1812,8 @@ const styles = StyleSheet.create({
   videoTimeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   secondaryButton: { flex: 1, minHeight: 48, borderRadius: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   secondaryButtonText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  leaveButton: { alignSelf: 'center', paddingVertical: 18, marginTop: 4 },
-  leaveText: { fontFamily: 'Inter_500Medium', fontSize: 13 },
+  leaveButton: { minHeight: 56, paddingHorizontal: 20, paddingVertical: 16, marginTop: 10, borderRadius: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
+  leaveText: { fontFamily: 'Inter_700Bold', fontSize: 16 },
   privacyNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderTopWidth: 1, paddingTop: 17, marginTop: 28 },
   privacyText: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18 },
   errorBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, padding: 12, borderRadius: 13, marginTop: 14 },

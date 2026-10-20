@@ -79,6 +79,13 @@ export const CastSignalPayloadTransport = {
   track: 'track',
 } as const;
 
+export type CastSignalPayloadMediaSource = typeof CastSignalPayloadMediaSource[keyof typeof CastSignalPayloadMediaSource];
+
+
+export const CastSignalPayloadMediaSource = {
+  screen: 'screen',
+} as const;
+
 export interface CastSignalPayload {
   sessionId?: string;
   receiverUrl?: string;
@@ -94,6 +101,7 @@ export interface CastSignalPayload {
   sdp?: string;
   mediaKind?: CastSignalPayloadMediaKind;
   transport?: CastSignalPayloadTransport;
+  mediaSource?: CastSignalPayloadMediaSource;
   candidate?: string;
   /** @nullable */
   sdpMid?: string | null;

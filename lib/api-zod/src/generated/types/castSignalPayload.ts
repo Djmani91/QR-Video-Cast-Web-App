@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CastSignalPayloadMediaKind } from './castSignalPayloadMediaKind';
+import type { CastSignalPayloadMediaSource } from './castSignalPayloadMediaSource';
 import type { CastSignalPayloadTransport } from './castSignalPayloadTransport';
 import type { CastSignalPayloadType } from './castSignalPayloadType';
 
@@ -24,6 +25,7 @@ export interface CastSignalPayload {
   sdp?: string;
   mediaKind?: CastSignalPayloadMediaKind;
   transport?: CastSignalPayloadTransport;
+  mediaSource?: CastSignalPayloadMediaSource;
   candidate?: string;
   /** @nullable */
   sdpMid?: string | null;

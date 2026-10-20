@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "f4oNsuWg-Dp05xhWf2Suy"
+uri = "file://generated-artifacts/framecast-android-mirroring/FrameCast-Android-test.apk"
+type = "unspecified"
+title = "FrameCast Android test APK"
+description = "Install this test build on an Android phone. Includes Android screen mirroring; approve the Android screen-capture prompt, then choose Mirror after pairing with the TV. Screen video streams directly; app/system audio is not included."
+logical_id = "cdb2890b-71a5-4e47-822b-2cb7d1a8cbea"
+content_hash = "sha256:a72ecb637249a5879597e5c4a90ee8cad542a01bd69c22b4e1fd9fe818e8759e"
+size = 101736713
+mtime_ms = 1792466394384
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/cdb2890b-71a5-4e47-822b-2cb7d1a8cbea/f2c160c4-36e3-4123-90be-d5f7d79642a1"
+storage_version_token = "1792466405680741"
+content_type = "application/octet-stream"

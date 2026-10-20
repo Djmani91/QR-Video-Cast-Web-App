@@ -217,6 +217,9 @@ components:
         transport:
           type: string
           enum: [data-channel, track]
+        mediaSource:
+          type: string
+          enum: [screen]
         candidate:
           type: string
         sdpMid:

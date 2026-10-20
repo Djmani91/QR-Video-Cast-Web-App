@@ -38,7 +38,7 @@ class BackgroundCastingService : HeadlessJsTaskService() {
         override fun onSkipToNext() = control("video:seek-by:10")
         override fun onSkipToPrevious() = control("video:seek-by:-10")
         override fun onSeekTo(pos: Long) = control("video:seek:${pos / 1000}")
-        override fun onCustomAction(action: String?, extras: Bundle?) {
+        override fun onCustomAction(action: String, extras: Bundle?) {
           if (action == "video:seek-by:-10" || action == "video:seek-by:10" || action == "disconnect") control(action)
         }
       })

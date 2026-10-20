@@ -15,6 +15,7 @@ export * from './castSignal';
 export * from './castSignalInput';
 export * from './castSignalPayload';
 export * from './castSignalPayloadMediaKind';
+export * from './castSignalPayloadMediaSource';
 export * from './castSignalPayloadTransport';
 export * from './castSignalPayloadType';
 export * from './castSignalReceipt';
