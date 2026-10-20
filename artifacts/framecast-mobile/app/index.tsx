@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Keyboard,
   Platform,
   Pressable,
@@ -21,6 +22,14 @@ import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { getYouTubeVideoId } from '@/lib/youtube';
+import {
+  backgroundCastingAvailable,
+  onBackgroundControl,
+  onBackgroundStopped,
+  startBackgroundCasting,
+  stopBackgroundCasting,
+  updateBackgroundCasting,
+} from '@/lib/background-casting';
 import { useColors } from '@/hooks/useColors';
 import {
   getGetCastRoomMessagesQueryKey,
@@ -261,6 +270,10 @@ export default function HomeScreen() {
   const [code, setCode] = useState('');
   const [scanning, setScanning] = useState(false);
   const [roomId, setRoomId] = useState('');
+  const currentRoomRef = useRef(roomId);
+  currentRoomRef.current = roomId;
+  const [backgroundEnabled, setBackgroundEnabled] = useState(false);
+  const [backgroundStarting, setBackgroundStarting] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia | null>(null);
   const [mediaQueue, setMediaQueue] = useState<SelectedMedia[]>([]);
   const [queueIndex, setQueueIndex] = useState(0);
@@ -317,6 +330,7 @@ export default function HomeScreen() {
     query: {
       queryKey: getGetCastRoomMessagesQueryKey(roomId),
       refetchInterval: 700,
+      refetchIntervalInBackground: backgroundEnabled,
       enabled: Boolean(roomId),
     },
   });
@@ -361,6 +375,7 @@ export default function HomeScreen() {
     if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
     void stopLocalStream().catch(() => undefined);
+    void stopBackgroundCasting().catch(() => undefined);
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
     peerRef.current?.close();
@@ -1030,6 +1045,9 @@ export default function HomeScreen() {
   };
 
   const leaveRoom = () => {
+    currentRoomRef.current = '';
+    setBackgroundEnabled(false);
+    void stopBackgroundCasting().catch(() => setError('Android could not stop background casting. Close FrameCast to end its service.'));
     closePeer(true);
     cleanupTemporaryCopies();
     setIsUrlPlayback(false);
@@ -1046,6 +1064,55 @@ export default function HomeScreen() {
     setCode('');
     setSentBytes(0);
     setError('');
+  };
+
+  const backgroundControlRef = useRef<(action: string) => void>(() => undefined);
+  backgroundControlRef.current = action => {
+    if (action === 'disconnect') leaveRoom();
+    else sendPlaybackControl(action);
+  };
+
+  useEffect(() => onBackgroundControl(action => backgroundControlRef.current(action)), []);
+  useEffect(() => onBackgroundStopped(() => setBackgroundEnabled(false)), []);
+  useEffect(() => {
+    if (!roomId) {
+      setBackgroundEnabled(false);
+      void stopBackgroundCasting().catch(() => undefined);
+    }
+  }, [roomId]);
+  useEffect(() => {
+    if (backgroundEnabled && roomId) {
+      updateBackgroundCasting({
+        title: selectedMedia?.name ?? 'Connected to your TV',
+        paused,
+        position: remoteVideoPosition.currentTime,
+        duration: remoteVideoPosition.duration,
+      });
+    }
+  }, [backgroundEnabled, roomId, selectedMedia?.name, paused, remoteVideoPosition.currentTime, remoteVideoPosition.duration]);
+
+  const enableBackground = () => {
+    Alert.alert(
+      'Keep casting in the background?',
+      'FrameCast will keep a visible casting notification with playback and disconnect controls while you use other apps. Your media stays on your phone. Android battery restrictions or force-stopping the app can still interrupt casting.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Enable', onPress: () => {
+          const startingRoom = roomId;
+          setBackgroundStarting(true);
+          void startBackgroundCasting({
+            title: selectedMedia?.name ?? 'Connected to your TV',
+            paused,
+            position: remoteVideoPosition.currentTime,
+            duration: remoteVideoPosition.duration,
+          }).then(async () => {
+            if (currentRoomRef.current !== startingRoom) await stopBackgroundCasting();
+            else setBackgroundEnabled(true);
+          }).catch(reason => setError(reason instanceof Error ? reason.message : 'Background casting could not start.'))
+            .finally(() => setBackgroundStarting(false));
+        } },
+      ],
+    );
   };
 
   const progress = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
@@ -1163,6 +1230,31 @@ export default function HomeScreen() {
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
+            {backgroundCastingAvailable && (
+              <View style={[styles.videoLinkCard, { borderColor: activeColors.border }]} testID="card-background-casting">
+                <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>Background casting</Text>
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
+                  {backgroundEnabled
+                    ? 'Enabled. Use the casting notification to play, pause, skip, or disconnect while using other apps.'
+                    : 'Keep your TV connection active while using other apps, with playback controls in your notifications.'}
+                </Text>
+                <Pressable
+                  style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]}
+                  disabled={backgroundStarting}
+                  onPress={() => {
+                    if (!backgroundEnabled) enableBackground();
+                    else void stopBackgroundCasting().then(() => setBackgroundEnabled(false))
+                      .catch(() => setError('Background casting could not stop. Use Disconnect from this TV.'));
+                  }}
+                  accessibilityRole="button"
+                  testID="button-background-casting"
+                >
+                  <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>
+                    {backgroundStarting ? 'Enabling…' : backgroundEnabled ? 'Disable background casting' : 'Enable background casting'}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
             {selectedMedia ? (
               <View style={[styles.mediaCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
                 <View style={[styles.mediaIcon, { backgroundColor: activeColors.secondary }]}>

@@ -2,10 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configureVideoSender, phoneStreamProfile, preferHardwareVideoCodec } from '../src/lib/video-stream-quality.ts';
 
-test('Full HD and 4K sources get bounded 1080p/30fps, including upright phone videos', () => {
+test('profiles remain bounded to Full HD until a higher ceiling is explicitly qualified', () => {
   for (const [width, height] of [[1920, 1080], [1080, 1920], [3840, 2160]]) {
     assert.deepEqual(phoneStreamProfile(width, height), { width: 1920, height: 1080, frameRate: 30, maxBitrate: 6_000_000 });
   }
+});
+
+test('qualified QHD and UHD ceilings increase resolution and bitrate without sacrificing motion', () => {
+  assert.deepEqual(phoneStreamProfile(3840, 2160, 1440), { width: 2560, height: 1440, frameRate: 30, maxBitrate: 10_000_000 });
+  assert.deepEqual(phoneStreamProfile(3840, 2160, 2160), { width: 3840, height: 2160, frameRate: 30, maxBitrate: 20_000_000 });
+  assert.equal(phoneStreamProfile(2160, 3840, 2160).height, 2160);
+  assert.equal(phoneStreamProfile(7680, 4320, 4320).height, 2160);
+  assert.equal(phoneStreamProfile(2560, 1440, 2160).height, 1440);
+  assert.equal(phoneStreamProfile(1920, 1080, 2160).height, 1080);
+  assert.equal(phoneStreamProfile(1280, 720, 2160).height, 720);
 });
 
 test('720p and smaller sources do not waste phone processing on a Full HD upscale', () => {

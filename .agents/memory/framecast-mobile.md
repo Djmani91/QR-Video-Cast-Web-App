@@ -29,11 +29,29 @@ Keep the Android build source in a private GitHub repository. The user approved 
 
 **How to apply:** Confirm repository visibility is private before pushing a clean, allowlisted source export. Exclude phone media, secrets, chat files, and existing project history.
 
+Preserve a populated default branch when uploading a clean Android source export; use an isolated build branch rather than force-pushing unrelated export history over existing work.
+
+**Why:** The repository gained existing project files while the clean source was being prepared, so the initially empty repository could no longer safely accept that export as its default branch.
+
+**How to apply:** Recheck remote refs before uploading. Build the allowlisted source separately and leave the existing default branch untouched unless the user explicitly approves integration or replacement.
+
 Verify authenticated repository access before promising GitHub changes; the source-control connection's active/healthy status alone is not proof of usable workspace credentials.
 
-**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed. A user reconnect produced a new connection but still did not authorize either shell execution path.
+**Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed. A user reconnect did not fix the CLI; GitHub's official CLI browser sign-in did authorize repository administration.
 
-**How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated reconnects if commands still cannot authenticate. Preserve the repository and source, explain the blocker, and offer a manual source/build handoff instead of claiming an APK or private repository exists.
+**How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated integration reconnects. Use GitHub CLI's official browser/device approval as an alternate authorization path; never request a raw token in chat. Confirm the intended account and private repository visibility before pushing.
+
+Keep CLI login configuration in an ignored, non-temporary location outside the clean source export, and have the upload ready before asking for browser approval.
+
+**Why:** Temporary CLI login files disappeared during Android build preparation, requiring another approval even though the repository had already been made private.
+
+**How to apply:** Do not keep build authentication in `/tmp`. Let the CLI manage credentials without reading them, exclude its configuration from source/deployment exports, and start the guarded upload directly after successful authorization.
+
+Current Google SDK repositories no longer provide the legacy Android package named `tools`; do not rely on an Android setup action's default package list including it.
+
+**Why:** The upstream package retirement prevents SDK setup before any app compilation, even when command-line tools themselves install successfully.
+
+**How to apply:** Use supported command-line/platform tools and explicitly install the platform, build tools, NDK, and CMake required by the app.
 
 The user wants returning to the same phone browser to reconnect to the same TV automatically, without refreshing, re-entering the code, or rescanning. Keep pairing and selected media until the user explicitly disconnects; a one-minute transport grace window is not a pairing timeout.
 

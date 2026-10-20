@@ -502,9 +502,9 @@ function TvPage() {
   const videoRotationRef = useRef(0);
   const orientationSourceRef = useRef<VideoOrientation | null>(null);
   const manualRotationRef = useRef(0);
-  const [videoFitMode, setVideoFitMode] = useState<'cover' | 'contain'>('cover');
+  const [videoFitMode, setVideoFitMode] = useState<'cover' | 'contain'>('contain');
   const [connectionGrace] = useState(createConnectionGrace);
-  const videoFitModeRef = useRef<'cover' | 'contain'>('cover');
+  const videoFitModeRef = useRef<'cover' | 'contain'>('contain');
   const [canvasPlayback, setCanvasPlayback] = useState(false);
   const canvasPlaybackRef = useRef(false);
   const canvasUnavailableRef = useRef(false);
@@ -2104,10 +2104,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const fullscreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [streamHealth, setStreamHealth] = useState<StreamHealth | null>(null);
   const qualityMonitorRef = useRef<ReturnType<typeof monitorVideoStream> | null>(null);
-  const [tvVideoFit, setTvVideoFit] = useState<'cover' | 'contain'>('cover');
+  const [tvVideoFit, setTvVideoFit] = useState<'cover' | 'contain'>('contain');
   const [connectionGrace] = useState(createConnectionGrace);
   const [videoSeekDraft, setVideoSeekDraft] = useState<number | null>(null);
-  const [muted, setMuted] = useState(true);
+  const muted = true;
   const videoRef = useRef<HTMLVideoElement>(null);
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const mediaChannelRef = useRef<RTCDataChannel | null>(null);
@@ -3310,9 +3310,6 @@ function PhonePage({ roomId }: { roomId?: string }) {
                   <X size={16} /> Disconnect from TV
                 </button>
               )}
-              {file && mediaKind === 'video' && <button type="button" className="button-secondary" onClick={() => setMuted((value) => { phoneVideoStreamRef.current?.setPreviewMuted(!value); return !value; })} data-testid="button-phone-mute" aria-label={muted ? 'Enable preview sound' : 'Mute preview'}>
-                {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}{muted ? 'Preview muted' : 'Preview sound on'}
-              </button>}
             </div>
             {status === 'connected' && (
               <div className="video-remote-controls" data-testid="phone-tv-fullscreen-controls">
@@ -3392,7 +3389,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
             </div>
-            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? `Adaptive streaming targets ${phoneVideoStreamRef.current.profile().height}p at up to 30 fps, prioritizing smooth motion. Full HD is enabled when phone encoding and TV decoding stay healthy. Keep FrameCast visible; video goes directly to the TV with no full-video upload.` : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
+            {mediaKind === 'video' && <p className="support-note">{phoneVideoStreamRef.current ? `Automatic quality targets ${phoneVideoStreamRef.current.profile().height}p at up to 30 fps. It starts at HD, qualifies higher tiers up to source-limited 4K only with sustained phone, TV and Wi-Fi headroom, and lowers quality if playback struggles. Missing performance data keeps quality conservative. Keep FrameCast visible; video goes directly to the TV with no full-video upload.` : 'Local video playback uses your phone’s video support. Video links are opened by the TV from their original source.'}</p>}
             {streamHealth && phoneVideoStreamRef.current && (
               <p className="support-note" role="status" data-testid="text-stream-performance">
                 Phone encoding: {Math.round(streamHealth.encodedFps)} fps

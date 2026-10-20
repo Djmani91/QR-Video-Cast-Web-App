@@ -3,3 +3,10 @@
 
 # No need to store the pnpm store twice.
 .local
+/generated-artifacts/
+
+# Development caches are not needed by the production servers or static files.
+/.cache/
+
+# Uploaded debugging examples are not application assets or public content.
+/attached_assets/

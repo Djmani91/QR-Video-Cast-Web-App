@@ -83,8 +83,9 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
 }) {
   const canvas = document.createElement('canvas');
   // Begin at HD, not at a phone's most expensive canvas/encoder setting.
-  // The health monitor can enable Full HD after sustained smooth delivery.
+  // The monitor can qualify higher tiers, up to source-limited 4K, gradually.
   let resolutionCeiling = 720;
+  let renderingLimit = 2160;
   let profile = phoneStreamProfile(video.videoWidth, video.videoHeight, resolutionCeiling);
   canvas.width = profile.width;
   canvas.height = profile.height;
@@ -122,7 +123,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   let sourceLoadAbort: AbortController | null = null;
   let drawingGeneration = 0;
   let rotation = 0;
-  let fitMode: 'cover' | 'contain' = 'cover';
+  let fitMode: 'cover' | 'contain' = 'contain';
   let frame = 0;
   let decoderFrame = 0;
   const decoderClock = typeof video.requestVideoFrameCallback === 'function'
@@ -130,6 +131,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   let lastDraw = -Infinity;
   let lastState = -Infinity;
   let drawnFrames = 0;
+  let drawTime = 0;
   const state = (): PhoneVideoState => ({
     currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
     duration: Number.isFinite(video.duration) ? video.duration : 0,
@@ -138,14 +140,16 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   function emit() { if (!stopped) options.onState(state()); }
   function paint() {
     if (stopped || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
-    profile = phoneStreamProfile(video.videoWidth, video.videoHeight, resolutionCeiling);
-    if (canvas.width !== profile.width || canvas.height !== profile.height) {
-      canvas.width = profile.width;
-      canvas.height = profile.height;
-    }
-    const geometry = phoneFrameGeometry(video.videoWidth, video.videoHeight, rotation, fitMode, canvas.width, canvas.height);
-    context!.save();
+    const started = performance.now();
+    let retryAtSafeResolution = false;
     try {
+      profile = phoneStreamProfile(video.videoWidth, video.videoHeight, Math.min(resolutionCeiling, renderingLimit));
+      if (canvas.width !== profile.width || canvas.height !== profile.height) {
+        canvas.width = profile.width;
+        canvas.height = profile.height;
+      }
+      const geometry = phoneFrameGeometry(video.videoWidth, video.videoHeight, rotation, fitMode, canvas.width, canvas.height);
+      context!.save();
       context!.setTransform(1, 0, 0, 1, 0, 0);
       context!.fillStyle = '#000';
       context!.fillRect(0, 0, canvas.width, canvas.height);
@@ -157,11 +161,22 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
       // which can sample between two decoded pictures and drop/repeat frames.
       captureTrack?.requestFrame();
     } catch {
-      stop();
-      options.onError('The phone could not draw this video. Re-select the original file and try again.');
+      if (profile.height > 1080) {
+        // A failed high-resolution canvas must not end an otherwise working
+        // session. Do not retry this expensive tier for the current movie.
+        renderingLimit = resolutionCeiling = 1080;
+        retryAtSafeResolution = true;
+      } else {
+        stop();
+        options.onError('The phone could not draw this video. Re-select the original file and try again.');
+      }
     } finally {
       context!.restore();
+      drawTime += Math.max(0, performance.now() - started);
     }
+    // Repaint immediately, even while paused; otherwise a failed UHD canvas
+    // could stay blank until the next decoded video frame.
+    if (retryAtSafeResolution) paint();
   }
   function tick(now: number, mediaTime?: number) {
     if (stopped) return;
@@ -230,10 +245,10 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
   return {
     stream: output, ready, state, stop, profile: () => ({ ...profile }),
     sourceVersion: () => drawingGeneration,
-    maxHeight: () => phoneStreamProfile(video.videoWidth, video.videoHeight).height,
+    maxHeight: () => Math.min(renderingLimit, phoneStreamProfile(video.videoWidth, video.videoHeight, 2160).height),
     metrics: () => {
       const quality = video.getVideoPlaybackQuality?.();
-      return { drawnFrames, droppedFrames: quality?.droppedVideoFrames ?? 0, totalFrames: quality?.totalVideoFrames ?? 0 };
+      return { drawnFrames, drawTime, droppedFrames: quality?.droppedVideoFrames ?? 0, totalFrames: quality?.totalVideoFrames ?? 0 };
     },
     setResolutionCeiling(height: number) {
       resolutionCeiling = height;
@@ -246,6 +261,7 @@ export function startPhoneVideoStream(video: HTMLVideoElement, graph: PhoneAudio
       sourceLoadAbort = abort;
       drawingGeneration++;
       resolutionCeiling = 720;
+      renderingLimit = 2160;
       cancelAnimationFrame(frame);
       if (decoderClock) video.cancelVideoFrameCallback(decoderFrame);
       video.pause();

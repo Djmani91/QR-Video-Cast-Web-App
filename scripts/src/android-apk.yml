@@ -1,0 +1,62 @@
+name: Build FrameCast Android APK
+
+on:
+  push:
+    branches: [main, android-apk-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CI: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_DOMAIN: '__API_DOMAIN__'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.26.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install Android native build tools
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006" "cmake;3.22.1"
+      - name: Install locked app dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check app and API client
+        run: |
+          pnpm exec tsc -b lib/api-client-react
+          pnpm --filter @workspace/framecast-mobile run typecheck
+      - name: Generate the native Android project
+        working-directory: artifacts/framecast-mobile
+        run: pnpm exec expo prebuild --platform android --no-install
+      - name: Build standalone test APK
+        working-directory: artifacts/framecast-mobile/android
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a --no-daemon --max-workers=2
+      - name: Collect APK and checksum
+        run: |
+          mkdir -p apk
+          cp artifacts/framecast-mobile/android/app/build/outputs/apk/release/app-release.apk apk/FrameCast-Android-test.apk
+          cd apk
+          sha256sum FrameCast-Android-test.apk > FrameCast-Android-test.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: framecast-android-apk
+          path: apk/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

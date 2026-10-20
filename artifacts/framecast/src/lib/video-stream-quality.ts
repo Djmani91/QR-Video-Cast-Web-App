@@ -5,15 +5,22 @@ export type VideoStreamProfile = {
   maxBitrate: number;
 };
 
-/** Bound phone work to Full HD; a 4K file must not require a 4K canvas encoder. */
+export const VIDEO_QUALITY_HEIGHTS = [540, 720, 1080, 1440, 2160] as const;
+
+/** Higher tiers are opt-in ceilings selected by the health monitor, not by file
+ * size alone. Never manufacture UHD from a lower-resolution source.
+ */
 export function phoneStreamProfile(width: number, height: number, ceiling = 1080): VideoStreamProfile {
-  const fullHd = width * height >= 1920 * 1080 && ceiling >= 1080;
-  const compact = ceiling < 720;
+  const pixels = Math.max(0, width) * Math.max(0, height);
+  const tier = ceiling >= 2160 && pixels >= 3840 * 2160 ? 2160
+    : ceiling >= 1440 && pixels >= 2560 * 1440 ? 1440
+    : ceiling >= 1080 && pixels >= 1920 * 1080 ? 1080
+    : ceiling < 720 ? 540 : 720;
   return {
-    width: fullHd ? 1920 : compact ? 960 : 1280,
-    height: fullHd ? 1080 : compact ? 540 : 720,
+    width: { 540: 960, 720: 1280, 1080: 1920, 1440: 2560, 2160: 3840 }[tier],
+    height: tier,
     frameRate: 30,
-    maxBitrate: fullHd ? 6_000_000 : compact ? 1_500_000 : 3_000_000,
+    maxBitrate: { 540: 1_500_000, 720: 3_000_000, 1080: 6_000_000, 1440: 10_000_000, 2160: 20_000_000 }[tier],
   };
 }
 

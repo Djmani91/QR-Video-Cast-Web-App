@@ -16,7 +16,16 @@
       }
     },
     "android": {
-      "package": "com.framecast.mobile",
+      "package": "com.tvcast.com",
+      "permissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.WAKE_LOCK",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_STATE",
+        "android.permission.CHANGE_NETWORK_STATE"
+      ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -27,6 +36,7 @@
       "favicon": "./assets/images/icon.png"
     },
     "plugins": [
+      "./plugins/with-background-casting.cjs",
       "expo-router",
       "expo-camera",
       [

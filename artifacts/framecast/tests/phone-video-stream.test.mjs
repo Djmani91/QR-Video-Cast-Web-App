@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { phoneFrameGeometry, startPhoneVideoStream, waitForPhoneVideoFrame } from '../src/lib/phone-video-stream.ts';
 
-function setup({ decoderClock = false, manualFrames = true, zeroRejected = false } = {}) {
+function setup({ decoderClock = false, manualFrames = true, zeroRejected = false, rejectAboveHeight = Infinity } = {}) {
   const original = { document: globalThis.document, requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame };
   const frames = new Map();
   let id = 0;
@@ -26,6 +26,11 @@ function setup({ decoderClock = false, manualFrames = true, zeroRejected = false
     }
     return output;
   } };
+  const draw = context.drawImage;
+  context.drawImage = (...args) => {
+    if (canvas.height > rejectAboveHeight) throw Error('High-resolution drawing unavailable');
+    draw(...args);
+  };
   globalThis.document = { createElement: tag => { assert.equal(tag, 'canvas'); return canvas; } };
   globalThis.requestAnimationFrame = fn => { events.push(['raf']); frames.set(++id, fn); return id; };
   globalThis.cancelAnimationFrame = handle => frames.delete(handle);
@@ -128,6 +133,54 @@ test('preview mute only changes the phone monitor, never removes TV sound', asyn
     assert.ok(f.tracks.every(track => !track.stopped));
   } finally { f.restore(); }
 });
+test('qualified UHD rendering keeps the same TV tracks and remains bounded to 4K', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    f.video.videoWidth = 3840;
+    f.video.videoHeight = 2160;
+    const original = [...f.live.stream.getTracks()];
+    assert.equal(f.live.profile().height, 720);
+    assert.equal(f.live.maxHeight(), 2160);
+    f.live.setResolutionCeiling(2160);
+    assert.equal(f.canvas.width, 3840);
+    assert.equal(f.canvas.height, 2160);
+    assert.equal(f.live.profile().frameRate, 30);
+    assert.deepEqual(f.live.stream.getTracks(), original);
+    assert.ok(original.every(track => !track.stopped));
+    assert.deepEqual(f.errors, []);
+  } finally { f.restore(); }
+});
+
+test('a rejected high-resolution renderer falls back without ending a working TV stream', async () => {
+  const f = setup({ rejectAboveHeight: 1080 });
+  try {
+    await f.live.ready;
+    f.video.videoWidth = 3840;
+    f.video.videoHeight = 2160;
+    f.live.setResolutionCeiling(2160);
+    f.step(100);
+    assert.equal(f.live.profile().height, 1080);
+    assert.equal(f.live.maxHeight(), 1080);
+    f.live.setResolutionCeiling(2160);
+    assert.equal(f.live.profile().height, 1080);
+    assert.ok(f.tracks.every(track => !track.stopped));
+    assert.deepEqual(f.errors, []);
+  } finally { f.restore(); }
+});
+
+test('casting fits the whole video by default and filling the TV remains opt-in', async () => {
+  const f = setup();
+  try {
+    await f.live.ready;
+    assert.equal(f.live.state().fitMode, 'contain');
+    await f.live.command('video:fit:cover');
+    assert.equal(f.live.state().fitMode, 'cover');
+    await f.live.command('video:fit:contain');
+    assert.equal(f.live.state().fitMode, 'contain');
+  } finally { f.restore(); }
+});
+
 test('disconnect releases the single frame and both outgoing tracks', async () => {
   const f = setup();
   try {
