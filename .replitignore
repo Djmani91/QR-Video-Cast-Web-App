@@ -14,3 +14,9 @@
 # Expo's production bundle does not need the generated native Android project.
 # Keep this large Gradle/APK build output out of the deployment container.
 /artifacts/framecast-mobile/android/
+
+# Local APK builds also compile native dependencies inside node_modules.
+# Production Metro bundles and Node servers do not use these generated caches.
+**/android/build/
+**/.cxx/
+**/.gradle/

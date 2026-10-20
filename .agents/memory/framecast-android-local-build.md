@@ -1,6 +1,6 @@
 ---
 name: Local Android build environment
-description: Avoid the legacy Nix Android catalogue when compiling Android packages locally.
+description: Local Android toolchain, permissions, and isolation of native build caches from publishing.
 ---
 
 For local Android builds, resolve Android packages from the Nix flake registry rather than importing `<nixpkgs>`. If the full Nix SDK closure fails on `ncurses-abi5-compat` with a 32-bit `bash` `Exec format error`, use a minimal Nix command-line-tools SDK and install the required official packages with `sdkmanager` into ignored generated artifacts. The SDK-managed AAPT2 executable runs in this workspace.
@@ -20,3 +20,9 @@ Gradle dependencies can request SDK component versions beyond the app's root com
 **Why:** This build required Build Tools 35 as well as 36, and a second NDK version for a native module. Gradle attempted to install the missing pieces into the immutable Nix SDK and failed.
 
 **How to apply:** Read the first failed Gradle SDK-package request and include its exact Build Tools/NDK versions in the local SDK composition before retrying; do not assume the app's `ndkVersion` or `buildToolsVersion` covers every native module.
+
+Keep native dependency compilation caches out of web publishing, not just the generated app project and APK output.
+
+**Why:** Local Android builds generate multi-gigabyte native caches inside pnpm dependencies. Package-store pruning does not remove these modified dependency outputs; publishing has attempted to upload their compiled libraries and failed before the application could start.
+
+**How to apply:** After local native builds, account for generated Android build, CMake, and Gradle caches throughout dependencies when sizing the publishing bundle. Preserve runtime JavaScript packages and local APK build caches; exclude native compilation output from publishing rather than removing all dependencies.

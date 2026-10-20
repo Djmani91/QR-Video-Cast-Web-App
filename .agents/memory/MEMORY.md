@@ -2,7 +2,7 @@
 - [Samsung TV target](framecast-samsung.md) — start with Samsung's built-in browser, not a native Tizen app.
 - [FrameCast native companion](framecast-mobile.md) — custom WebRTC build; stage picker URIs, preserve Expo's Android launcher recovery, and embed the live API host in APKs.
 - [FrameCast APK Git auth](framecast-mobile.md) — configure Git’s HTTPS credential helper with the same isolated GitHub CLI credentials used for authenticated API reads.
-- [Local Android builds](framecast-android-local-build.md) — use the Nix flake; if 32-bit SDK helpers fail, install official packages with sdkmanager.
+- [Local Android builds](framecast-android-local-build.md) — SDK quirks and native dependency caches that must stay out of web publishing.
 - [FrameCast signaling contract](framecast-signaling.md) — explicitly define nested offer fields in OpenAPI; generated Zod strips undeclared signaling data.
 - [FrameCast production QueryClient](framecast-production-build.md) — Vite must bundle one TanStack Query context for the app and generated API hooks.
 - [FrameCast video playback](framecast-video-streaming.md) — local files stream directly; ordinary YouTube links use the official player, never stream extraction or proxying.
