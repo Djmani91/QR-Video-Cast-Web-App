@@ -5,15 +5,27 @@ import { useColors } from '@/hooks/useColors';
 export type CastTab = 'url' | 'videos' | 'images' | 'screen';
 
 const TABS: { key: CastTab; label: string; icon: keyof typeof Ionicons.glyphMap; activeIcon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: 'url', label: 'URL', icon: 'link-outline', activeIcon: 'link' },
-  { key: 'videos', label: 'Videos', icon: 'videocam-outline', activeIcon: 'videocam' },
   { key: 'images', label: 'Images', icon: 'images-outline', activeIcon: 'images' },
+  { key: 'videos', label: 'Videos', icon: 'videocam-outline', activeIcon: 'videocam' },
+  { key: 'url', label: 'URL', icon: 'link-outline', activeIcon: 'link' },
   { key: 'screen', label: 'Mirror', icon: 'phone-portrait-outline', activeIcon: 'phone-portrait' },
 ];
 
 export function CastTabs({ value, onChange, showScreen = Platform.OS === 'android' }: { value: CastTab; onChange: (tab: CastTab) => void; showScreen?: boolean }) {
   const colors = useColors();
   const tabs = showScreen ? TABS : TABS.filter((tab) => tab.key !== 'screen');
+  const tabColor = (key: CastTab) => {
+    switch (key) {
+      case 'images':
+        return { foreground: colors.primary, surface: colors.tabImagesSurface };
+      case 'videos':
+        return { foreground: colors.tabVideo, surface: colors.tabVideosSurface };
+      case 'url':
+        return { foreground: colors.accent, surface: colors.tabUrlSurface };
+      case 'screen':
+        return { foreground: colors.primary, surface: colors.secondary };
+    }
+  };
   return (
     <View
       style={[styles.bar, { backgroundColor: colors.secondary, borderColor: colors.border }]}
@@ -22,6 +34,7 @@ export function CastTabs({ value, onChange, showScreen = Platform.OS === 'androi
     >
       {tabs.map((tab) => {
         const selected = tab.key === value;
+        const accent = tabColor(tab.key);
         return (
           <Pressable
             key={tab.key}
@@ -32,13 +45,13 @@ export function CastTabs({ value, onChange, showScreen = Platform.OS === 'androi
             hitSlop={4}
             style={({ pressed }) => [
               styles.tab,
-              selected && [styles.tabSelected, { backgroundColor: colors.card, borderColor: colors.border, shadowColor: colors.foreground }],
+              selected && [styles.tabSelected, { backgroundColor: accent.surface, borderColor: accent.foreground, shadowColor: colors.foreground }],
               { opacity: pressed && !selected ? 0.7 : 1 },
             ]}
             testID={`tab-${tab.key}`}
           >
-            <Ionicons name={selected ? tab.activeIcon : tab.icon} size={17} color={selected ? colors.primary : colors.mutedForeground} />
-            <Text style={[styles.label, { color: selected ? colors.foreground : colors.mutedForeground, fontFamily: selected ? 'Inter_700Bold' : 'Inter_500Medium' }]}>
+            <Ionicons name={selected ? tab.activeIcon : tab.icon} size={17} color={accent.foreground} />
+            <Text style={[styles.label, { color: accent.foreground, fontFamily: selected ? 'Inter_700Bold' : 'Inter_500Medium' }]}>
               {tab.label}
             </Text>
           </Pressable>

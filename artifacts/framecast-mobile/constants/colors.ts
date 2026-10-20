@@ -41,6 +41,11 @@ const colors = {
     // Accent highlights (badges, selected items, focus rings)
     accent: '#E87854',
     accentForeground: '#202A37',
+    // Distinct, reusable accents for the three casting tabs
+    tabVideo: '#536FA8',
+    tabImagesSurface: '#E7F0E8',
+    tabVideosSurface: '#E9EDF6',
+    tabUrlSurface: '#F8E9E2',
 
     // Destructive actions (delete, error states)
     destructive: '#CA3F2C',
@@ -66,6 +71,10 @@ const colors = {
     mutedForeground: '#AAB1B2',
     accent: '#EE9778',
     accentForeground: '#171E25',
+    tabVideo: '#9BB3E5',
+    tabImagesSurface: '#26382F',
+    tabVideosSurface: '#293449',
+    tabUrlSurface: '#3D2D2A',
     destructive: '#E05D4A',
     destructiveForeground: '#FFFFFF',
     border: '#34414B',
