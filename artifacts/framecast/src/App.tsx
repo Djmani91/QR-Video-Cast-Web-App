@@ -637,6 +637,7 @@ function TvPage() {
     }, 1000);
   }, [status]);
   const send = useSignalSender(roomId);
+  const screenMirrorAudioRef = useRef<ScreenMirrorAudioPlayer | null>(null);
   const messagesQuery = useGetCastRoomMessages(roomId, {
     query: {
       queryKey: getGetCastRoomMessagesQueryKey(roomId),
@@ -665,6 +666,8 @@ function TvPage() {
     setCanvasPlayback(false);
     controlChannelRef.current?.close();
     controlChannelRef.current = null;
+    screenMirrorAudioRef.current?.close();
+    screenMirrorAudioRef.current = null;
     peerRef.current?.getReceivers().forEach((receiver) => receiver.track?.stop());
     peerRef.current?.close();
     peerRef.current = null;
@@ -1102,7 +1105,7 @@ function TvPage() {
           window.location.href = `${target.href}#${encodeURIComponent(JSON.stringify(config))}`;
           return;
         } catch {
-          sendSignal('player-state', {
+          send('tv', 'player-state', {
             sessionId: signal.payload.sessionId,
             playback: 'error',
             message: 'TV_LOCAL_RECEIVER_UNSUPPORTED',
