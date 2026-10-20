@@ -140,3 +140,17 @@ mtime_ms = 1792518499014
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/0a2b0366-05b1-49e7-8ba6-afaf6656629f/97e0f6c3-5c43-4f4a-a4f1-87e74d59af79"
 storage_version_token = "1792518532958407"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "J3WLQVnJLhqF1-oC2FMEy"
+uri = "file://generated-artifacts/framecast-blob-fix/FrameCast-Android-Blob-Fix.apk"
+type = "unspecified"
+title = "FrameCast Android APK — transfer fix"
+description = "Updated test APK with the Android photo/video file-reading fix. Signed with the same certificate as the previous test APK."
+logical_id = "54d6a744-206a-4026-a6ec-9a2038b6e630"
+content_hash = "sha256:c8e36be3442bdde926f068cbc360009f4ea3f9e10ed016f726c96ba126c0b60d"
+size = 102153030
+mtime_ms = 1792519373148
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/54d6a744-206a-4026-a6ec-9a2038b6e630/1876ddc7-6031-4dfc-8e15-19b15256b46f"
+storage_version_token = "1792519428358754"
+content_type = "application/octet-stream"

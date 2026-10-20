@@ -17,6 +17,12 @@ For the phone website, do not clear a populated file input while its selected fi
 
 **How to apply:** Keep valid picker selections alive. For browser live video, let the media element read the original Blob on demand: do not take an eager whole-file snapshot or run redundant head/tail probes. Confirm an actual decoded phone frame with a bounded startup wait; surface decoder, autoplay, and cloud-only file problems separately. For photo transfers, keep readability checks and any temporary snapshots bounded across the whole queue. Discard unusable references with an explicit reselect action, never persist or upload media.
 
+On native Expo, `File.slice()` creates a Blob from a typed array, which React Native's BlobManager rejects with “Creating blobs from 'ArrayBuffer' and 'ArrayBufferView' are not supported.” Stream native files with `File.open(FileMode.ReadOnly)` and `FileHandle.readBytes()` instead; close handles in `finally`. Keep `slice().arrayBuffer()` only for the web path.
+
+**Why:** The native Blob limitation surfaced as a send failure while the phone was transferring queued photos and videos.
+
+**How to apply:** Avoid Expo `File.slice()` in native chunk loops and MP4 preparation; use a sequential file handle so large media stays chunked in memory.
+
 The user has no other Expo setup beyond Replit's mobile preview. Do not keep asking them for an existing Expo build-project link. A running preview is not an EAS build-project link.
 
 **Why:** The user explicitly clarified, repeatedly, that this preview is the only Expo setup they have. The local CLI identity is a Replit-private account, not evidence of a personal EAS project.

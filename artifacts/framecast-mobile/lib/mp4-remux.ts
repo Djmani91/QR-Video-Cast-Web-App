@@ -25,6 +25,10 @@ type Mp4Segmenter = {
 type RemuxFile = {
   size: number;
   slice(start: number, end: number): Blob;
+  open?: () => {
+    readBytes(length: number): Uint8Array<ArrayBuffer>;
+    close(): void;
+  };
 };
 
 type RemuxChannel = {
@@ -133,36 +137,51 @@ export async function remuxAndSendMp4({
     ? file.size
     : MAX_INDEX_SCAN_BYTES;
 
-  while (inputOffset < file.size) {
+  const fileHandle = file.open?.();
+  try {
+    while (inputOffset < file.size) {
+      if (isCancelled() || channel.readyState !== 'open') return 'cancelled';
+      const end = Math.min(inputOffset + INPUT_CHUNK_BYTES, file.size);
+      const bytes = fileHandle
+        ? fileHandle.readBytes(end - inputOffset)
+        : new Uint8Array(await file.slice(inputOffset, end).arrayBuffer());
+      if (bytes.byteLength !== end - inputOffset) {
+        parserError = 'The selected video could not be read completely.';
+        return 'unsupported';
+      }
+      const chunk = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer & { fileStart: number };
+      chunk.fileStart = inputOffset;
+      try {
+        parser.appendBuffer(chunk);
+      } catch (error) {
+        parserError = error instanceof Error ? error.message : 'Could not read this MP4 video.';
+        if (committed) throw new Error('The phone could not finish preparing this video for streaming.');
+        return 'unsupported';
+      }
+      inputOffset = end;
+      onProgress(inputOffset);
+
+      if (state.value === 'unsupported' || state.value === 'already-fragmented') return state.value;
+      if (state.value === 'converted' && !(await drainOutput())) return 'cancelled';
+      if (state.value === 'pending' && inputOffset >= maxIndexScan && file.size > maxIndexScan) {
+        return 'unsupported';
+      }
+    }
+
+    if (state.value === 'pending') {
+      parser.flush();
+    }
+    if (state.value === 'unsupported' || state.value === 'already-fragmented' || state.value === 'pending') return state.value === 'pending' ? 'unsupported' : state.value;
+    if (parserError) throw new Error('The phone could not finish preparing this video for streaming.');
+    if (!(await drainOutput())) return 'cancelled';
+    await waitForBuffer();
     if (isCancelled() || channel.readyState !== 'open') return 'cancelled';
-    const end = Math.min(inputOffset + INPUT_CHUNK_BYTES, file.size);
-    const chunk = await file.slice(inputOffset, end).arrayBuffer() as ArrayBuffer & { fileStart: number };
-    chunk.fileStart = inputOffset;
-    try {
-      parser.appendBuffer(chunk);
-    } catch (error) {
-      parserError = error instanceof Error ? error.message : 'Could not read this MP4 video.';
-      if (committed) throw new Error('The phone could not finish preparing this video for streaming.');
-      return 'unsupported';
-    }
-    inputOffset = end;
-    onProgress(inputOffset);
-
-    if (state.value === 'unsupported' || state.value === 'already-fragmented') return state.value;
-    if (state.value === 'converted' && !(await drainOutput())) return 'cancelled';
-    if (state.value === 'pending' && inputOffset >= maxIndexScan && file.size > maxIndexScan) {
-      return 'unsupported';
-    }
+    channel.send(JSON.stringify({ framecast: 'complete' }));
+    return 'sent';
+  } finally {
+    fileHandle?.close();
   }
-
-  if (state.value === 'pending') {
-    parser.flush();
-  }
-  if (state.value === 'unsupported' || state.value === 'already-fragmented' || state.value === 'pending') return state.value === 'pending' ? 'unsupported' : state.value;
-  if (parserError) throw new Error('The phone could not finish preparing this video for streaming.');
-  if (!(await drainOutput())) return 'cancelled';
-  await waitForBuffer();
-  if (isCancelled() || channel.readyState !== 'open') return 'cancelled';
-  channel.send(JSON.stringify({ framecast: 'complete' }));
-  return 'sent';
 }
