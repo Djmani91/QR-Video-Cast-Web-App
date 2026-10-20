@@ -10,3 +10,7 @@
 
 # Uploaded debugging examples are not application assets or public content.
 /attached_assets/
+
+# Expo's production bundle does not need the generated native Android project.
+# Keep this large Gradle/APK build output out of the deployment container.
+/artifacts/framecast-mobile/android/
