@@ -3,11 +3,11 @@ name: Local Android build environment
 description: Avoid the legacy Nix Android catalogue when compiling Android packages locally.
 ---
 
-For local Android builds, resolve Android packages from the Nix flake registry rather than importing `<nixpkgs>`.
+For local Android builds, resolve Android packages from the Nix flake registry rather than importing `<nixpkgs>`. If the full Nix SDK closure fails on `ncurses-abi5-compat` with a 32-bit `bash` `Exec format error`, use a minimal Nix command-line-tools SDK and install the required official packages with `sdkmanager` into ignored generated artifacts. The SDK-managed AAPT2 executable runs in this workspace.
 
-**Why:** In this workspace, `<nixpkgs>` resolves a legacy catalogue lacking Android build tools 36, while the registered `nixpkgs` flake provides the required SDK and NDK. Evaluating only the package name does not detect missing component versions; evaluating the derivation path does.
+**Why:** In this workspace, `<nixpkgs>` resolves a legacy catalogue lacking Android build tools 36, while the registered `nixpkgs` flake provides the required SDK and NDK. Some full Nix SDK compositions also require a 32-bit helper the container cannot execute. Evaluating only the package name does not detect missing component versions; evaluating the derivation path does.
 
-**How to apply:** Import the flake's `outPath`, validate the complete SDK composition before downloading, and keep the toolchain, caches, native project and outputs under ignored generated-artifact directories. On NixOS, use the SDK's patched AAPT2 rather than Maven's unpatched executable. Obtain Android SDK licence consent for the build; a one-build approval is not standing approval for future builds.
+**How to apply:** Import the flake's `outPath` and validate SDK component versions. If its full closure fails on the 32-bit helper, keep the Nix SDK minimal and install the exact Gradle-requested Build Tools, platform, NDK, and CMake packages with `sdkmanager`. Keep the toolchain, caches, native project and outputs under ignored generated-artifact directories. Prefer SDK-provided AAPT2 over Maven's executable. Obtain Android SDK licence consent for each build; a one-build approval is not standing approval for future builds.
 
 Verify permissions in the generated and merged Android manifests, not just Expo's configuration.
 

@@ -98,3 +98,17 @@ mtime_ms = 1792495867757
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/6c4ec0f5-9e3f-4e62-9098-d57594c46651/af1589fa-b059-4ecb-8bc6-28b1b314c118"
 storage_version_token = "1792495987168678"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "jfhQgbue16CMF4okBGKEp"
+uri = "file://generated-artifacts/FrameCast-Mirroring-Fix.apk"
+type = "unspecified"
+title = "FrameCast Android APK — screen-mirroring fix"
+description = "Test APK for com.tvcast.com. Signed with the same debug certificate as the previous test APK so it can be installed as an update."
+logical_id = "e259c5a3-7197-466f-b08b-1221dbc4d8cc"
+content_hash = "sha256:c8b58bf70b2a28355fa320176b1dc9dd917fd74ddd1e7d474ea59615ff756fce"
+size = 101749857
+mtime_ms = 1792507482004
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/e259c5a3-7197-466f-b08b-1221dbc4d8cc/f061e7c1-5cd3-487e-a582-41c0c96548c6"
+storage_version_token = "1792507494535843"
+content_type = "application/octet-stream"
