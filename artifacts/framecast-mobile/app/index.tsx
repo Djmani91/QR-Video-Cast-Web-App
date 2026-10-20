@@ -20,7 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { Directory, File as ExpoFile, Paths } from 'expo-file-system';
+import { Directory, File as ExpoFile, FileMode, Paths } from 'expo-file-system';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1086,7 +1086,11 @@ export default function HomeScreen() {
                if (streamCandidate) {
                  setTransferNotice('Preparing this video for direct streaming on your phone…');
                  const remuxResult = await remuxAndSendMp4({
-                   file,
+                    file: {
+                      size: fileSize,
+                      slice: (start, end) => file.slice(start, end),
+                      ...(Platform.OS === 'web' ? {} : { open: () => file.open(FileMode.ReadOnly) }),
+                    },
                    channel: mediaChannel,
                    name: media.name,
                    originalSize: fileSize,
@@ -1112,15 +1116,23 @@ export default function HomeScreen() {
                    size: fileSize,
                    streamCandidate,
                  }));
-                 for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
-                   if (transferRun !== transferRunRef.current || mediaChannel.readyState !== 'open') return;
-                   await waitForBuffer(mediaChannel);
-                   const part = await file.slice(offset, Math.min(offset + FILE_CHUNK_SIZE, fileSize)).arrayBuffer();
-                   if (transferRun !== transferRunRef.current) return;
-                   mediaChannel.send(part);
-                   const count = Math.min(offset + part.byteLength, fileSize);
-                   setSentBytes(count);
-                 }
+                  const fileHandle = Platform.OS === 'web' ? null : file.open(FileMode.ReadOnly);
+                  try {
+                    for (let offset = 0; offset < fileSize; offset += FILE_CHUNK_SIZE) {
+                      if (transferRun !== transferRunRef.current || mediaChannel.readyState !== 'open') return;
+                      await waitForBuffer(mediaChannel);
+                      const length = Math.min(FILE_CHUNK_SIZE, fileSize - offset);
+                      const part = fileHandle
+                        ? fileHandle.readBytes(length)
+                        : await file.slice(offset, offset + length).arrayBuffer();
+                      if (transferRun !== transferRunRef.current) return;
+                      if (part.byteLength !== length) throw new Error(`Could not read all of “${media.name}”. Choose it again and retry.`);
+                      mediaChannel.send(part);
+                      setSentBytes(offset + part.byteLength);
+                    }
+                  } finally {
+                    fileHandle?.close();
+                  }
               }
               let acknowledgement: Promise<string> | undefined;
               if (media.kind === 'image') {
