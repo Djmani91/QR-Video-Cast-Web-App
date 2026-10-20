@@ -81,7 +81,10 @@ Open **Actions → Build FrameCast Android APK and AAB**. A push to main or a ma
 run builds both files. Download **framecast-android-builds** from the successful
 run's artifacts. The APK is for direct device testing. The AAB uses the generated
 Android template's test signing key and is not ready for Google Play publishing;
-a stable upload key must be configured for store release.
+a stable upload key must be configured for store release. The Expo config plugin
+accepts FRAMECAST_UPLOAD_KEYSTORE_FILE and FRAMECAST_ANDROID_UPLOAD_KEY_PASSWORD
+at Gradle build time; set FRAMECAST_REQUIRE_UPLOAD_SIGNING=true to fail rather than
+falling back to the test key when preparing a Play upload.
 
 The app connects to the existing FrameCast service at https://${domain}.
 It does not require Expo Go, Metro, an EAS account, or a computer on the Wi-Fi.

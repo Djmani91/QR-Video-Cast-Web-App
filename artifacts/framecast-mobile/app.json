@@ -39,6 +39,7 @@
     },
     "plugins": [
       "./plugins/with-background-casting.cjs",
+      "./plugins/with-android-upload-signing.cjs",
       "expo-router",
       "expo-camera",
       [
