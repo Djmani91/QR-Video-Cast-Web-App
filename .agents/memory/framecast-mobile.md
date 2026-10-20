@@ -83,6 +83,18 @@ Android screen mirroring should include supported app/system playback audio as w
 
 **How to apply:** Use Android's playback-capture API with MediaProjection consent and RECORD_AUDIO permission, but never a microphone source. Explain Android/source-app limits and do not claim the native path works until tested on a physical device.
 
+Expo SDK 57's Android activity-result launcher can become unregistered after Android recreates the Activity while keeping the app process alive. Keep the upstream relaunch recovery in Expo Modules Core until the installed SDK version includes it.
+
+**Why:** Without recovery, native image/file pickers reject with an unregistered ActivityResultLauncher error after Activity recreation.
+
+**How to apply:** Check the installed Expo Modules Core source or changelog before removing the local backport. Keep the patch scoped to activity-result re-registration.
+
+Standalone Android APK bundles must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
+
+**Why:** React Native cannot resolve the web app's relative `/api` routes without a base URL.
+
+**How to apply:** Set the production host in the Gradle build environment and verify the final JS bundle contains it before sharing an APK.
+
 For Android test builds, provide a direct download URL rather than only a Replit asset/library card; the user reports those cards do not work for them. Verify the endpoint before sharing it.
 
 **Why:** The user has repeatedly asked for a clickable direct APK download after card-based downloads failed.

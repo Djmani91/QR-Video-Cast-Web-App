@@ -1,6 +1,6 @@
 - [FrameCast privacy](framecast-privacy.md) — video must remain peer-to-peer; do not persist user data or media.
 - [Samsung TV target](framecast-samsung.md) — start with Samsung's built-in browser, not a native Tizen app.
-- [FrameCast native companion](framecast-mobile.md) — native iOS/Android needs a custom WebRTC build; stage Android picker content URIs in temporary cache before transfer.
+- [FrameCast native companion](framecast-mobile.md) — custom WebRTC build; stage picker URIs, preserve Expo's Android launcher recovery, and embed the live API host in APKs.
 - [FrameCast APK Git auth](framecast-mobile.md) — configure Git’s HTTPS credential helper with the same isolated GitHub CLI credentials used for authenticated API reads.
 - [Local Android builds](framecast-android-local-build.md) — use the Nix flake; if 32-bit SDK helpers fail, install official packages with sdkmanager.
 - [FrameCast signaling contract](framecast-signaling.md) — explicitly define nested offer fields in OpenAPI; generated Zod strips undeclared signaling data.
