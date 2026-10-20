@@ -1168,7 +1168,7 @@ function TvPage() {
                           : [...currentImages, preview];
                         receivedImagesRef.current = nextImages;
                         setReceivedImages(nextImages);
-                        setPhotoPreviewVisible(true);
+                        if (currentImages.length === 0) setPhotoPreviewVisible(true);
                         setTransferProgress(0);
                       }
                       return;
@@ -1941,7 +1941,7 @@ function TvPage() {
                 )}
               </>
             )}
-            {status === 'connected' && transferProgress !== null && transferProgress < 100 && (
+            {status === 'connected' && transferProgress !== null && transferProgress < 100 && (mediaKind !== 'image' || receivedImages.length === 0) && (
               <div className="tv-transfer-status" role="status" data-testid="status-tv-transfer">
                 <span className="tv-transfer-spinner" />
                 <strong>Receiving {mediaKind === 'image' ? 'photo' : 'video'}</strong>
