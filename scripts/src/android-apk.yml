@@ -1,4 +1,4 @@
-name: Build FrameCast Android APK
+name: Build FrameCast Android APK and AAB
 
 on:
   push:
@@ -44,18 +44,19 @@ jobs:
       - name: Generate the native Android project
         working-directory: artifacts/framecast-mobile
         run: pnpm exec expo prebuild --platform android --no-install
-      - name: Build standalone test APK
+      - name: Build standalone test APK and app bundle
         working-directory: artifacts/framecast-mobile/android
-        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a --no-daemon --max-workers=2
-      - name: Collect APK and checksum
+        run: ./gradlew :app:assembleRelease :app:bundleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a --no-daemon --max-workers=2
+      - name: Collect APK, AAB, and checksums
         run: |
           mkdir -p apk
           cp artifacts/framecast-mobile/android/app/build/outputs/apk/release/app-release.apk apk/FrameCast-Android-test.apk
+          cp artifacts/framecast-mobile/android/app/build/outputs/bundle/release/app-release.aab apk/FrameCast-Android-test.aab
           cd apk
-          sha256sum FrameCast-Android-test.apk > FrameCast-Android-test.apk.sha256
+          sha256sum FrameCast-Android-test.apk FrameCast-Android-test.aab > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: framecast-android-apk
+          name: framecast-android-builds
           path: apk/*
           if-no-files-found: error
           retention-days: 7

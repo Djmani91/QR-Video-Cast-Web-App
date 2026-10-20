@@ -3,11 +3,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
-const output = path.join(root, 'generated-artifacts', 'android-build-source');
 const domain = process.argv[2];
+const outputName = process.argv[3] || 'android-build-source';
 if (!domain || !/^[a-z0-9.-]+$/i.test(domain) || domain.includes('..')) {
   throw new Error('Provide the verified published API hostname, without a protocol or path.');
 }
+if (!/^[a-z0-9-]+$/i.test(outputName)) {
+  throw new Error('Build export name may contain only letters, numbers, and hyphens.');
+}
+const output = path.join(root, 'generated-artifacts', outputName);
 try {
   await stat(output);
   throw new Error(`Refusing to overwrite an existing export: ${output}`);
@@ -68,14 +72,15 @@ await writeFile(path.join(output, '.github/workflows/android-apk.yml'), workflow
 await writeFile(path.join(output, 'README.md'), `# FrameCast Android test build
 
 This private repository contains only the FrameCast mobile app, its API client,
-and the files needed to build a standalone Android test APK.
+and the files needed to build standalone Android test APK and AAB artifacts.
 No user photos, videos, credentials, conversations, or prior Git history are included.
 
 ## Build and download
-Open **Actions → Build FrameCast Android APK**. A push to main or a manual run builds
-the APK. Download **framecast-android-apk** from the successful run's artifacts.
-The standalone release-mode APK uses the generated Android template's test
-signing key: this is for device testing, not a Google Play production release.
+Open **Actions → Build FrameCast Android APK and AAB**. A push to main or a manual
+run builds both files. Download **framecast-android-builds** from the successful
+run's artifacts. The APK is for direct device testing. The AAB uses the generated
+Android template's test signing key and is not ready for Google Play publishing;
+a stable upload key must be configured for store release.
 
 The app connects to the existing FrameCast service at https://${domain}.
 It does not require Expo Go, Metro, an EAS account, or a computer on the Wi-Fi.
