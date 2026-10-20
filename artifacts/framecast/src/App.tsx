@@ -1099,9 +1099,14 @@ function TvPage() {
             sessionId: signal.payload.sessionId,
             extension: signal.payload.extension,
           };
-          window.location.assign(`${target.href}#${encodeURIComponent(JSON.stringify(config))}`);
+          window.location.href = `${target.href}#${encodeURIComponent(JSON.stringify(config))}`;
           return;
         } catch {
+          sendSignal('player-state', {
+            sessionId: signal.payload.sessionId,
+            playback: 'error',
+            message: 'TV_LOCAL_RECEIVER_UNSUPPORTED',
+          });
           setError('The phone supplied an invalid local playback address. Reconnect it to your home Wi-Fi and try again.');
         }
       } else if (signal.type === 'ready') {

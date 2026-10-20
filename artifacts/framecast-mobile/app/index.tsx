@@ -354,6 +354,7 @@ export default function HomeScreen() {
   const controlChannelRef = useRef<DataChannelLike | null>(null);
   const localSessionRef = useRef<string | null>(null);
   const localOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const localFallbackRef = useRef<(() => void) | null>(null);
   const peerRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
   const videoThumbnailRunRef = useRef(0);
@@ -458,6 +459,7 @@ export default function HomeScreen() {
     peerRecoveryTimerRef.current = null;
     setLocalPlayback(false);
     localSessionRef.current = null;
+    localFallbackRef.current = null;
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
     localOpenTimerRef.current = null;
     void stopLocalStream().catch(() => setError('The local video server could not stop cleanly. Close and reopen FrameCast before sharing again.'));
@@ -521,6 +523,12 @@ export default function HomeScreen() {
       seenMessages.current.add(signal.sequence);
       if (signal.type === 'player-state' && signal.payload.sessionId === localSessionRef.current) {
         const state = signal.payload;
+        if (state.message === 'TV_LOCAL_RECEIVER_UNSUPPORTED') {
+          if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+          localOpenTimerRef.current = null;
+          localFallbackRef.current?.();
+          continue;
+        }
         if (state.message === 'FULLSCREEN_NEEDS_TV_REMOTE') {
           if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
           fullscreenAckTimerRef.current = null;
@@ -535,6 +543,7 @@ export default function HomeScreen() {
         if (state.playback !== 'opening') {
           if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
           localOpenTimerRef.current = null;
+          localFallbackRef.current = null;
         }
         setRemoteVideoPosition({
           currentTime: Math.max(0, Number(state.currentTime) || 0),
@@ -993,9 +1002,10 @@ export default function HomeScreen() {
           extension: stream.extension,
         });
         setSentQueueCount((count) => Math.max(count, queueIndexOffset + 1));
-        localOpenTimerRef.current = setTimeout(() => {
+        const fallbackToCompatibility = () => {
           if (localSessionRef.current !== stream.sessionId) return;
-          const fileSize = queue[0].size || 0;
+          localOpenTimerRef.current = null;
+          const fileSize = queue[0].size || new ExpoFile(queue[0].uri).size || 0;
           if (shouldUseBufferedVideoFallback(fileSize)) {
             setTransferNotice('The TV did not open direct playback. Retrying with a compatibility transfer…');
             void startTransfer(undefined, undefined, requestedQueueIndex, true);
@@ -1003,7 +1013,9 @@ export default function HomeScreen() {
           }
           setStage('sent');
           setError('The TV did not open direct playback. This large video cannot use the compatibility fallback; check the TV connection and try again.');
-        }, LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS);
+        };
+        localFallbackRef.current = fallbackToCompatibility;
+        localOpenTimerRef.current = setTimeout(fallbackToCompatibility, LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS);
         return;
       }
       let totalQueueBytes = 0;
