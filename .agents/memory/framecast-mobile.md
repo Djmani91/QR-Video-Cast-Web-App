@@ -71,8 +71,8 @@ Use neutral video-link wording, not YouTube-specific branding, in the mobile app
 
 **How to apply:** Keep titles, example addresses and instructional copy generic. Preserve supported official playback behavior and honest compatibility limitations; changing the wording is not a guarantee of store approval.
 
-Android screen mirroring uses the system MediaProjection consent prompt and the native WebRTC screen-capture API as a direct video track. This capture path does not include app or system audio.
+Android screen mirroring should include supported app/system playback audio as well as the screen image; never substitute microphone audio. The current WebRTC display-capture path is video-only. Playback audio needs Android's playback-capture API and custom native WebRTC integration; some source apps can block capture.
 
-**Why:** The current native WebRTC display-capture API supplies a screen video track only; screen sharing must not be described as capturing sound.
+**Why:** The user confirmed that screen mirroring should send phone media audio to the TV.
 
-**How to apply:** Keep Android permission consent visible, send screen frames peer-to-peer, stop the track when sharing ends, and state clearly that mirrored audio is not available through this implementation.
+**How to apply:** Keep capture peer-to-peer and ephemeral. Android playback capture requires MediaProjection consent and the RECORD_AUDIO permission, but must not capture the microphone. Explain Android/source-app limits, and do not claim audio support until the native path is implemented and tested on a device.
