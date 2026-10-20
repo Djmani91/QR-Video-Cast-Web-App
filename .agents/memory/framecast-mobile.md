@@ -41,11 +41,29 @@ Preserve a populated default branch when uploading a clean Android source export
 
 **How to apply:** Recheck remote refs before uploading. Build the allowlisted source separately and leave the existing default branch untouched unless the user explicitly approves integration or replacement. Before each later APK build, refresh the allowlisted native app sources and any new components from the working app into the separate build checkout. Expo preview edits do not automatically update that copy or an already-running build; state that distinction clearly when previewing newer UI.
 
+Use the private build-branch CI workflow when local Gradle jobs repeatedly disappear during workspace restarts. A lost local watcher does not mean the remote build failed.
+
+**Why:** Workspace restarts repeatedly killed local Android builds, while the independently hosted build continued through those same restarts.
+
+**How to apply:** Refresh the allowlisted source export, push only the isolated build branch, and record the remote run. Query that run after a watcher disconnects rather than starting duplicate builds.
+
+Hosted Android CI runners need free disk space before a full Expo/React Native build. Remove unused preinstalled toolchains before installing the required Android SDK/NDK, and use only the phone's required ABI for a test APK; keep broader production packaging separate.
+
+**Why:** A multi-ABI native build exhausted the hosted runner's disk and killed its log writer. The job failed with the compile step still marked in progress and no downloadable compiler log.
+
+**How to apply:** Inspect the check-run annotations when a failed job has no failed step or log. Treat a runner-resource error separately from a source-code error; clear space and reduce test-build ABIs before retrying.
+
 Verify authenticated repository access before promising GitHub changes; the source-control connection's active/healthy status alone is not proof of usable workspace credentials. When the GitHub CLI uses a non-default config directory, raw Git HTTPS pushes need the Git credential helper registered from that same CLI config.
 
 **Why:** Connection attachment reported success, but authenticated GitHub CLI access was unavailable and the automatic authorization prompts failed. A user reconnect did not fix the CLI; GitHub's official CLI browser sign-in did authorize repository administration. In this workspace, `gh api` succeeded but Git's HTTPS push still failed until the CLI credential helper was set up.
 
 **How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated integration reconnects. Use GitHub CLI's official browser/device approval as an alternate authorization path; never request a raw token in chat. For a non-default config, export `GH_CONFIG_DIR` for `gh auth setup-git --hostname github.com` and the Git push. Confirm the intended account and private repository visibility before pushing.
+
+Workspace recreation can discard the global Git credential-helper setting while the isolated GitHub CLI login remains valid. For a guarded push, pass the official `gh auth git-credential` helper per Git invocation with the same `GH_CONFIG_DIR`.
+
+**Why:** Authenticated API reads continued to work after a restart, but Git push waited for credentials until its helper was supplied explicitly.
+
+**How to apply:** Do not ask for another login solely because a push cannot find its helper. Preserve the CLI-managed credential files and never print their contents.
 
 Keep CLI login configuration in an ignored, non-temporary location outside the clean source export, and have the upload ready before asking for browser approval.
 
@@ -99,4 +117,10 @@ For Android test builds, provide a direct download URL rather than only a Replit
 
 **Why:** The user has repeatedly asked for a clickable direct APK download after card-based downloads failed.
 
-**How to apply:** Use the FrameCast API download route for the current APK and confirm it returns the APK content (including a ranged request) before sending the URL.
+**How to apply:** When the workspace is unstable, use a temporary App Storage GET URL so the download does not depend on a running development server. Present the exact URL returned by the storage signer, and verify an actual ranged GET plus the total file size before sharing it. Do not reconstruct the URL or use HEAD to validate a GET-signed URL. The FrameCast API download route is a fallback only while its server is online.
+
+Keep upload signing strict: a configured upload password without its keystore must fail rather than silently produce a debug-signed release. For a test APK intended to update the existing debug-signed app, remove both upload-signing variables only from that build process and verify the resulting certificate matches the installed test build.
+
+**Why:** The workspace may have the Play-upload password configured even when a local test build has no upload-keystore path. Falling back silently would hide an incomplete production-signing setup.
+
+**How to apply:** Supply both signing inputs for a Play build. Scope any debug-test override to the individual command; do not delete the saved upload secret or weaken the signing plugin.
