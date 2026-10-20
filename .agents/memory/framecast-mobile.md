@@ -82,3 +82,9 @@ Android screen mirroring should include supported app/system playback audio as w
 **Why:** The user confirmed that screen mirroring should send phone media audio to the TV and approved playback capture, not microphone recording.
 
 **How to apply:** Use Android's playback-capture API with MediaProjection consent and RECORD_AUDIO permission, but never a microphone source. Explain Android/source-app limits and do not claim the native path works until tested on a physical device.
+
+For Android test builds, provide a direct download URL rather than only a Replit asset/library card; the user reports those cards do not work for them. Verify the endpoint before sharing it.
+
+**Why:** The user has repeatedly asked for a clickable direct APK download after card-based downloads failed.
+
+**How to apply:** Use the FrameCast API download route for the current APK and confirm it returns the APK content (including a ranged request) before sending the URL.
