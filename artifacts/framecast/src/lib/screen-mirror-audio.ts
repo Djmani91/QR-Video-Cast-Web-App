@@ -26,7 +26,10 @@ export function createScreenMirrorAudioPlayer(): ScreenMirrorAudioPlayer | null 
   let nextStartTime = 0;
   let closed = false;
   const resume = () => {
-    if (context.state === 'suspended') void context.resume().catch(() => undefined);
+    if (context.state === 'suspended') {
+      nextStartTime = 0;
+      void context.resume().catch(() => undefined);
+    }
   };
   window.addEventListener('keydown', resume);
   window.addEventListener('pointerdown', resume);
@@ -35,6 +38,10 @@ export function createScreenMirrorAudioPlayer(): ScreenMirrorAudioPlayer | null 
   return {
     push(packet) {
       if (closed || !(packet instanceof ArrayBuffer) || packet.byteLength < 2) return;
+      if (context.state === 'suspended') {
+        resume();
+        return;
+      }
       const sampleCount = Math.floor(packet.byteLength / 2);
       const now = context.currentTime;
       if (nextStartTime - now > MAX_AUDIO_QUEUE_SECONDS) return;

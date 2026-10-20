@@ -126,3 +126,17 @@ mtime_ms = 1792512943969
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/a4239a19-ea35-4c76-aa3f-ec28783b8487/57638713-8e02-497c-b3d9-b2e0ece6d9f8"
 storage_version_token = "1792513273862500"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "pUr9WK5FKjBUyjljItizl"
+uri = "file://generated-artifacts/framecast-screen-audio/FrameCast-Screen-Audio-Test.apk"
+type = "unspecified"
+title = "FrameCast Screen Audio Test APK"
+description = "Standalone Android release test build for supported screen-mirror playback audio. Package: com.tvcast.com. Signed with the Android debug key; not for Google Play upload."
+logical_id = "0a2b0366-05b1-49e7-8ba6-afaf6656629f"
+content_hash = "sha256:31b222472291f1c7df64e5ab684e5ff57cd1334eeff06340bcf06ca35aee05de"
+size = 102151166
+mtime_ms = 1792518499014
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/0a2b0366-05b1-49e7-8ba6-afaf6656629f/97e0f6c3-5c43-4f4a-a4f1-87e74d59af79"
+storage_version_token = "1792518532958407"
+content_type = "application/octet-stream"
