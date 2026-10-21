@@ -21,7 +21,10 @@ function mp4WithRotationMatrix() {
   handler.set([118, 105, 100, 101], 8);
   const mdia = box('mdia', box('hdlr', handler));
   const trak = box('trak', new Uint8Array([...box('tkhd', tkhd), ...mdia]));
-  return box('moov', trak);
+  const ftyp = box('ftyp', new Uint8Array(16));
+  const mdat = box('mdat', new Uint8Array(1100000));
+  const moov = box('moov', trak);
+  return new Uint8Array([...ftyp, ...mdat, ...moov]);
 }
 
 function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, height: 1080 }, videoSize = { width: 1920, height: 1080 } } = {}) {
@@ -113,7 +116,8 @@ test('rotates portrait metadata and sizes it to fit inside the TV screen', async
   assert.equal(r.video.style.width, '1080px');
   assert.equal(r.video.style.height, '1920px');
   assert.equal(r.video.style.transform, 'translate(-50%,-50%) rotate(270deg)');
-  assert.ok(r.requests.some((request) => request.headers?.Range === `bytes=0-${bytes.length - 1}`));
+  assert.ok(r.requests.some((request) => request.headers?.Range === 'bytes=0-262143'));
+  assert.ok(r.requests.some((request) => request.headers?.Range === `bytes=${bytes.length - 1024 * 1024}-${bytes.length - 1}`));
 });
 
 test('does not rotate a video when the TV already reports display-oriented dimensions', async () => {
