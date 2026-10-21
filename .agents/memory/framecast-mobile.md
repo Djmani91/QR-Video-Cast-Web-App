@@ -51,7 +51,7 @@ For test APK updates, preserve the same local debug signing certificate already 
 
 **Why:** The latest installed test APK uses the local debug certificate; changing it to the upload certificate would make Android reject an in-place update.
 
-**How to apply:** Keep test releases signed with the unchanged local debug keystore. Before changing signing keys, verify whether testers would need to uninstall and lose local app state.
+**How to apply:** Compare the last distributed APK's signer with the proposed build key before promising an in-place update, then keep test releases signed with that unchanged key. If keys differ or the old key is unavailable, tell the user that reinstalling may be required and uninstalling clears app-local settings.
 
 Use the private build-branch CI workflow when local Gradle jobs repeatedly disappear during workspace restarts. A lost local watcher does not mean the remote build failed.
 
@@ -137,8 +137,3 @@ Keep upload signing strict: a configured upload password without its keystore mu
 
 **How to apply:** Supply both signing inputs for a Play build. Scope any debug-test override to the individual command; do not delete the saved upload secret or weaken the signing plugin.
 
-For test APKs, preserve install compatibility by matching the signing certificate of the APK the user already has. If the prior test key is unavailable, a locally debug-signed APK will not update that install in place.
-
-**Why:** The prior test build's signing certificate did not match any debug or upload key retained in the workspace.
-
-**How to apply:** Compare the existing test APK's signer with the proposed build key before promising an in-place update. If they differ, tell the user that reinstalling may be required and that uninstalling clears app-local settings; use a stable test key for future builds.

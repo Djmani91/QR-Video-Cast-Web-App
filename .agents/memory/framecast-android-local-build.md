@@ -26,3 +26,9 @@ Keep native dependency compilation caches out of web publishing, not just the ge
 **Why:** Local Android builds generate multi-gigabyte native caches inside pnpm dependencies. Package-store pruning does not remove these modified dependency outputs; publishing has attempted to upload their compiled libraries and failed before the application could start.
 
 **How to apply:** After local native builds, account for generated Android build, CMake, and Gradle caches throughout dependencies when sizing the publishing bundle. Preserve runtime JavaScript packages and local APK build caches; exclude native compilation output from publishing rather than removing all dependencies.
+
+Use Android-aware validators for APK packaging; do not rewrite a signed APK to satisfy generic ZIP tools.
+
+**Why:** This environment's InfoZIP rejects Android alignment extra fields as invalid even when APK signatures, Android alignment validation, and entry CRCs are valid. Repacking would invalidate the signature.
+
+**How to apply:** Prefer Android signature/alignment checks and a compatible ZIP reader for CRC validation. When inspecting Hermes bundles, check UTF-16 as well as ASCII: a whole HTML template containing Unicode can be stored as UTF-16, so an ASCII-only search can falsely suggest stale source.
