@@ -106,7 +106,7 @@ type PeerLike = {
   onconnectionstatechange: (() => void) | null;
   ondatachannel: ((event: { channel: DataChannelLike }) => void) | null;
   createDataChannel(label: string, options?: { ordered?: boolean; maxRetransmits?: number }): DataChannelLike;
-  addTrack(track: ScreenTrackLike, stream: ScreenStreamLike): unknown;
+  addTrack(track: ScreenTrackLike, stream: ScreenStreamLike): ScreenSenderLike;
   createOffer(): Promise<{ type: string; sdp?: string }>;
   setLocalDescription(description: { type: string; sdp?: string }): Promise<void>;
   setRemoteDescription(description: { type: string; sdp?: string }): Promise<void>;
@@ -114,11 +114,43 @@ type PeerLike = {
   close(): void;
 };
 
-type ScreenTrackLike = { stop(): void; onended?: (() => void) | null };
+type ScreenTrackLike = {
+  stop(): void;
+  getSettings?: () => { width?: number; height?: number; frameRate?: number };
+  onended?: (() => void) | null;
+};
+type ScreenSenderEncoding = {
+  active?: boolean;
+  maxBitrate?: number;
+  maxFramerate?: number;
+  scaleResolutionDownBy?: number;
+};
+type ScreenSenderParameters = {
+  encodings?: ScreenSenderEncoding[];
+  degradationPreference?: string | null;
+};
+type ScreenSenderLike = {
+  getParameters(): ScreenSenderParameters;
+  setParameters(parameters: ScreenSenderParameters): Promise<void>;
+};
 type ScreenStreamLike = {
   getTracks(): ScreenTrackLike[];
   getVideoTracks(): ScreenTrackLike[];
 };
+
+async function configureLowLatencyScreenSender(sender: ScreenSenderLike, track: ScreenTrackLike) {
+  const parameters = sender.getParameters();
+  const encoding = parameters.encodings?.[0];
+  if (!encoding) return;
+
+  const settings = track.getSettings?.();
+  const longestSide = Math.max(settings?.width ?? 0, settings?.height ?? 0);
+  encoding.maxFramerate = 30;
+  encoding.maxBitrate = 3_000_000;
+  encoding.scaleResolutionDownBy = longestSide > 1280 ? longestSide / 1280 : 1;
+  parameters.degradationPreference = 'maintain-framerate';
+  await sender.setParameters(parameters);
+}
 
 function decodeBase64AudioFrame(encoded: string): Uint8Array {
   const input = encoded.replace(/[^A-Za-z0-9+/=]/g, '');
@@ -1043,15 +1075,20 @@ export default function HomeScreen() {
       peerRef.current = peer;
       if (screenStream) {
         screenMirrorStreamRef.current = screenStream;
-        screenStream.getVideoTracks().forEach((track) => {
+        for (const track of screenStream.getVideoTracks()) {
           track.onended = () => {
             if (screenMirrorStreamRef.current !== screenStream) return;
             closePeer(true);
             setStage('paired');
             setTransferNotice('');
           };
-          peer.addTrack(track, screenStream);
-        });
+          const sender = peer.addTrack(track, screenStream);
+          try {
+            await configureLowLatencyScreenSender(sender, track);
+          } catch (error) {
+            console.warn('Low-latency screen sender tuning unavailable; continuing with WebRTC defaults.', error);
+          }
+        }
         transferComplete.current = true;
         setScreenMirrorActive(true);
       }

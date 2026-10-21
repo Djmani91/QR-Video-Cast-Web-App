@@ -11,6 +11,12 @@ Keep phone media on a direct local-device transport; do not require an entire lo
 
 **How to apply:** Preserve the native companion and same-Wi-Fi peer-to-peer architecture. Use only app-cache staging for temporary Android picker copies; never upload them, and clean them at selection/session boundaries. Do not claim Expo Go or physical-device compatibility until tested with custom builds on both platforms.
 
+For FrameCast's Android screen-mirroring feature, the user wants direct-feeling playback with less than one second of delay; the reported 3–5 second lag is in FrameCast, not Miracast.
+
+**Why:** The user explicitly requested under-one-second screen-mirroring delay after clarifying that the problem is in this app.
+
+**How to apply:** Keep mirroring on a low-latency live WebRTC path rather than the TV's movie-player/buffered-file path. Measure end-to-end delay on the real Android phone and Samsung TV before claiming the target is met.
+
 For the phone website, do not clear a populated file input while its selected files are still needed. Browser provider-backed files can become unreadable even though their filename and size remain available.
 
 **Why:** The user repeatedly encountered Android file-permission read failures, which must not be reported as Wi-Fi or video-codec failures. Bounded snapshots help photo transfers, but copying even a short video or probing its tail can force a provider to retrieve the whole file before streaming starts.

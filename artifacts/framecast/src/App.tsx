@@ -484,6 +484,7 @@ function TvPage() {
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
   const [screenMirroring, setScreenMirroring] = useState(false);
+  const screenMirroringRef = useRef(false);
   const receiverMediaKindRef = useRef(mediaKind);
   receiverMediaKindRef.current = mediaKind;
   const [error, setError] = useState('');
@@ -659,6 +660,8 @@ function TvPage() {
   const stopPeer = useCallback(() => {
     autoFullscreen.reset();
     connectionGrace.cancel();
+    screenMirroringRef.current = false;
+    setScreenMirroring(false);
     activeSessionRef.current = null;
     canvasUnavailableRef.current = false;
     videoMediaChannelRef.current = null;
@@ -828,6 +831,11 @@ function TvPage() {
       if (phoneRenderedVideoRef.current && phoneVideoStateRef.current?.paused) relayPhoneVideoCommand('play');
       const channel = videoMediaChannelRef.current;
       if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
+      if (screenMirroringRef.current) {
+        setNeedsVideoFullscreen(false);
+        sendVideoState();
+        return;
+      }
       const source = video.srcObject || video.currentSrc || video.src;
       if (isVideoFullscreen(video)) { autoFullscreen.observe(true); sendVideoState(); return; }
       void autoFullscreen.start(source, {
@@ -1148,7 +1156,9 @@ function TvPage() {
             setError('');
             setMediaKind(signal.payload.mediaKind === 'image' ? 'image' : 'video');
             stopPeer();
-            setScreenMirroring(signal.payload.mediaSource === 'screen');
+            const isScreenMirror = signal.payload.mediaSource === 'screen';
+            screenMirroringRef.current = isScreenMirror;
+            setScreenMirroring(isScreenMirror);
             const peer = new RTCPeerConnection(rtcConfig);
             offerPeer = peer;
             peerRef.current = peer;
@@ -1785,8 +1795,9 @@ function TvPage() {
                 setMediaKind('video');
                 setVideoStreamActive(true);
                 setTransferProgress(100);
-                videoRef.current.playsInline = false;
-                videoRef.current.removeAttribute('webkit-playsinline');
+                videoRef.current.playsInline = isScreenMirror || canvasPlaybackRef.current;
+                if (isScreenMirror) videoRef.current.setAttribute('webkit-playsinline', '');
+                else videoRef.current.removeAttribute('webkit-playsinline');
                 const stream = event.streams[0] ?? new MediaStream([event.track]);
                 if (videoRef.current.srcObject !== stream) videoRef.current.srcObject = stream;
                 void videoRef.current.play().catch(() => setPlaying(false));
@@ -2001,7 +2012,7 @@ function TvPage() {
               style={tvVideoPresentation(videoFitMode)}
               autoPlay
               controls={!canvasPlayback}
-              playsInline={canvasPlayback}
+              playsInline={canvasPlayback || screenMirroring}
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
