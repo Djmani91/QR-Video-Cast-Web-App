@@ -6,6 +6,7 @@ type CacheEntry = {
 };
 
 const transferCopy = /^framecast-transfer-\d{10,17}-[a-z0-9]{1,7}(?:\.[a-zA-Z0-9]{1,8})?$/;
+const convertedCopy = /^framecast-converted-\d{10,17}-[a-z0-9]{1,7}\.mp4$/;
 const receiverDirectory = /^framecast-receiver-[a-z0-9]{8,40}$/;
 
 /** Only our generated copies/receiver folders directly inside the app cache.
@@ -14,7 +15,7 @@ const receiverDirectory = /^framecast-receiver-[a-z0-9]{8,40}$/;
 export function isFrameCastCacheEntry(cacheUri: string, entry: Pick<CacheEntry, 'name' | 'uri' | 'directory'>): boolean {
   if (!/^file:\/\/\/.+/.test(cacheUri) || /\/\.\.(?:\/|$)/.test(cacheUri)) return false;
   const pickerCache = entry.directory === true && (entry.name === 'ImagePicker' || entry.name === 'ImageManipulator');
-  if (!transferCopy.test(entry.name) && !receiverDirectory.test(entry.name) && !pickerCache) return false;
+  if (!transferCopy.test(entry.name) && !convertedCopy.test(entry.name) && !receiverDirectory.test(entry.name) && !pickerCache) return false;
   const root = cacheUri.replace(/\/+$/, '') + '/';
   return entry.uri.replace(/\/+$/, '') === root + entry.name;
 }

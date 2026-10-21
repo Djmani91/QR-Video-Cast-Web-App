@@ -48,6 +48,7 @@ import { MediaPlaylist, type SelectedMedia } from '@/components/MediaPlaylist';
 import { AppSettings } from '@/components/AppSettings';
 import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
+import { getTemporaryMediaUris, shouldOfferPhoneConversion } from '@/lib/video-compatibility';
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
@@ -58,6 +59,10 @@ import {
   useSendCastRoomMessage,
   type CastSignalType,
 } from '@workspace/api-client-react';
+
+function temporaryUrisForQueue(queue: SelectedMedia[]) {
+  return new Set(queue.flatMap(getTemporaryMediaUris));
+}
 
 async function makePickerAssetReadable(uri: string, name: string) {
   if (Platform.OS !== 'android' || !uri.startsWith('content://')) {
@@ -362,6 +367,9 @@ export default function HomeScreen() {
   const [videoThumbnails, setVideoThumbnails] = useState<Record<string, VideoThumbnail>>({});
   const [videoEnded, setVideoEnded] = useState(false);
   const [error, setError] = useState('');
+  const [codecConversionAvailable, setCodecConversionAvailable] = useState(false);
+  const [conversionProgress, setConversionProgress] = useState<number | null>(null);
+  const [conversionPhase, setConversionPhase] = useState<'encoding' | 'audio' | 'complete'>('encoding');
   const [transferNotice, setTransferNotice] = useState('');
   const [videoLink, setVideoLink] = useState('');
   const [videoBrowserOpen, setVideoBrowserOpen] = useState(false);
@@ -395,6 +403,8 @@ export default function HomeScreen() {
   const autoAdvancedVideoIndexRef = useRef(-1);
   const playQueuedItemRef = useRef<(index: number) => void>(() => {});
   const temporaryMediaUrisRef = useRef(new Set<string>());
+  const conversionRunRef = useRef(0);
+  const conversionRunningRef = useRef(false);
   const pendingMediaPreparationsRef = useRef(new Set<Promise<unknown>>());
   const queueIndexRef = useRef(0);
   const queueRunningRef = useRef(false);
@@ -432,6 +442,18 @@ export default function HomeScreen() {
         // Temporary cache cleanup must not block disconnecting or selecting new media.
       }
       temporaryMediaUrisRef.current.delete(uri);
+    }
+  }, []);
+
+  const cancelTvConversion = useCallback((updateUi = true) => {
+    if (!conversionRunningRef.current) return;
+    conversionRunRef.current += 1;
+    conversionRunningRef.current = false;
+    NativeModules.FrameCastVideoTranscoder?.cancel?.();
+    if (updateUi) {
+      setConversionProgress(null);
+      setCodecConversionAvailable(false);
+      setTransferNotice('');
     }
   }, []);
 
@@ -528,6 +550,7 @@ export default function HomeScreen() {
 
   useEffect(() => () => {
     transferRunRef.current += 1;
+    cancelTvConversion(false);
     if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
     void stopLocalStream().catch(() => undefined);
@@ -538,7 +561,7 @@ export default function HomeScreen() {
     controlChannelRef.current?.close();
     peerRef.current?.close();
     cleanupTemporaryCopies();
-  }, [cleanupTemporaryCopies]);
+  }, [cancelTvConversion, cleanupTemporaryCopies]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -597,6 +620,7 @@ export default function HomeScreen() {
           setStage('sent');
           setTransferNotice('Playing directly over Wi-Fi. Keep FrameCast open on this phone.');
           setError('');
+          setCodecConversionAvailable(false);
           setVideoEnded(state.playback === 'ended');
           if (state.playback === 'ended') {
             const currentIndex = queueIndexRef.current;
@@ -612,7 +636,17 @@ export default function HomeScreen() {
           }
         } else if (state.playback === 'error' || state.playback === 'blocked') {
           setStage('sent');
-          setError(typeof state.message === 'string' && state.message ? state.message : 'Press Play on the TV remote to start this video.');
+          const playbackError = typeof state.message === 'string' && state.message
+            ? state.message
+            : 'Press Play on the TV remote to start this video.';
+          setError(playbackError);
+          const failedMedia = mediaQueueRef.current[queueIndexRef.current];
+          setCodecConversionAvailable(shouldOfferPhoneConversion(
+            Platform.OS,
+            failedMedia?.kind,
+            playbackError,
+            Boolean(failedMedia?.compatibleUri),
+          ));
         }
       } else if (signal.type === 'answer') {
         void (async () => {
@@ -779,7 +813,8 @@ export default function HomeScreen() {
 
   const selectMedia = (queue: SelectedMedia[], initialIndex = 0) => {
     if (!queue.length) return;
-    cleanupTemporaryCopies(new Set(queue.filter((media) => media.temporaryCopy).map((media) => media.uri)));
+    cancelTvConversion();
+    cleanupTemporaryCopies(temporaryUrisForQueue(queue));
     const safeIndex = Math.min(Math.max(0, initialIndex), queue.length - 1);
     clearVideoThumbnailData();
     autoAdvancedVideoIndexRef.current = -1;
@@ -800,6 +835,8 @@ export default function HomeScreen() {
     setSentBytes(0);
     setTotalBytes(0);
     setError('');
+    setCodecConversionAvailable(false);
+    setConversionProgress(null);
     autoSendAfterSelectionRef.current = true;
   };
 
@@ -874,7 +911,7 @@ export default function HomeScreen() {
         selectMedia(pickedPhotos);
       }
     } catch (mediaError) {
-      cleanupTemporaryCopies(new Set(mediaQueueRef.current.map((media) => media.uri)));
+      cleanupTemporaryCopies(temporaryUrisForQueue(mediaQueueRef.current));
       setError(mediaError instanceof Error ? mediaError.message : 'Could not read the selected photos. Choose them again and retry.');
     } finally {
       setPreparingMedia(false);
@@ -925,7 +962,7 @@ export default function HomeScreen() {
         void prepareVideoThumbnails(queue.slice(0, 1), videoThumbnailRunRef.current);
       }
     } catch (mediaError) {
-      cleanupTemporaryCopies(new Set(mediaQueueRef.current.map((media) => media.uri)));
+      cleanupTemporaryCopies(temporaryUrisForQueue(mediaQueueRef.current));
       setError(mediaError instanceof Error ? mediaError.message : 'Could not read the selected video. Choose it again and retry.');
     } finally {
       setPreparingMedia(false);
