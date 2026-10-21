@@ -572,11 +572,12 @@ export default function HomeScreen() {
         } else if (state.message === 'FULLSCREEN_EXITED') {
           setFullscreenNotice('Full screen closed on the TV.');
         }
-        if (state.playback !== 'opening') {
-          if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
-          localOpenTimerRef.current = null;
-          localFallbackRef.current = null;
-        }
+        // Any state from this local session proves the receiver page opened.
+        // "opening" means its decoder is preparing, not that navigation failed.
+        // Do not kill its HTTP server while the TV is loading the first frames.
+        if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+        localOpenTimerRef.current = null;
+        localFallbackRef.current = null;
         setRemoteVideoPosition({
           currentTime: Math.max(0, Number(state.currentTime) || 0),
           duration: Math.max(0, Number(state.duration) || 0),

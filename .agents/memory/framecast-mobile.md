@@ -53,6 +53,12 @@ For test APK updates, preserve the same local debug signing certificate already 
 
 **How to apply:** Compare the last distributed APK's signer with the proposed build key before promising an in-place update, then keep test releases signed with that unchanged key. If keys differ or the old key is unavailable, tell the user that reinstalling may be required and uninstalling clears app-local settings.
 
+The embedded static-server library does not supply a default MIME map. Verify receiver-page HTTP headers, not just the receiver's JavaScript behavior.
+
+**Why:** Its actual Lighttpd configuration served receiver.html as application/octet-stream when only media MIME types were configured. That offers the TV a file download instead of its player webpage, independently of whether the selected video is H.264 or HEVC.
+
+**How to apply:** Explicitly declare HTML and media content types and run real-server response checks, including media byte ranges and access restrictions. Distinguish navigation acknowledgement from decoder readiness: an “opening” message from the local player means the page was reached, so a navigation fallback must not shut down its server.
+
 Use the private build-branch CI workflow when local Gradle jobs repeatedly disappear during workspace restarts. A lost local watcher does not mean the remote build failed.
 
 **Why:** Workspace restarts repeatedly killed local Android builds, while the independently hosted build continued through those same restarts.

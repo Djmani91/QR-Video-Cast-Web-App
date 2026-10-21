@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { LOCAL_RECEIVER_HTML } from './local-receiver';
+import { localServerConfig } from './local-server-config';
 import { LatestOperationQueue, SupersededOperationError } from './latest-operation-queue';
 
 type RunningStream = {
@@ -54,24 +55,7 @@ export async function startLocalStream(uri: string, name: string): Promise<Runni
       fileDir: path(directory.uri),
       nonLocal: true,
       stopInBackground: false,
-      extraConfig: `
-        server.modules += ("mod_alias", "mod_access", "mod_setenv")
-        dir-listing.activate = "disable"
-        server.range-requests = "enable"
-        mimetype.assign += (
-          ".mp4" => "video/mp4", ".m4v" => "video/mp4",
-          ".mov" => "video/quicktime", ".3gp" => "video/3gpp",
-          ".webm" => "video/webm", ".mkv" => "video/x-matroska"
-        )
-        alias.url = (
-          "${prefix}/receiver.html" => ${JSON.stringify(path(receiver.uri))},
-          "${prefix}/media${extension}" => ${JSON.stringify(path(source.uri))}
-        )
-        $HTTP["url"] !~ "^${prefix}/(receiver[.]html|media[.]${extension.slice(1)})$" {
-          url.access-deny = ("")
-        }
-        setenv.add-response-header = ("Cache-Control" => "no-store", "Referrer-Policy" => "no-referrer")
-      `,
+      extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri)),
     });
     try {
       const origin = await server.start();
