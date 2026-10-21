@@ -4,6 +4,7 @@ import { clearFrameCastCache, isFrameCastCacheEntry } from '../lib/local-data-po
 
 const cache = 'file:///data/user/0/com.tvcast.com/cache/';
 const transfer = 'framecast-transfer-1792454412345-abc1234.MP4';
+const converted = 'framecast-converted-1792454412345-abc1234.mp4';
 const receiver = 'framecast-receiver-mg12345abcdefghij';
 
 test('only generated FrameCast items directly inside the app cache are removed', () => {
@@ -11,6 +12,7 @@ test('only generated FrameCast items directly inside the app cache are removed',
   const item = (name, uri = cache + name) => ({ name, uri, delete: () => deleted.push(uri) });
   const entries = [
     item(transfer),
+    item(converted),
     item(receiver, cache + receiver + '/'),
     item('original-video.mp4'),
     item('framecast-transfer-family-photo.jpg'),
@@ -19,8 +21,8 @@ test('only generated FrameCast items directly inside the app cache are removed',
     item(transfer, cache + 'another-folder/' + transfer),
     item('../' + transfer),
   ];
-  assert.equal(clearFrameCastCache(cache, entries), 2);
-  assert.deepEqual(deleted, [cache + transfer, cache + receiver + '/']);
+  assert.equal(clearFrameCastCache(cache, entries), 3);
+  assert.deepEqual(deleted, [cache + transfer, cache + converted, cache + receiver + '/']);
 });
 
 test('original photo/library and browser URIs are not considered temporary app copies', () => {

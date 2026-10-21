@@ -405,6 +405,7 @@ export default function HomeScreen() {
   const temporaryMediaUrisRef = useRef(new Set<string>());
   const conversionRunRef = useRef(0);
   const conversionRunningRef = useRef(false);
+  const conversionAttemptedUrisRef = useRef(new Set<string>());
   const pendingMediaPreparationsRef = useRef(new Set<Promise<unknown>>());
   const queueIndexRef = useRef(0);
   const queueRunningRef = useRef(false);
@@ -445,15 +446,16 @@ export default function HomeScreen() {
     }
   }, []);
 
-  const cancelTvConversion = useCallback((updateUi = true) => {
+  const cancelTvConversion = useCallback((updateUi = true, showCancelled = false) => {
     if (!conversionRunningRef.current) return;
     conversionRunRef.current += 1;
     conversionRunningRef.current = false;
     NativeModules.FrameCastVideoTranscoder?.cancel?.();
     if (updateUi) {
       setConversionProgress(null);
-      setCodecConversionAvailable(false);
+      setCodecConversionAvailable(showCancelled);
       setTransferNotice('');
+      setError(showCancelled ? 'Conversion cancelled. Your original video is unchanged.' : '');
     }
   }, []);
 
@@ -641,12 +643,17 @@ export default function HomeScreen() {
             : 'Press Play on the TV remote to start this video.';
           setError(playbackError);
           const failedMedia = mediaQueueRef.current[queueIndexRef.current];
-          setCodecConversionAvailable(shouldOfferPhoneConversion(
+          const canConvertOnPhone = shouldOfferPhoneConversion(
             Platform.OS,
             failedMedia?.kind,
             playbackError,
             Boolean(failedMedia?.compatibleUri),
-          ));
+          );
+          setCodecConversionAvailable(canConvertOnPhone);
+          if (canConvertOnPhone && failedMedia && !conversionAttemptedUrisRef.current.has(failedMedia.uri)) {
+            conversionAttemptedUrisRef.current.add(failedMedia.uri);
+            void prepareVideoForTv();
+          }
         }
       } else if (signal.type === 'answer') {
         void (async () => {
@@ -814,6 +821,7 @@ export default function HomeScreen() {
   const selectMedia = (queue: SelectedMedia[], initialIndex = 0) => {
     if (!queue.length) return;
     cancelTvConversion();
+    conversionAttemptedUrisRef.current.clear();
     cleanupTemporaryCopies(temporaryUrisForQueue(queue));
     const safeIndex = Math.min(Math.max(0, initialIndex), queue.length - 1);
     clearVideoThumbnailData();
@@ -1044,6 +1052,7 @@ export default function HomeScreen() {
     }
     setVideoEnded(false);
     setError('');
+    setCodecConversionAvailable(false);
     setVideoLinkError('');
     setStage('connecting');
     setSentBytes(0);
@@ -1063,8 +1072,13 @@ export default function HomeScreen() {
       // Native phone -> TV HTTP byte ranges. The TV starts from a small buffer,
       // can seek anywhere, and does not wait for a complete WebRTC file copy.
       if (!forceCompatibilityTransfer && !castUrl && queue.length === 1 && queue[0].kind === 'video' && Platform.OS !== 'web') {
-        setTransferNotice('Opening the video directly over your Wi-Fi…');
-        const stream = await trackMediaPreparation(startLocalStream(queue[0].uri, queue[0].name));
+        const media = queue[0];
+        const playbackUri = media.compatibleUri ?? media.uri;
+        const playbackName = media.compatibleName ?? media.name;
+        setTransferNotice(media.compatibleUri
+          ? 'Opening the TV-ready copy over your Wi-Fi…'
+          : 'Opening the video directly over your Wi-Fi…');
+        const stream = await trackMediaPreparation(startLocalStream(playbackUri, playbackName));
         if (transferRun !== transferRunRef.current) {
           await stopLocalStream();
           return;
@@ -1081,7 +1095,7 @@ export default function HomeScreen() {
         const fallbackToCompatibility = () => {
           if (localSessionRef.current !== stream.sessionId) return;
           localOpenTimerRef.current = null;
-          const fileSize = queue[0].size || new ExpoFile(queue[0].uri).size || 0;
+          const fileSize = media.compatibleSize || media.size || new ExpoFile(playbackUri).size || 0;
           if (shouldUseBufferedVideoFallback(fileSize)) {
             setTransferNotice('The TV did not open direct playback. Retrying with a compatibility transfer…');
             void startTransfer(undefined, undefined, requestedQueueIndex, true);
@@ -1291,9 +1305,12 @@ export default function HomeScreen() {
               queueIndexRef.current = currentQueueIndex;
               setQueueIndex(currentQueueIndex);
               setSelectedMedia(media);
-              const file = new ExpoFile(media.uri);
-              const fileSize = file.size || media.size || 0;
-              if (!fileSize) throw new Error(`Could not read “${media.name}”. Choose it again and retry.`);
+              const transferUri = media.kind === 'video' ? media.compatibleUri ?? media.uri : media.uri;
+              const transferName = media.kind === 'video' ? media.compatibleName ?? media.name : media.name;
+              const transferMimeType = media.compatibleUri ? 'video/mp4' : media.mimeType;
+              const file = new ExpoFile(transferUri);
+              const fileSize = media.compatibleSize || file.size || media.size || 0;
+              if (!fileSize) throw new Error(`Could not read “${transferName}”. Choose it again and retry.`);
                const fileLimit = media.kind === 'video' ? MAX_VIDEO_SIZE_BYTES : MAX_TRANSFER_BYTES;
                if (fileSize > fileLimit) {
                  throw new Error(media.kind === 'video' ? 'Videos must be 8 GB or smaller to stream directly.' : 'Photos must be under 256 MB each.');
@@ -1315,7 +1332,7 @@ export default function HomeScreen() {
               setTotalBytes(fileSize);
               setSentBytes(0);
               const streamCandidate = media.kind === 'video'
-                && (media.mimeType === 'video/mp4' || media.mimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(media.name));
+                && (transferMimeType === 'video/mp4' || transferMimeType === 'video/quicktime' || /\.(mp4|mov)$/i.test(transferName));
                let remuxedForStreaming = false;
                if (streamCandidate) {
                  setTransferNotice('Preparing this video for direct streaming on your phone…');
@@ -1326,7 +1343,7 @@ export default function HomeScreen() {
                       ...(Platform.OS === 'web' ? {} : { open: () => file.open(FileMode.ReadOnly) }),
                     },
                    channel: mediaChannel,
-                   name: media.name,
+                    name: transferName,
                    originalSize: fileSize,
                    isCancelled: () => transferRun !== transferRunRef.current,
                    waitForBuffer: () => waitForBuffer(mediaChannel),
@@ -1343,9 +1360,9 @@ export default function HomeScreen() {
                if (!remuxedForStreaming) {
                  mediaChannel.send(JSON.stringify({
                    framecast: 'metadata',
-                   name: media.name,
+                    name: transferName,
                    itemId,
-                   mimeType: media.mimeType,
+                    mimeType: transferMimeType,
                    kind: media.kind,
                    size: fileSize,
                    streamCandidate,
@@ -1498,6 +1515,78 @@ export default function HomeScreen() {
     }
   };
 
+  const prepareVideoForTv = async () => {
+    const index = queueIndexRef.current;
+    const media = mediaQueueRef.current[index];
+    const nativeTranscoder = NativeModules.FrameCastVideoTranscoder;
+    if (!media || media.kind !== 'video' || media.compatibleUri || conversionRunningRef.current) return;
+    if (Platform.OS !== 'android' || typeof nativeTranscoder?.transcode !== 'function') {
+      setError('Automatic phone conversion is not available in this build. Your original video is unchanged.');
+      setCodecConversionAvailable(false);
+      return;
+    }
+
+    conversionRunningRef.current = true;
+    const run = ++conversionRunRef.current;
+    const outputName = `framecast-converted-${Date.now()}-${Math.random().toString(36).slice(2, 9)}.mp4`;
+    const outputFile = new ExpoFile(Paths.cache, outputName);
+    const emitter = new NativeEventEmitter(nativeTranscoder);
+    const progressSubscription = emitter.addListener(
+      'framecast-video-transcode-progress',
+      (progress: { percent?: number; phase?: 'encoding' | 'audio' | 'complete' }) => {
+        if (conversionRunRef.current !== run) return;
+        setConversionProgress(Math.max(0, Math.min(100, Number(progress.percent) || 0)));
+        if (progress.phase === 'audio') setConversionPhase('audio');
+        else if (progress.phase === 'complete') setConversionPhase('complete');
+        else setConversionPhase('encoding');
+      },
+    );
+    setConversionProgress(0);
+    setConversionPhase('encoding');
+    setCodecConversionAvailable(false);
+    setError('');
+    setTransferNotice('The TV cannot play this format. Converting a private copy on this phone…');
+
+    try {
+      const result = await nativeTranscoder.transcode(media.uri, outputFile.uri) as { uri?: string; size?: number };
+      if (conversionRunRef.current !== run) return;
+      const compatibleUri = result?.uri || outputFile.uri;
+      const compatibleSize = Number(result?.size) || new ExpoFile(compatibleUri).size;
+      if (!compatibleSize) throw new Error('The phone did not create a playable TV-ready copy. Your original video is unchanged.');
+
+      const convertedMedia: SelectedMedia = {
+        ...media,
+        compatibleUri,
+        compatibleName: outputName,
+        compatibleSize,
+      };
+      const nextQueue = [...mediaQueueRef.current];
+      nextQueue[index] = convertedMedia;
+      mediaQueueRef.current = nextQueue;
+      temporaryMediaUrisRef.current.add(compatibleUri);
+      setMediaQueue(nextQueue);
+      setSelectedMedia(convertedMedia);
+      setQueueIndex(index);
+      queueIndexRef.current = index;
+      setConversionProgress(null);
+      setCodecConversionAvailable(false);
+      setTransferNotice('The TV-ready copy is complete. Opening it over Wi-Fi…');
+      await startTransfer(undefined, undefined, index);
+    } catch (conversionError) {
+      if (conversionRunRef.current !== run) return;
+      const message = conversionError instanceof Error
+        ? conversionError.message
+        : 'The phone could not convert this video. Your original is unchanged.';
+      setConversionProgress(null);
+      setTransferNotice('');
+      setError(message);
+      setCodecConversionAvailable(!/audio format the phone converter cannot keep/i.test(message));
+    } finally {
+      progressSubscription.remove();
+      if (conversionRunRef.current === run) conversionRunningRef.current = false;
+    }
+  };
+
   useEffect(() => {
     if (!autoSendAfterSelectionRef.current || !roomId || preparingMedia || !selectedMedia) return;
     autoSendAfterSelectionRef.current = false;
@@ -1564,6 +1653,7 @@ export default function HomeScreen() {
   playQueuedItemRef.current = playQueuedItem;
 
   const leaveRoom = () => {
+    cancelTvConversion();
     if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
     fullscreenAckTimerRef.current = null;
     setFullscreenNotice('');
@@ -1906,11 +1996,13 @@ export default function HomeScreen() {
           <View style={styles.main}>
             <View style={[styles.connectedBadge, { backgroundColor: activeColors.secondary }]}>
               <View style={[styles.connectedDot, { backgroundColor: stage === 'paired' ? activeColors.accent : activeColors.primary }]} />
-              <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : localPlayback ? videoStreaming ? 'Connected · Playing on TV' : 'Connected · Opening video' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
+              <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{conversionProgress !== null ? 'Preparing a TV-ready video' : stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : localPlayback ? videoStreaming ? 'Connected · Playing on TV' : 'Connected · Opening video' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
             </View>
-            <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? selectedMedia?.kind === 'video' ? 'Playing on the TV.' : mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
+            <Text style={[styles.title, { color: activeColors.foreground }]}>{conversionProgress !== null ? 'Preparing video for the TV.' : stage === 'sent' ? selectedMedia?.kind === 'video' ? 'Playing on the TV.' : mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
             <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>
-              {stage === 'sent'
+              {conversionProgress !== null
+                ? 'Converting a TV-compatible copy on this phone. Your original stays unchanged and the video is not uploaded.'
+                : stage === 'sent'
                 ? isUrlPlayback
                   ? 'The TV is playing directly from the video source.'
                   : selectedMedia?.kind === 'video'
@@ -1972,9 +2064,9 @@ export default function HomeScreen() {
                 status={selectedMedia.kind === 'video'
                   ? videoStreaming && !paused && !videoEnded ? 'Playing' : stage === 'sending' ? 'Starting' : 'Ready'
                   : stage === 'sending' ? 'Sending' : 'Ready'}
-                canAdd={stage !== 'sending' && stage !== 'connecting'}
+                canAdd={conversionProgress === null && stage !== 'sending' && stage !== 'connecting'}
                 canControlVideo={stage === 'sent' || videoStreaming || localPlayback}
-                canSelectItem={(index) => mediaQueue[index]?.kind === 'video' || stage !== 'sending' || index < sentQueueCount}
+                canSelectItem={(index) => conversionProgress === null && (mediaQueue[index]?.kind === 'video' || stage !== 'sending' || index < sentQueueCount)}
                 colors={{
                   background: activeColors.background,
                   card: activeColors.card,
@@ -2189,7 +2281,7 @@ export default function HomeScreen() {
                       <Ionicons name={remoteVideoPosition.volume <= 0 ? 'volume-mute' : 'volume-high'} size={18} color={activeColors.foreground} />
                       <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>{remoteVideoPosition.volume <= 0 ? 'Unmute' : 'Mute'}</Text>
                     </Pressable>
-                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { cleanupTemporaryCopies(); clearVideoThumbnailData(); setSelectedMedia(null); setMediaQueue([]); mediaQueueRef.current = []; setStage('paired'); setVideoEnded(false); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
+                    <Pressable style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} onPress={() => { cancelTvConversion(); cleanupTemporaryCopies(); clearVideoThumbnailData(); setSelectedMedia(null); setMediaQueue([]); mediaQueueRef.current = []; setStage('paired'); setVideoEnded(false); setSentBytes(0); closePeer(true); }} testID="button-stop-tv">
                       <Ionicons name="stop" size={18} color={activeColors.foreground} />
                       <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Stop</Text>
                     </Pressable>
@@ -2248,7 +2340,7 @@ export default function HomeScreen() {
               </>
             )}
 
-            {stage !== 'sending' && stage !== 'connecting' && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (Boolean(error) || (stage === 'sent' && mediaQueue.length > 1)) && (
+            {stage !== 'sending' && stage !== 'connecting' && conversionProgress === null && !codecConversionAvailable && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (Boolean(error) || (stage === 'sent' && mediaQueue.length > 1)) && (
               <Pressable
                 onPress={() => void startTransfer()}
                 style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
@@ -2261,7 +2353,7 @@ export default function HomeScreen() {
               </Pressable>
             )}
 
-            {(stage === 'sending' || stage === 'connecting') && (
+            {(stage === 'sending' || stage === 'connecting') && conversionProgress === null && (
               <View style={styles.loadingRow}>
                 <ActivityIndicator color={activeColors.primary} />
                 <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{localPlayback ? 'Opening the video over Wi-Fi…' : stage === 'connecting' ? 'Creating a direct connection…' : 'Sending directly to the TV…'}</Text>
@@ -2287,13 +2379,45 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        {transferNotice ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
+        {transferNotice && conversionProgress === null ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
+        {conversionProgress !== null ? (
+          <View style={[styles.conversionCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="video-conversion-progress">
+            <View style={styles.conversionHeading}>
+              <ActivityIndicator color={activeColors.primary} />
+              <Text style={[styles.conversionTitle, { color: activeColors.foreground }]}>
+                {conversionPhase === 'audio'
+                  ? 'Finishing the audio track…'
+                  : conversionPhase === 'complete'
+                    ? 'Conversion complete…'
+                    : `Converting on this phone… ${Math.round(conversionProgress)}%`}
+              </Text>
+            </View>
+            <View style={[styles.conversionProgressTrack, { backgroundColor: activeColors.secondary }]}>
+              <View style={[styles.conversionProgressFill, { backgroundColor: activeColors.primary, width: `${conversionProgress}%` }]} />
+            </View>
+            <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>This temporary copy stays on your phone. FrameCast keeps the original unchanged.</Text>
+            <Pressable onPress={() => cancelTvConversion(true, true)} style={[styles.secondaryButton, { backgroundColor: activeColors.secondary }]} accessibilityRole="button" testID="button-cancel-video-conversion">
+              <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Cancel conversion</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {error ? (
           <View style={[styles.errorBox, { backgroundColor: '#FCEBE6' }]} testID="text-error">
             <Ionicons name="alert-circle-outline" size={18} color={activeColors.destructive} />
             <Text style={[styles.errorText, { color: activeColors.destructive }]}>{error}</Text>
           </View>
         ) : null}
+        {codecConversionAvailable && conversionProgress === null && selectedMedia?.kind === 'video' && (
+          <Pressable
+            onPress={() => void prepareVideoForTv()}
+            style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: pressed ? 0.86 : 1 }]}
+            accessibilityRole="button"
+            testID="button-convert-video-for-tv"
+          >
+            <Ionicons name="swap-horizontal" size={18} color={activeColors.primaryForeground} />
+            <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>Prepare a TV-ready copy on this phone</Text>
+          </Pressable>
+        )}
         {messagesQuery.isError && roomId ? (
           <Text style={[styles.errorText, { color: activeColors.destructive }]}>Could not reach the TV. Check that its FrameCast page is still open.</Text>
         ) : null}
@@ -2356,6 +2480,11 @@ const styles = StyleSheet.create({
   progressTrack: { height: 8, borderRadius: 10, overflow: 'hidden', marginTop: 22 },
   progressFill: { height: '100%', borderRadius: 10 },
   progressCopy: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18, marginTop: 9 },
+  conversionCard: { borderWidth: 1, borderRadius: 17, padding: 14, marginTop: 14 },
+  conversionHeading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  conversionTitle: { flex: 1, fontFamily: 'Inter_600SemiBold', fontSize: 14, lineHeight: 20 },
+  conversionProgressTrack: { height: 8, borderRadius: 8, overflow: 'hidden', marginTop: 12 },
+  conversionProgressFill: { height: '100%', borderRadius: 8 },
   loadingRow: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   playbackRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
   videoRemoteControls: { gap: 3, marginTop: 8 },
