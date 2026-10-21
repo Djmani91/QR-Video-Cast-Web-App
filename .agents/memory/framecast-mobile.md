@@ -47,6 +47,12 @@ Preserve a populated default branch when uploading a clean Android source export
 
 **How to apply:** Recheck remote refs before uploading. Build the allowlisted source separately and leave the existing default branch untouched unless the user explicitly approves integration or replacement. Before each later APK build, refresh the allowlisted native app sources and any new components from the working app into the separate build checkout. Expo preview edits do not automatically update that copy or an already-running build; state that distinction clearly when previewing newer UI.
 
+For test APK updates, preserve the same local debug signing certificate already installed on testers' phones. Use the separate upload key only for Play Store signing.
+
+**Why:** The latest installed test APK uses the local debug certificate; changing it to the upload certificate would make Android reject an in-place update.
+
+**How to apply:** Keep test releases signed with the unchanged local debug keystore. Before changing signing keys, verify whether testers would need to uninstall and lose local app state.
+
 Use the private build-branch CI workflow when local Gradle jobs repeatedly disappear during workspace restarts. A lost local watcher does not mean the remote build failed.
 
 **Why:** Workspace restarts repeatedly killed local Android builds, while the independently hosted build continued through those same restarts.

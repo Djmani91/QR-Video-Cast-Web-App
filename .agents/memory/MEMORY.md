@@ -1,6 +1,7 @@
 - [FrameCast privacy](framecast-privacy.md) — video must remain peer-to-peer; do not persist user data or media.
 - [Samsung TV target](framecast-samsung.md) — start with Samsung's built-in browser, not a native Tizen app.
 - [FrameCast native companion](framecast-mobile.md) — custom WebRTC build; stage picker URIs, preserve Expo's Android launcher recovery, and embed the live API host in APKs.
+- [FrameCast Android test APK signing](framecast-mobile.md) — preserve the debug signing certificate on test APKs so existing installs can update in place.
 - [FrameCast screen-mirror latency](framecast-mobile.md) — target under one second for Android mirroring; verify the live delay on the phone and Samsung TV.
 - [FrameCast APK Git auth](framecast-mobile.md) — configure Git’s HTTPS credential helper with the same isolated GitHub CLI credentials used for authenticated API reads.
 - [Local Android builds](framecast-android-local-build.md) — SDK quirks and native dependency caches that must stay out of web publishing.

@@ -5,7 +5,7 @@ import { Router, type IRouter } from "express";
 const router: IRouter = Router();
 const apkPath = resolve(
   process.cwd(),
-  "../../generated-artifacts/framecast-blob-fix/FrameCast-Android-Blob-Fix.apk",
+  "../../generated-artifacts/framecast-mirror-latency-build/FrameCast-Mirror-Low-Latency-1.0.5.apk",
 );
 
 router.get("/download/framecast.apk", (_req, res): void => {
@@ -17,7 +17,7 @@ router.get("/download/framecast.apk", (_req, res): void => {
   res.setHeader("Content-Type", "application/vnd.android.package-archive");
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="FrameCast-Android-Blob-Fix.apk"',
+    'attachment; filename="FrameCast-Mirror-Low-Latency-1.0.5.apk"',
   );
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(apkPath, (error) => {
