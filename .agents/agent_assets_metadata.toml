@@ -154,3 +154,17 @@ mtime_ms = 1792519373148
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/54d6a744-206a-4026-a6ec-9a2038b6e630/f1ac7af8-3aac-48d9-9148-132f416b629a"
 storage_version_token = "1792520839314928"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "iGJQcnqiNTT2fPBw9oyhi"
+uri = "file://generated-artifacts/framecast-diagnostic/FrameCast-H264-Compatibility-Test.mp4"
+type = "video"
+title = "Same video — H.264 compatibility test"
+description = "A 4-second diagnostic copy of your supplied video, converted to standard H.264/AAC, 1080p at 30 fps. Download to your phone and select it in the existing FrameCast app. Your original is unchanged."
+logical_id = "fc624c71-308c-4592-a09d-89dd7d9ee2ea"
+content_hash = "sha256:9cecd1f1bc789be935fb6ebbff54850d4ee2be34260629b86aabb28b070561cf"
+size = 1020333
+mtime_ms = 1792579791070
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/fc624c71-308c-4592-a09d-89dd7d9ee2ea/5395f5a0-97c6-4353-b2ec-45b55d263c51"
+storage_version_token = "1792579834824066"
+content_type = "video/mp4"

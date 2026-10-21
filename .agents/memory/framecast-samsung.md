@@ -56,3 +56,9 @@ After a phone pairs, the user wants the TV to switch to a full-viewport cinema s
 **Why:** The user specifically asked for a persistent, animated movie-theater standby screen on the Samsung TV after pairing, with popcorn and cinema imagery.
 
 **How to apply:** Make the page fill the TV viewport whether or not browser fullscreen is granted. Try document fullscreen once per paired room, but keep a clearly visible remote-selectable Full screen button because Samsung may block automatic fullscreen. Do not replace or disrupt the existing active-media fullscreen path.
+
+Do not diagnose Samsung's “This function is not supported” dialog as a fullscreen failure from the wording alone. Fullscreen capability does not establish video-decoder compatibility, and MP4 is a container, not a codec.
+
+**Why:** The user's supplied phone footage includes HEVC/H.265 inside MP4. Repeated fullscreen changes did not resolve the reported playback failure. Repackaging that video does not turn it into H.264.
+
+**How to apply:** Inspect the actual source codec and distinguish decoding, transport, and fullscreen failures. A compatible H.264 rendition of the same content is a useful hardware control before another speculative APK; do not claim HEVC incompatibility on this TV is conclusively proven without that comparison.
