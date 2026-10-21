@@ -50,3 +50,9 @@ Known orientation for a normalized stream must remain authoritative even while t
 **Why:** The user explicitly described this behavior in their Web Video Caster recording and wants FrameCast to behave similarly.
 
 **How to apply:** Distinguish video-player fullscreen from making the entire browser page fullscreen. Explain browser permission limits and verify remote Back behavior rather than assuming either works.
+
+After a phone pairs, the user wants the TV to switch to a full-viewport cinema standby screen and remain there until disconnect. Keep this separate from the active video player's native fullscreen behavior.
+
+**Why:** The user specifically asked for a persistent, animated movie-theater standby screen on the Samsung TV after pairing, with popcorn and cinema imagery.
+
+**How to apply:** Make the page fill the TV viewport whether or not browser fullscreen is granted. Try document fullscreen once per paired room, but keep a clearly visible remote-selectable Full screen button because Samsung may block automatic fullscreen. Do not replace or disrupt the existing active-media fullscreen path.

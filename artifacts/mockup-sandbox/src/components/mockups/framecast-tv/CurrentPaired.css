@@ -1,0 +1,58 @@
+.fc-current-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 85% 4%, rgba(211, 126, 79, .12), transparent 33rem),
+    radial-gradient(ellipse at 8% 90%, rgba(68, 115, 91, .09), transparent 30rem),
+    var(--fc-bg);
+}
+.fc-current-topbar {
+  width: min(1180px, calc(100% - 56px));
+  height: 92px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(221, 216, 203, .8);
+}
+.fc-current-brand { display: flex; align-items: center; gap: 11px; font: 800 19px/1 var(--fc-display); letter-spacing: -.045em; }
+.fc-current-brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--fc-primary); color: #fbfaf5; }
+.fc-current-note { display: flex; align-items: center; gap: 8px; color: var(--fc-muted); font-size: 13px; }
+.fc-current-page { width: min(1180px, calc(100% - 56px)); margin: 0 auto; padding: 62px 0 42px; }
+.fc-current-grid { display: grid; grid-template-columns: minmax(0, 1fr) 410px; align-items: center; gap: 76px; }
+.fc-current-eyebrow { color: var(--fc-primary); font: 500 11px/1.2 var(--fc-mono); text-transform: uppercase; letter-spacing: .14em; }
+.fc-current-copy { max-width: 640px; }
+.fc-current-copy h1 { margin: 20px 0; font: 800 clamp(44px, 6vw, 76px)/.99 var(--fc-display); letter-spacing: -.065em; }
+.fc-current-copy h1 em { color: var(--fc-primary); font-style: normal; }
+.fc-current-copy p { max-width: 530px; color: var(--fc-muted); font-size: 18px; line-height: 1.65; }
+.fc-current-trust { display: flex; align-items: center; gap: 9px; margin-top: 25px; color: var(--fc-muted); font-size: 13px; }
+.fc-current-trust svg { flex: none; color: var(--fc-primary); }
+.fc-current-card { padding: 28px; border: 1px solid var(--fc-border); border-radius: 24px; background: rgba(251, 250, 245, .9); box-shadow: 0 24px 64px rgba(48, 61, 51, .12); }
+.fc-current-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.fc-current-card-heading h2 { margin: 7px 0 0; font: 700 21px/1.2 var(--fc-display); letter-spacing: -.04em; }
+.fc-current-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.fc-current-chip, .fc-current-fullscreen { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+.fc-current-chip { padding: 7px 10px; border-radius: 99px; background: var(--fc-secondary); font: 500 10px/1 var(--fc-mono); text-transform: uppercase; letter-spacing: .06em; }
+.fc-current-chip svg { color: var(--fc-primary); }
+.fc-current-fullscreen { min-height: 34px; padding: 0 10px; border: 1px solid var(--fc-border); border-radius: 99px; background: transparent; color: var(--fc-muted); font: 500 10px/1 var(--fc-mono); }
+.fc-current-qr-frame { display: grid; place-items: center; width: 224px; height: 224px; margin: 25px auto 18px; border: 1px solid var(--fc-border); border-radius: 18px; background: #fbfaf5; }
+.fc-current-qr { width: 184px; height: 184px; }
+.fc-current-prompt { max-width: 270px; margin: 0 auto 19px; color: var(--fc-muted); text-align: center; font-size: 13px; line-height: 1.5; }
+.fc-current-room-meta { display: flex; justify-content: space-between; padding-top: 16px; margin-top: 19px; border-top: 1px solid var(--fc-border); color: var(--fc-muted); font: 11px var(--fc-mono); }
+.fc-current-room-meta strong { color: var(--fc-fg); font-weight: 500; }
+.fc-current-status { display: flex; align-items: center; gap: 12px; min-height: 57px; padding: 15px 16px; margin-top: 24px; border-radius: 14px; background: rgba(237, 233, 223, .7); font-size: 13px; line-height: 1.45; }
+.fc-current-status-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--fc-accent); box-shadow: 0 0 0 4px rgba(227, 128, 91, .14); }
+.fc-current-footer { margin-top: 54px; padding-top: 20px; border-top: 1px solid var(--fc-border); color: var(--fc-muted); font-size: 12px; }
+@media (max-width: 850px) {
+  .fc-current-grid { grid-template-columns: 1fr; gap: 32px; }
+  .fc-current-copy { max-width: 680px; }
+  .fc-current-card { width: min(100%, 520px); margin: 0 auto; }
+}
+@media (max-width: 600px) {
+  .fc-current-topbar, .fc-current-page { width: calc(100% - 32px); }
+  .fc-current-topbar { height: 70px; }
+  .fc-current-page { padding-top: 36px; }
+  .fc-current-note { font-size: 11px; }
+  .fc-current-copy h1 { font-size: clamp(42px, 11vw, 58px); }
+  .fc-current-copy p { font-size: 15px; }
+  .fc-current-card { padding: 20px; }
+}

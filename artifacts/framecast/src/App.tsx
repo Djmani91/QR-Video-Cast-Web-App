@@ -31,6 +31,7 @@ import { configureVideoSender, preferHardwareVideoCodec } from './lib/video-stre
 import { monitorVideoStream, readVideoStats, type StreamHealth } from './lib/video-stream-health';
 import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/video-playlist';
 import { VideoPlaylist } from './components/VideoPlaylist';
+import { TvCinemaWaitingScreen } from './components/TvCinemaWaitingScreen';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -494,6 +495,8 @@ function TvPage() {
   const youtubeMediaChannelRef = useRef<RTCDataChannel | null>(null);
   const [clock, setClock] = useState(Date.now());
   const [browserFullscreen, setBrowserFullscreen] = useState(false);
+  const [needsStandbyFullscreen, setNeedsStandbyFullscreen] = useState(false);
+  const autoCinemaFullscreenRoomRef = useRef<string | null>(null);
   const [needsVideoFullscreen, setNeedsVideoFullscreen] = useState(false);
   const [videoReturnedInline, setVideoReturnedInline] = useState(false);
   const [photoReturnedInline, setPhotoReturnedInline] = useState(false);
@@ -606,6 +609,12 @@ function TvPage() {
   const [tvControlsCountdown, setTvControlsCountdown] = useState<number | null>(null);
   const [photoPreviewVisible, setPhotoPreviewVisible] = useState(false);
   const [transferProgress, setTransferProgress] = useState<number | null>(null);
+  const hasActiveTvMedia = screenMirroring
+    || Boolean(youtubeVideoId)
+    || receivedImages.length > 0
+    || transferProgress !== null
+    || videoStreamActive
+    || Boolean(videoRef.current?.src || videoRef.current?.currentSrc || videoRef.current?.srcObject);
   useEffect(() => {
     if (imageZoom === 1) setImageOffsetY(0);
   }, [imageZoom]);
@@ -1027,7 +1036,7 @@ function TvPage() {
 
   const toggleBrowserFullscreen = () => {
     const video = videoRef.current;
-    if (status === 'connected' && mediaKind === 'video' && !youtubeVideoId && video) {
+    if (status === 'connected' && hasActiveTvMedia && mediaKind === 'video' && !youtubeVideoId && video) {
       if (isVideoFullscreen(video)) void exitVideoFullscreen(video);
       else {
         setVideoReturnedInline(false);
@@ -1035,7 +1044,7 @@ function TvPage() {
       }
       return;
     }
-    if (status === 'connected' && mediaKind === 'image' && playbackStageRef.current) {
+    if (status === 'connected' && hasActiveTvMedia && mediaKind === 'image' && playbackStageRef.current) {
       if (video && isVideoFullscreen(video)) void exitVideoFullscreen(video);
       else {
         setPhotoReturnedInline(false);
@@ -1043,18 +1052,29 @@ function TvPage() {
       }
       return;
     }
-    if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => {
+    const fullscreenDocument = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitCurrentFullScreenElement?: Element | null;
+      webkitIsFullScreen?: boolean;
+      webkitExitFullscreen?: () => void | Promise<void>;
+      webkitCancelFullScreen?: () => void | Promise<void>;
+    };
+    if (document.fullscreenElement || fullscreenDocument.webkitFullscreenElement
+      || fullscreenDocument.webkitCurrentFullScreenElement || fullscreenDocument.webkitIsFullScreen) {
+      const exit = document.exitFullscreen ?? fullscreenDocument.webkitExitFullscreen ?? fullscreenDocument.webkitCancelFullScreen;
+      if (exit) {
+        void Promise.resolve(exit.call(document)).catch(() => {
+          setError('This TV browser could not exit full screen. Use its Back or Exit key.');
+        });
+      } else {
         setError('This TV browser could not exit full screen. Use its Back or Exit key.');
-      });
+      }
+      setNeedsStandbyFullscreen(false);
       return;
     }
-    if (!document.documentElement.requestFullscreen) {
-      setError('This TV browser does not support full screen. Playback will still fill the FrameCast page.');
-      return;
-    }
-    void document.documentElement.requestFullscreen().catch(() => {
-      setError('Use the TV remote to select Full screen. The video will still fill the FrameCast page.');
+    void requestMediaFullscreen(document.documentElement).then((entered) => {
+      setBrowserFullscreen(entered);
+      setNeedsStandbyFullscreen(!entered);
     });
   };
   useEffect(() => {
@@ -1836,16 +1856,42 @@ function TvPage() {
         }
       } else if (signal.type === 'close') {
         if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
+        const fullscreenDocument = document as Document & {
+          webkitFullscreenElement?: Element | null;
+          webkitCurrentFullScreenElement?: Element | null;
+          webkitIsFullScreen?: boolean;
+          webkitExitFullscreen?: () => void | Promise<void>;
+          webkitCancelFullScreen?: () => void | Promise<void>;
+        };
+        const pageIsFullscreen = Boolean(document.fullscreenElement || fullscreenDocument.webkitFullscreenElement
+          || fullscreenDocument.webkitCurrentFullScreenElement || fullscreenDocument.webkitIsFullScreen);
+        if (videoRef.current && isVideoFullscreen(videoRef.current)) {
+          void exitVideoFullscreen(videoRef.current);
+        } else if (pageIsFullscreen) {
+          const exit = document.exitFullscreen ?? fullscreenDocument.webkitExitFullscreen ?? fullscreenDocument.webkitCancelFullScreen;
+          if (exit) void Promise.resolve(exit.call(document)).catch(() => undefined);
+        }
+        autoCinemaFullscreenRoomRef.current = null;
+        setNeedsStandbyFullscreen(false);
         stopPeer();
         setScreenMirroring(false);
         setError('');
-        setStatus('paired');
+        setStatus('idle');
       }
     }
   }, [messages, roomId, send, stopPeer]);
 
   const startRoom = () => {
     sessionStorage.removeItem('framecast-tv-resume');
+    const fullscreenDocument = document as Document & {
+      webkitExitFullscreen?: () => void | Promise<void>;
+      webkitCancelFullScreen?: () => void | Promise<void>;
+    };
+    if (!hasActiveTvMedia && videoRef.current && isVideoFullscreen(videoRef.current)) {
+      const exit = document.exitFullscreen ?? fullscreenDocument.webkitExitFullscreen ?? fullscreenDocument.webkitCancelFullScreen;
+      if (exit) void Promise.resolve(exit.call(document)).catch(() => undefined);
+    }
+    setNeedsStandbyFullscreen(false);
     const cleanUrl = new URL(window.location.href);
     cleanUrl.searchParams.delete('resume');
     cleanUrl.searchParams.delete('after');
@@ -1882,8 +1928,51 @@ function TvPage() {
           ? 'Waiting for the phone to reconnect. Keep this room open; no new code is needed.'
           : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
 
+  const showCinemaStandby = Boolean(room && !roomExpired && status !== 'idle' && !hasActiveTvMedia);
+  const cinemaConnectionLabel = status === 'disconnected' || status === 'failed'
+    ? 'Phone reconnecting'
+    : status === 'connecting'
+      ? 'Connecting to phone'
+      : 'Phone paired';
+  const cinemaReadyMessage = status === 'disconnected' || status === 'failed'
+    ? 'Keep this room open; the same phone can reconnect.'
+    : 'Ready for your next photo or video';
+  const cinemaErrorMessage = error || (messagesQuery.isError
+    ? 'The room signal is interrupted. Keep this screen open while the phone reconnects.'
+    : undefined);
+
+  useEffect(() => {
+    if (!showCinemaStandby || !room) {
+      if (!showCinemaStandby) setNeedsStandbyFullscreen(false);
+      return;
+    }
+    if (autoCinemaFullscreenRoomRef.current === room.id) return;
+    autoCinemaFullscreenRoomRef.current = room.id;
+    if (videoRef.current ? isVideoFullscreen(videoRef.current) : Boolean(document.fullscreenElement)) {
+      setNeedsStandbyFullscreen(false);
+      return;
+    }
+    let active = true;
+    void requestMediaFullscreen(document.documentElement).then((entered) => {
+      if (active) setNeedsStandbyFullscreen(!entered);
+    });
+    return () => { active = false; };
+  }, [room?.id, showCinemaStandby]);
+
   return (
-    <div className={`app-shell${status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) && !(mediaKind === 'image' && photoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
+    <div className={`app-shell${showCinemaStandby ? ' tv-cinema-standby' : status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) && !(mediaKind === 'image' && photoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
+      {showCinemaStandby ? (
+        <TvCinemaWaitingScreen
+          connectionLabel={cinemaConnectionLabel}
+          connectionMessage={statusCopy}
+          readyMessage={cinemaReadyMessage}
+          errorMessage={cinemaErrorMessage}
+          isFullscreen={browserFullscreen}
+          needsManualFullscreen={needsStandbyFullscreen && !browserFullscreen}
+          onToggleFullscreen={toggleBrowserFullscreen}
+          onNewRoom={reconnect}
+        />
+      ) : <>
       <BrandHeader />
       <main className="page-wrap fade-in">
         <div className="hero-grid">
@@ -2088,6 +2177,7 @@ function TvPage() {
           </aside>
         </div>
       </main>
+      </>}
     </div>
   );
 }
