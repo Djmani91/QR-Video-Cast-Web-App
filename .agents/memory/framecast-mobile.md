@@ -65,6 +65,12 @@ When switching between phone-hosted TV player pages, test that the next local UR
 
 **How to apply:** Probe the next phone URL from the existing local receiver, retry briefly, and preserve its cloud-polling page on failure so compatibility fallback or return-to-TV navigation can still work. Do not grant broad CORS access just for a reachability probe.
 
+For Samsung direct playback, `object-fit: contain` alone does not fix phone videos whose MP4 rotation matrix the TV browser ignores. Read only bounded MP4 metadata ranges, apply the rotation if the TV's decoded dimensions show it was not already honored, then size the rotated viewport to fit.
+
+**Why:** A portrait phone clip can be encoded as landscape pixels with a 90-degree MP4 track matrix; Samsung may crop/enlarge that unrotated frame despite a contain-fit style.
+
+**How to apply:** Keep playback immediate and range-based: never read or buffer the whole video for orientation, avoid double-rotation when intrinsic dimensions are already display-oriented, and preserve contain-fit as the default.
+
 Use the private build-branch CI workflow when local Gradle jobs repeatedly disappear during workspace restarts. A lost local watcher does not mean the remote build failed.
 
 **Why:** Workspace restarts repeatedly killed local Android builds, while the independently hosted build continued through those same restarts.

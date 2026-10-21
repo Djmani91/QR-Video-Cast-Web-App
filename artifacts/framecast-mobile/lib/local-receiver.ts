@@ -4,7 +4,7 @@ export const LOCAL_RECEIVER_HTML = `<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FrameCast TV</title><style>
 html,body{margin:0;width:100%;height:100%;background:#000;color:#fff;font:20px sans-serif;overflow:hidden}
-video{width:100%;height:100%;object-fit:contain}
+#video{position:absolute;left:50%;top:50%;width:100vw;height:100vh;max-width:100vw;max-height:100vh;transform:translate(-50%,-50%);transform-origin:center center;object-fit:contain!important;background:#000}
 #bar{position:absolute;bottom:0;left:0;right:0;padding:24px;background:linear-gradient(transparent,rgba(0,0,0,.9));display:flex;gap:20px;align-items:center}
 button{font:inherit;padding:12px;border:1px solid #aaa;background:#203b32;color:white;border-radius:8px}
 #notice{position:absolute;top:12%;left:10%;right:10%;text-align:center;pointer-events:none}
@@ -25,6 +25,91 @@ try{
 }catch(e){document.getElementById('notice').textContent='Invalid pairing address.';return;}
 var video=document.getElementById('video'),bar=document.getElementById('bar'),notice=document.getElementById('notice');
 video.style.objectFit='contain';
+var fileOrientation=null;
+function readU32(bytes,offset){return ((bytes[offset]*16777216)+(bytes[offset+1]<<16)+(bytes[offset+2]<<8)+bytes[offset+3])>>>0;}
+function readI32(bytes,offset){var value=readU32(bytes,offset);return value>2147483647?value-4294967296:value;}
+function readBox(bytes,offset,end){
+ if(offset<0||offset+8>end)return null;
+ var size=readU32(bytes,offset),header=8,type=String.fromCharCode(bytes[offset+4],bytes[offset+5],bytes[offset+6],bytes[offset+7]);
+ if(size===1){if(offset+16>end)return null;size=readU32(bytes,offset+8)*4294967296+readU32(bytes,offset+12);header=16;}
+ else if(size===0)size=end-offset;
+ if(size<header||size>end-offset)return null;
+ return {type:type,start:offset,data:offset+header,end:offset+size};
+}
+function childBoxes(bytes,start,end,callback){
+ for(var p=start;p+8<=end;){var box=readBox(bytes,p,end);if(!box)break;callback(box);p=box.end;}
+}
+function parseMovieOrientation(bytes){
+ for(var marker=bytes.length-4;marker>=4;marker--){
+  if(bytes[marker]!==109||bytes[marker+1]!==111||bytes[marker+2]!==111||bytes[marker+3]!==118)continue;
+  var moov=readBox(bytes,marker-4,bytes.length);if(!moov||moov.type!=='moov')continue;
+  var result=null;
+  childBoxes(bytes,moov.data,moov.end,function(trak){
+   if(trak.type!=='trak')return;
+   var tkhd=null,isVideo=false;
+   childBoxes(bytes,trak.data,trak.end,function(child){
+    if(child.type==='tkhd')tkhd=child;
+    if(child.type==='mdia')childBoxes(bytes,child.data,child.end,function(mediaChild){
+     if(mediaChild.type==='hdlr'&&mediaChild.data+12<=mediaChild.end){
+      isVideo=String.fromCharCode(bytes[mediaChild.data+8],bytes[mediaChild.data+9],bytes[mediaChild.data+10],bytes[mediaChild.data+11])==='vide';
+     }
+    });
+   });
+   if(!isVideo||!tkhd||tkhd.data>=tkhd.end)return;
+   var version=bytes[tkhd.data],matrix=tkhd.data+(version===1?52:40);
+   if(matrix+44>tkhd.end)return;
+   var a=readI32(bytes,matrix),b=readI32(bytes,matrix+4);
+   var rawRotation=((Math.round((-Math.atan2(b,a)*180/Math.PI)/90)*90)%360+360)%360;
+   var width=readU32(bytes,matrix+36)/65536,height=readU32(bytes,matrix+40)/65536;
+   result={rotation:rawRotation,width:width,height:height};
+  });
+  if(result)return result;
+ }
+ return null;
+}
+function appliedRotation(){
+ if(!fileOrientation||!fileOrientation.rotation)return 0;
+ var rotation=fileOrientation.rotation,width=fileOrientation.width,height=fileOrientation.height;
+ if((rotation!==90&&rotation!==270)||!width||!height||!video.videoWidth||!video.videoHeight)return 0;
+ var raw=width/height,rendered=video.videoWidth/video.videoHeight;
+ return Math.abs(rendered-raw)<Math.abs(rendered-1/raw)?rotation:0;
+}
+function fitVideoToScreen(){
+ video.style.objectFit='contain';
+ var width=typeof window!=='undefined'?(window.innerWidth||document.documentElement.clientWidth):0;
+ var height=typeof window!=='undefined'?(window.innerHeight||document.documentElement.clientHeight):0;
+ var rotation=appliedRotation(),quarter=rotation===90||rotation===270;
+ video.style.width=(quarter?height:width)+'px';
+ video.style.height=(quarter?width:height)+'px';
+ video.style.transform='translate(-50%,-50%) rotate('+rotation+'deg)';
+}
+function readVideoOrientation(){
+ fetch('./media'+(config.extension||'.mp4'),{method:'HEAD',cache:'no-store'}).then(function(head){
+  var length=Number(head.headers&&head.headers.get('content-length'));if(!head.ok||!isFinite(length)||length<1)return null;
+  var limits=[1024*1024,4*1024*1024],attempt=0;
+  function readRange(start,end){
+   return fetch('./media'+(config.extension||'.mp4'),{headers:{Range:'bytes='+start+'-'+end},cache:'no-store'}).then(function(response){
+    if(response.status!==206)return null;
+    return response.arrayBuffer().then(function(buffer){return new Uint8Array(buffer);});
+   });
+  }
+  function readTail(){
+   var limit=limits[attempt++],start=Math.max(0,length-limit);
+   return readRange(start,length-1).then(function(bytes){
+    if(!bytes)return null;
+    var info=parseMovieOrientation(bytes);
+    if(info)return info;
+    return attempt<limits.length?readTail():null;
+   });
+  }
+  return readRange(0,Math.min(length-1,262143)).then(function(bytes){
+   var info=bytes&&parseMovieOrientation(bytes);
+   return info||readTail();
+  });
+ }).then(function(info){if(info){fileOrientation=info;fitVideoToScreen();}}).catch(function(){});
+}
+video.addEventListener('loadedmetadata',fitVideoToScreen);
+if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',fitVideoToScreen);
 var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='',fullscreenFeedback='',videoOutputTimer=0;
 var session=config.sessionId,fullscreenAttempted=false,fullscreenDenied=false;
 function post(type,payload){
@@ -202,6 +287,7 @@ video.onerror=function(){
   notice.textContent=problem;state();reveal();
 };
 video.src='./media'+(config.extension||'.mp4');
+readVideoOrientation();
 video.load();play();setInterval(poll,500);setInterval(state,3000);poll();state();
 })();
 </script></body></html>`;

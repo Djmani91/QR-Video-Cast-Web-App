@@ -3,7 +3,28 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 import { LOCAL_RECEIVER_HTML } from '../lib/local-receiver.ts';
 
-function receiver({ headResponses = [] } = {}) {
+function mp4WithRotationMatrix() {
+  const box = (type, payload) => {
+    const bytes = new Uint8Array(8 + payload.length);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(0, bytes.length);
+    bytes.set([...type].map((character) => character.charCodeAt(0)), 4);
+    bytes.set(payload, 8);
+    return bytes;
+  };
+  const tkhd = new Uint8Array(84);
+  const tkhdView = new DataView(tkhd.buffer);
+  [0, 65536, 0, -65536, 0, 0, 0, 0, 1073741824].forEach((value, index) => tkhdView.setInt32(40 + index * 4, value));
+  tkhdView.setUint32(76, 1920 * 65536);
+  tkhdView.setUint32(80, 1080 * 65536);
+  const handler = new Uint8Array(24);
+  handler.set([118, 105, 100, 101], 8);
+  const mdia = box('mdia', box('hdlr', handler));
+  const trak = box('trak', new Uint8Array([...box('tkhd', tkhd), ...mdia]));
+  return box('moov', trak);
+}
+
+function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, height: 1080 }, videoSize = { width: 1920, height: 1080 } } = {}) {
   const requests = [];
   const timers = new Map();
   let messages = [];
@@ -11,7 +32,7 @@ function receiver({ headResponses = [] } = {}) {
   const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back'].map((id) => [id, { style: {}, textContent: '' }]));
   const video = {
     currentTime: 12, duration: 3600, volume: 1, muted: false, paused: true,
-    readyState: 0, videoWidth: 1920, error: null, style: {}, listeners: {}, loadCount: 0,
+    readyState: 0, videoWidth: videoSize.width, videoHeight: videoSize.height, error: null, style: {}, listeners: {}, loadCount: 0,
     addEventListener(name, listener) { this.listeners[name] = listener; },
     load() { this.loadCount += 1; },
     play() { this.paused = false; return Promise.resolve(); },
@@ -34,11 +55,25 @@ function receiver({ headResponses = [] } = {}) {
   const context = vm.createContext({
     URL, Number, JSON, Math, Infinity, isFinite, decodeURIComponent, encodeURIComponent,
     document, location,
+    window: { innerWidth: windowSize.width, innerHeight: windowSize.height, addEventListener() {} },
     setInterval(fn, delay) { timers.set(delay, fn); },
     setTimeout(fn, delay) { timers.set(delay, fn); return delay; },
     clearTimeout(delay) { timers.delete(delay); },
     fetch: async (url, options = {}) => {
       requests.push({ url, ...options });
+      if (mediaBytes && url.startsWith('./media')) {
+        if (options.method === 'HEAD') return { ok: true, status: 200, headers: { get(name) { return name.toLowerCase() === 'content-length' ? String(mediaBytes.length) : null; } } };
+        const match = options.headers?.Range?.match(/^bytes=(\d+)-(\d+)$/);
+        if (match) {
+          const start = Number(match[1]);
+          const end = Math.min(Number(match[2]), mediaBytes.length - 1);
+          const buffer = mediaBytes.slice(start, end + 1).buffer;
+          return { status: 206, arrayBuffer: async () => buffer };
+        }
+      }
+      if (url.startsWith('./media') && options.method === 'HEAD') {
+        return { ok: true, status: 200, headers: { get() { return null; } } };
+      }
       if (options.method === 'HEAD') {
         const result = headResponses[headCount++] ?? true;
         if (!result) throw new TypeError('Failed to fetch');
@@ -59,11 +94,37 @@ test('starts the original local video immediately, without fetching or uploading
   assert.equal(r.video.src, './media.mov');
   assert.equal(r.video.paused, false);
   assert.equal(r.video.style.objectFit, 'contain');
-  assert.ok(r.requests.every((request) => request.url.startsWith('https://framecast.example/api/')));
+  assert.ok(r.requests.filter((request) => request.url.startsWith('https://framecast.example/api/')).length > 0);
+  assert.ok(r.requests.filter((request) => request.url.startsWith('./media')).every((request) => request.method === 'HEAD'));
   const telemetry = JSON.parse(r.requests.find((request) => request.method === 'POST').body);
   assert.equal(telemetry.type, 'player-state');
   assert.equal(telemetry.payload.duration, 3600);
   assert.equal(telemetry.payload.sessionId, 'session1');
+});
+
+test('rotates portrait metadata and sizes it to fit inside the TV screen', async () => {
+  const bytes = mp4WithRotationMatrix();
+  const r = receiver({ mediaBytes: bytes });
+  await flush();
+  await flush();
+  r.video.listeners.loadedmetadata();
+  await flush();
+  assert.equal(r.video.style.objectFit, 'contain');
+  assert.equal(r.video.style.width, '1080px');
+  assert.equal(r.video.style.height, '1920px');
+  assert.equal(r.video.style.transform, 'translate(-50%,-50%) rotate(270deg)');
+  assert.ok(r.requests.some((request) => request.headers?.Range === `bytes=0-${bytes.length - 1}`));
+});
+
+test('does not rotate a video when the TV already reports display-oriented dimensions', async () => {
+  const r = receiver({ mediaBytes: mp4WithRotationMatrix(), videoSize: { width: 1080, height: 1920 } });
+  await flush();
+  await flush();
+  r.video.listeners.loadedmetadata();
+  await flush();
+  assert.equal(r.video.style.width, '1920px');
+  assert.equal(r.video.style.height, '1080px');
+  assert.equal(r.video.style.transform, 'translate(-50%,-50%) rotate(0deg)');
 });
 
 test('phone controls seek, pause, volume and mute on the TV', async () => {
@@ -175,7 +236,7 @@ test('checks a new phone player URL before navigating away from the working rece
   r.timers.get(500)();
   await flush();
   await flush();
-  const probe = r.requests.find((request) => request.method === 'HEAD');
+  const probe = r.requests.find((request) => request.method === 'HEAD' && request.url === 'http://192.168.1.45:45678/abc123/receiver.html');
   assert.equal(probe.url, 'http://192.168.1.45:45678/abc123/receiver.html');
   assert.equal(probe.mode, 'no-cors');
   assert.equal(r.location.next.includes('session2'), true);
@@ -196,7 +257,7 @@ test('keeps the current receiver alive and reports a phone-server failure after 
   await flush();
   r.timers.get(500)();
   await flush();
-  assert.equal(r.requests.filter((request) => request.method === 'HEAD').length, 3);
+  assert.equal(r.requests.filter((request) => request.method === 'HEAD' && request.url === 'http://192.168.1.45:45678/abc123/receiver.html').length, 3);
   assert.equal(r.location.next, undefined);
   assert.match(r.elements.notice.textContent, /temporarily unreachable/i);
   const report = r.requests
