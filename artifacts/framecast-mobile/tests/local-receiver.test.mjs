@@ -3,10 +3,11 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 import { LOCAL_RECEIVER_HTML } from '../lib/local-receiver.ts';
 
-function receiver() {
+function receiver({ headResponses = [] } = {}) {
   const requests = [];
   const timers = new Map();
   let messages = [];
+  let headCount = 0;
   const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back'].map((id) => [id, { style: {}, textContent: '' }]));
   const video = {
     currentTime: 12, duration: 3600, volume: 1, muted: false, paused: true,
@@ -38,6 +39,11 @@ function receiver() {
     clearTimeout(delay) { timers.delete(delay); },
     fetch: async (url, options = {}) => {
       requests.push({ url, ...options });
+      if (options.method === 'HEAD') {
+        const result = headResponses[headCount++] ?? true;
+        if (!result) throw new TypeError('Failed to fetch');
+        return { type: 'opaque', status: 0, ok: false };
+      }
       return { ok: true, json: async () => options.method === 'POST' ? { sequence: 99 } : { messages } };
     },
   });
@@ -156,6 +162,48 @@ test('rejects public hosts disguised as a private address when switching videos'
   r.timers.get(500)();
   await flush();
   assert.equal(r.location.next, undefined);
+});
+
+test('checks a new phone player URL before navigating away from the working receiver', async () => {
+  const r = receiver();
+  await flush();
+  r.setMessages([{ sequence: 21, from: 'phone', type: 'local-video', payload: {
+    sessionId: 'session2',
+    receiverUrl: 'http://192.168.1.45:45678/abc123/receiver.html',
+    extension: '.mp4',
+  } }]);
+  r.timers.get(500)();
+  await flush();
+  await flush();
+  const probe = r.requests.find((request) => request.method === 'HEAD');
+  assert.equal(probe.url, 'http://192.168.1.45:45678/abc123/receiver.html');
+  assert.equal(probe.mode, 'no-cors');
+  assert.equal(r.location.next.includes('session2'), true);
+  assert.equal(new URL(r.location.next).pathname, '/abc123/receiver.html');
+});
+
+test('keeps the current receiver alive and reports a phone-server failure after bounded retries', async () => {
+  const r = receiver({ headResponses: [false, false, false] });
+  await flush();
+  r.setMessages([{ sequence: 22, from: 'phone', type: 'local-video', payload: {
+    sessionId: 'session2',
+    receiverUrl: 'http://192.168.1.45:45678/abc123/receiver.html',
+    extension: '.mp4',
+  } }]);
+  r.timers.get(500)();
+  await flush();
+  r.timers.get(250)();
+  await flush();
+  r.timers.get(500)();
+  await flush();
+  assert.equal(r.requests.filter((request) => request.method === 'HEAD').length, 3);
+  assert.equal(r.location.next, undefined);
+  assert.match(r.elements.notice.textContent, /temporarily unreachable/i);
+  const report = r.requests
+    .filter((request) => request.method === 'POST')
+    .map((request) => JSON.parse(request.body))
+    .find((request) => request.payload.message === 'TV_LOCAL_SERVER_UNREACHABLE');
+  assert.equal(report.payload.sessionId, 'session2');
 });
 
 test('a temporary initial video request failure is retried and can recover', async () => {

@@ -561,6 +561,12 @@ export default function HomeScreen() {
           localFallbackRef.current?.();
           continue;
         }
+        if (state.message === 'TV_LOCAL_SERVER_UNREACHABLE') {
+          if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+          localOpenTimerRef.current = null;
+          localFallbackRef.current?.();
+          continue;
+        }
         if (state.message === 'FULLSCREEN_NEEDS_TV_REMOTE') {
           if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
           fullscreenAckTimerRef.current = null;

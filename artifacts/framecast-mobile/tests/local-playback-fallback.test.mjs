@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import {
   BUFFERED_VIDEO_FALLBACK_MAX_BYTES,
   LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS,
@@ -18,4 +19,13 @@ test('large, missing, or invalid videos never trigger a whole-file fallback', ()
 
 test('direct playback fallback starts after a bounded TV-open wait', () => {
   assert.equal(LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS, 3_000);
+});
+
+test('an unreachable phone-hosted receiver triggers the phone compatibility fallback', async () => {
+  const app = await readFile(new URL('../app/index.tsx', import.meta.url), 'utf8');
+  const start = app.indexOf("if (signal.type === 'player-state'");
+  const end = app.indexOf('setRemoteVideoPosition({', start);
+  const handler = app.slice(start, end);
+  assert.match(handler, /state\.message === 'TV_LOCAL_SERVER_UNREACHABLE'/);
+  assert.match(handler, /localFallbackRef\.current\?\.\(\)/);
 });

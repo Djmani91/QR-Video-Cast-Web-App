@@ -59,6 +59,12 @@ The embedded static-server library does not supply a default MIME map. Verify re
 
 **How to apply:** Explicitly declare HTML and media content types and run real-server response checks, including media byte ranges and access restrictions. Distinguish navigation acknowledgement from decoder readiness: an “opening” message from the local player means the page was reached, so a navigation fallback must not shut down its server.
 
+When switching between phone-hosted TV player pages, test that the next local URL is reachable before navigating away from the current receiver page.
+
+**Why:** If a Samsung browser navigates to an unreachable phone IP/port, it replaces the live FrameCast receiver with its own error page; phone-side fallback signals then have no active TV page to receive them.
+
+**How to apply:** Probe the next phone URL from the existing local receiver, retry briefly, and preserve its cloud-polling page on failure so compatibility fallback or return-to-TV navigation can still work. Do not grant broad CORS access just for a reachability probe.
+
 Use the private build-branch CI workflow when local Gradle jobs repeatedly disappear during workspace restarts. A lost local watcher does not mean the remote build failed.
 
 **Why:** Workspace restarts repeatedly killed local Android builds, while the independently hosted build continued through those same restarts.

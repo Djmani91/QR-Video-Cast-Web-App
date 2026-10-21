@@ -84,6 +84,32 @@ function command(action){
  else if(action==='fullscreen:exit')exitFullscreen();
  state();
 }
+ function openNextLocalVideo(message,target){
+  var attempts=0;
+  function probe(){
+   if(exiting)return;
+   // no-cors keeps this probe from needing a wildcard CORS grant on the
+   // phone's private media server. A network failure rejects; an opaque
+   // response still confirms the TV can reach the server.
+   fetch(target.href,{method:'HEAD',mode:'no-cors',cache:'no-store'}).then(function(){
+    if(exiting)return;
+    config.sessionId=message.payload.sessionId;config.extension=message.payload.extension;config.after=message.sequence;
+    exiting=true;location.replace(target.href+'#'+encodeURIComponent(JSON.stringify(config)));
+   }).catch(function(){
+    if(exiting)return;
+    if(attempts<2){attempts++;setTimeout(probe,250*attempts);return;}
+    playback='error';problem='TV_LOCAL_SERVER_UNREACHABLE';
+    notice.textContent='The phone video link is temporarily unreachable. Keeping this screen open while FrameCast retries…';
+    post('player-state',{sessionId:message.payload.sessionId,playback:'error',message:problem}).catch(function(){});
+    reveal();
+    // Let the phone start the compatibility path. Returning to its web page
+    // keeps large-video failures recoverable instead of leaving Samsung on
+    // its browser-owned "server not found" screen.
+    setTimeout(function(){if(!exiting)leave(cursor);},5000);
+   });
+  }
+  probe();
+ }
 function poll(){
  if(exiting||polling)return;polling=true;
  fetch(endpoint.href,{cache:'no-store'}).then(function(r){if(!r.ok)throw Error('Room unavailable');return r.json();}).then(function(data){
@@ -96,8 +122,7 @@ function poll(){
    if(m.type==='local-video'&&m.payload.sessionId!==session){
     var next=new URL(m.payload.receiverUrl);
     if(next.protocol!=='http:'||next.username||next.password||!isPrivate(next.hostname)||!/^\\/[a-z0-9]+\\/receiver[.]html$/.test(next.pathname))continue;
-    config.sessionId=m.payload.sessionId;config.extension=m.payload.extension;config.after=m.sequence;
-    exiting=true;location.replace(next.href+'#'+encodeURIComponent(JSON.stringify(config)));return;
+     openNextLocalVideo(m,next);return;
    }
    if(m.type==='player-command'&&m.payload.sessionId===session&&m.sequence>lastCommand){
     lastCommand=m.sequence;command(m.payload.action||'');

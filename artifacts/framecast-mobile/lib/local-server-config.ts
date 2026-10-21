@@ -20,6 +20,9 @@ export function localServerConfig(prefix: string, extension: string, receiverPat
     $HTTP["url"] !~ "^${prefix}/(receiver[.]html|media[.]${extension.slice(1)})$" {
       url.access-deny = ("")
     }
-    setenv.add-response-header = ("Cache-Control" => "no-store", "Referrer-Policy" => "no-referrer")
+    setenv.add-response-header = (
+      "Cache-Control" => "no-store",
+      "Referrer-Policy" => "no-referrer"
+    )
   `;
 }
