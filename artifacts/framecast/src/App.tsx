@@ -16,7 +16,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
 import { assertBrowserFileReadable, isSelectedMediaAccessError, preserveBrowserSelection, SelectedMediaAccessError } from './lib/browser-media';
-import { exitVideoFullscreen, isVideoFullscreen, requestVideoFullscreen, requestMediaFullscreen } from './lib/video-fullscreen';
+import { exitVideoFullscreen, isVideoFullscreen, requestReceiverFullscreen, requestMediaFullscreen } from './lib/video-fullscreen';
 import { normalizeRotation, requiredVideoRotation, type VideoOrientation } from './lib/media-orientation';
 import { ROTATION_RENDERER_VERSION, verifyRotationRenderer } from './lib/rotation-renderer';
 import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
@@ -533,17 +533,11 @@ function TvPage() {
     const canvas = !phoneRenderedVideoRef.current && !canvasUnavailableRef.current && needsVideoCanvas(rotation, videoFitModeRef.current, width, height, window.innerWidth, window.innerHeight);
     canvasPlaybackRef.current = canvas;
     setCanvasPlayback(canvas);
-    video.playsInline = canvas;
-    if (canvas) video.setAttribute('webkit-playsinline', '');
-    else video.removeAttribute('webkit-playsinline');
+    video.playsInline = true;
+    video.setAttribute('webkit-playsinline', '');
   }, []);
   const requestPlaybackFullscreen = useCallback(async (video: HTMLVideoElement) => {
-    const stage = playbackStageRef.current;
-    if (canvasPlaybackRef.current && stage) return requestMediaFullscreen(stage);
-    if (await requestVideoFullscreen(video)) return true;
-    // A phone remote command is not a trusted TV gesture. Some TV browsers
-    // reject fullscreen on the media element but permit it on the stage.
-    return stage ? requestMediaFullscreen(stage) : false;
+    return requestReceiverFullscreen(video, playbackStageRef.current, canvasPlaybackRef.current);
   }, []);
   const handleCanvasFailure = useCallback(() => {
     // A presentation enhancement must never stop the underlying TV decoder.
@@ -552,8 +546,8 @@ function TvPage() {
     setCanvasPlayback(false);
     const video = videoRef.current;
     if (video) {
-      video.playsInline = false;
-      video.removeAttribute('webkit-playsinline');
+      video.playsInline = true;
+      video.setAttribute('webkit-playsinline', '');
     }
     const channel = videoMediaChannelRef.current;
     if (channel?.readyState === 'open') channel.send(JSON.stringify({
@@ -1795,9 +1789,8 @@ function TvPage() {
                 setMediaKind('video');
                 setVideoStreamActive(true);
                 setTransferProgress(100);
-                videoRef.current.playsInline = isScreenMirror || canvasPlaybackRef.current;
-                if (isScreenMirror) videoRef.current.setAttribute('webkit-playsinline', '');
-                else videoRef.current.removeAttribute('webkit-playsinline');
+                videoRef.current.playsInline = true;
+                videoRef.current.setAttribute('webkit-playsinline', '');
                 const stream = event.streams[0] ?? new MediaStream([event.track]);
                 if (videoRef.current.srcObject !== stream) videoRef.current.srcObject = stream;
                 void videoRef.current.play().catch(() => setPlaying(false));
@@ -1972,7 +1965,8 @@ function TvPage() {
 
   return (
     <div className={`app-shell${showCinemaStandby ? ' tv-cinema-standby' : status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) && !(mediaKind === 'image' && photoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
-      {showCinemaStandby ? (
+      {showCinemaStandby && (
+        <div className="tv-cinema-overlay">
         <TvCinemaWaitingScreen
           connectionLabel={cinemaConnectionLabel}
           connectionMessage={statusCopy}
@@ -1983,7 +1977,11 @@ function TvPage() {
           onToggleFullscreen={toggleBrowserFullscreen}
           onNewRoom={reconnect}
         />
-      ) : <>
+        </div>
+      )}
+      {/* Keep the receiver mounted while waiting: incoming tracks and URL
+          messages need videoRef before they can switch off the standby screen. */}
+      <div className="tv-receiver-content" inert={showCinemaStandby || undefined} aria-hidden={showCinemaStandby || undefined}>
       <BrandHeader />
       <main className="page-wrap fade-in">
         <div className="hero-grid">
@@ -2012,7 +2010,7 @@ function TvPage() {
               style={tvVideoPresentation(videoFitMode)}
               autoPlay
               controls={!canvasPlayback}
-              playsInline={canvasPlayback || screenMirroring}
+              playsInline
               muted={muted}
               aria-label="Video playing from the guest phone"
               data-testid="video-tv-playback"
@@ -2188,7 +2186,7 @@ function TvPage() {
           </aside>
         </div>
       </main>
-      </>}
+      </div>
     </div>
   );
 }

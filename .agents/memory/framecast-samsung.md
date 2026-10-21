@@ -11,17 +11,17 @@ For Samsung TVs, target the built-in TV browser using the existing web app; do n
 
 The desired fullscreen behavior is video-only fullscreen: the browser starts in its normal view, playing a video fills the TV screen, and Back returns to the normal browser view.
 
-The user confirmed video fullscreen works on their Samsung TV; the model was not supplied. Preserve that native-video path for ordinary videos. Photos need fullscreen on the gallery container. Videos requiring explicit rotation need container fullscreen instead of the native media overlay.
+The user previously confirmed video fullscreen on their Samsung TV; the model was not supplied. Only use a native-video fullscreen path when source support is explicitly confirmed. Otherwise use container fullscreen for videos and photos.
 
 **Why:** The user then showed sideways video despite working fullscreen. A TV's native media overlay can bypass CSS transforms, and fragmented-video rotation metadata is not handled consistently across TV players. Genuine portrait footage must not be stretched to landscape.
 
-**How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. Desktop CSS-transform checks are not proof of Samsung compatibility. Prefer correcting local browser video on the phone and sending already-upright landscape frames to the TV's ordinary WebRTC video player. Do not switch the TV into a canvas or CSS rotation path when rotating this stream. Retain native fullscreen and do not claim hardware compatibility until verified on the TV.
+**How to apply:** Keep source rotation separate from encoded dimensions and avoid applying it twice. Desktop CSS-transform checks are not proof of Samsung compatibility. Prefer correcting local browser video on the phone and sending already-upright frames to the TV's inline WebRTC player. Do not switch the TV into a canvas or CSS rotation path when rotating this stream, and do not claim hardware compatibility until verified on the TV.
 
-The user wants videos to show horizontally and fill the TV screen. Default to Fill TV screen, keeping the picture upright and center-cropping portrait footage rather than stretching it or turning people sideways. Offer Fit whole video to restore the complete picture.
+Default to Fit whole video. Keep the picture upright and uncropped; any optional Fill TV screen mode must not stretch or rotate people sideways.
 
-**Why:** The user explicitly clarified that a narrow vertical picture is not the desired TV presentation, even when upright.
+**Why:** The user later explicitly changed the requested default to “fit whole video,” not Fill TV screen, including in the native app.
 
-**How to apply:** Treat orientation and aspect-ratio fill as separate controls. Explain that wide-screen filling of portrait footage crops the top/bottom; preserve the original media and make this display choice reversible.
+**How to apply:** Treat orientation and aspect-ratio fit as separate controls. Preserve the complete picture by default; explain that filling a wide screen with portrait footage crops it and keep that choice reversible.
 
 Keep the underlying video visible and full-sized when using a canvas overlay. If corrected-picture drawing is unsupported, keep standard video playback running and explain the presentation limitation instead of pausing the decoder.
 
@@ -39,7 +39,7 @@ Do not treat a fullscreen API call returning without an exception as proof that 
 
 **Why:** The user reports browser chrome still visible after live-video changes, and later confirms Samsung automatic video fullscreen previously worked but regressed. Samsung's native media entry and general browser fullscreen are not interchangeable.
 
-**How to apply:** Give Samsung's native video entry a chance after decoded frames exist, including for live video, with a verified video-element fallback for native no-ops. A failed early attempt is not completed fullscreen; allow bounded startup retries, but respect Back/Exit. Keep a separate TV fullscreen permission button visible outside the five-second controls timeout. The user also wants a phone control for TV fullscreen: report actual TV state and explain when its browser requires its own remote gesture. A phone click cannot transfer browser user activation to the receiving device. Do not claim physical Samsung compatibility from desktop checks alone.
+**How to apply:** Never probe native movie-player fullscreen for WebRTC streams. An exposed legacy method is not proof of source support: it can open the Samsung system “This function is not supported” dialog rather than reject in JavaScript. Keep video inline and use container fullscreen unless native source support is affirmative. Keep a separate TV fullscreen permission button visible outside the five-second controls timeout. Report actual TV state to the phone and explain when a TV-remote gesture or browser menu is required. A phone click cannot transfer browser user activation to the TV, and desktop checks cannot prove physical Samsung compatibility.
 
 Known orientation for a normalized stream must remain authoritative even while the video element reports zero dimensions.
 

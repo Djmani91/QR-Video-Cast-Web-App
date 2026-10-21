@@ -10,6 +10,16 @@
   overflow: hidden;
   background: #17151a;
 }
+.tv-cinema-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+}
+.tv-cinema-standby .tv-receiver-content {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 .fc-cinema-shell {
   --fc-theater-ink: #f8efe0;
   --fc-theater-muted: #e4cbb0;

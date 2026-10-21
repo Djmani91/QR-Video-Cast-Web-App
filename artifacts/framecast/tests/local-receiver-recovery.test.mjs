@@ -23,6 +23,7 @@ function setup() {
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: now + delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
     exiting: false, playback: 'playing', problem: '', notice: { textContent: '' },
+    videoOutputTimer: 0, fullscreenFeedback: '',
     state() {}, reveal() {}, fullscreen() {}, play() { plays++; }, fullscreenAttempted: true,
   };
   vm.createContext(context);

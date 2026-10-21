@@ -9,7 +9,7 @@ video{width:100%;height:100%;object-fit:contain}
 button{font:inherit;padding:12px;border:1px solid #aaa;background:#203b32;color:white;border-radius:8px}
 #notice{position:absolute;top:12%;left:10%;right:10%;text-align:center;pointer-events:none}
 </style></head><body>
-<video id="video" autoplay controls preload="auto"></video>
+<video id="video" autoplay controls playsinline webkit-playsinline preload="auto"></video>
 <div id="notice">Connected. Opening video directly from your phone…</div>
 <div id="bar"><button id="play">Play / pause</button><button id="mute">Sound / mute</button>
 <button id="full">Full screen</button><button id="back">Back to pairing</button><span id="timer">5</span></div>
@@ -43,11 +43,13 @@ function leave(after){
 }
 function reveal(){seconds=5;bar.style.display='flex';document.getElementById('timer').textContent='5';}
 function fullscreen(){
- var requests=[[video,video.webkitEnterFullscreen],[video,video.webkitEnterFullScreen],[video,video.requestFullscreen],[video,video.webkitRequestFullscreen],[video,video.webkitRequestFullScreen],
+ // The video already fills this page. Fullscreen the page instead of handing
+ // it to Samsung's separate native movie overlay, which can show an OS dialog.
+ var requests=document.fullscreenEnabled===false?[]:[
   [document.documentElement,document.documentElement.requestFullscreen],[document.documentElement,document.documentElement.webkitRequestFullscreen],[document.documentElement,document.documentElement.webkitRequestFullScreen]];
  fullscreenFeedback='FULLSCREEN_REQUESTED';
  function next(i){
-  if(i>=requests.length){fullscreenDenied=true;fullscreenFeedback='FULLSCREEN_NEEDS_TV_REMOTE';notice.textContent='Press Full screen or OK on the TV remote. This TV browser requires its own button press.';reveal();state();return;}
+   if(i>=requests.length){fullscreenDenied=true;fullscreenFeedback='FULLSCREEN_NEEDS_TV_REMOTE';notice.textContent=document.fullscreenEnabled===false?'Video can play here. Use Full screen in the TV browser menu to hide its address bar.':'Press Full screen or OK on the TV remote. This TV browser requires its own button press.';reveal();state();return;}
   var owner=requests[i][0],request=requests[i][1];
   if(!request){next(i+1);return;}
   try{Promise.resolve(request.call(owner)).then(function(){setTimeout(function(){if(isFullscreen()){fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_OK';notice.textContent='';state();}else next(i+1);},250);},function(){next(i+1);});}catch(e){next(i+1);}

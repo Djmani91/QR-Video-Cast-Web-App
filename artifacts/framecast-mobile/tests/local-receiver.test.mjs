@@ -84,12 +84,12 @@ test('phone Fit whole video command restores the uncropped TV presentation', asy
   assert.equal(r.video.style.objectFit, 'contain');
 });
 
-test('phone full-screen command requests full screen on the TV player', async () => {
+test('phone full-screen command fullscreens the page containing the inline TV video', async () => {
   const r = receiver();
   let entered = false;
-  r.video.requestFullscreen = () => {
+  r.document.documentElement.requestFullscreen = () => {
     entered = true;
-    r.document.fullscreenElement = r.video;
+    r.document.fullscreenElement = r.document.documentElement;
     return Promise.resolve();
   };
   await flush();
@@ -98,7 +98,7 @@ test('phone full-screen command requests full screen on the TV player', async ()
   await flush();
   await flush();
   assert.equal(entered, true);
-  assert.equal(r.document.fullscreenElement, r.video);
+  assert.equal(r.document.fullscreenElement, r.document.documentElement);
 });
 
 test('phone full-screen command falls back to the TV document when video fullscreen is unavailable', async () => {
@@ -225,4 +225,21 @@ test('remote Back exits fullscreen without leaving the room or stopping playback
   assert.equal(prevented, true);
   assert.equal(r.location.next, undefined);
   assert.equal(r.video.paused, false);
+});
+
+test('starting a video never probes Samsung native movie-player fullscreen', async () => {
+  const r = receiver();
+  await flush();
+  let nativeCalls = 0;
+  r.video.webkitEnterFullscreen = () => { nativeCalls++; throw Error('TV system dialog'); };
+  r.video.webkitEnterFullScreen = r.video.webkitEnterFullscreen;
+  r.video.requestFullscreen = r.video.webkitEnterFullscreen;
+  r.document.documentElement.requestFullscreen = () => {
+    r.document.fullscreenElement = r.document.documentElement;
+  };
+  r.video.onplaying();
+  await flush();
+  assert.equal(nativeCalls, 0);
+  assert.equal(r.video.paused, false);
+  assert.match(LOCAL_RECEIVER_HTML, /<video[^>]* playsinline webkit-playsinline/);
 });
