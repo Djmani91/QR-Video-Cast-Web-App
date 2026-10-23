@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { getTemporaryMediaUris, shouldOfferPhoneConversion } from '../lib/video-compatibility.ts';
 
-test('phone conversion is offered for unsupported Android video codecs only', () => {
+test('phone conversion is offered for unsupported Android and iOS video codecs only', () => {
   assert.equal(shouldOfferPhoneConversion(
     'android',
     'video',
@@ -16,8 +16,10 @@ test('phone conversion is offered for unsupported Android video codecs only', ()
     false,
   ), true);
   assert.equal(shouldOfferPhoneConversion('android', 'video', 'The TV connection was interrupted.', false), false);
+  assert.equal(shouldOfferPhoneConversion('ios', 'video', 'The TV connection was interrupted.', false), false);
   assert.equal(shouldOfferPhoneConversion('android', 'image', 'unsupported codec', false), false);
-  assert.equal(shouldOfferPhoneConversion('ios', 'video', 'unsupported codec', false), false);
+  assert.equal(shouldOfferPhoneConversion('ios', 'video', 'unsupported codec', false), true);
+  assert.equal(shouldOfferPhoneConversion('web', 'video', 'unsupported codec', false), false);
   assert.equal(shouldOfferPhoneConversion('android', 'video', 'unsupported codec', true), false);
 });
 

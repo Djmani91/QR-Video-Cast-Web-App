@@ -4,7 +4,7 @@ export function shouldOfferPhoneConversion(
   error: string,
   alreadyPrepared: boolean,
 ): boolean {
-  if (platform !== 'android' || kind !== 'video' || alreadyPrepared) return false;
+  if ((platform !== 'android' && platform !== 'ios') || kind !== 'video' || alreadyPrepared) return false;
   return /does not support this video format|could not decode this video|has not decoded a picture|unsupported.*codec/i.test(error);
 }
 

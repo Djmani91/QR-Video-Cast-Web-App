@@ -25,6 +25,7 @@ import { Directory, File as ExpoFile, FileMode, Paths } from 'expo-file-system';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { EventEmitter, requireOptionalNativeModule } from 'expo-modules-core';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
 import {
@@ -52,6 +53,20 @@ import { getTemporaryMediaUris, shouldOfferPhoneConversion } from '@/lib/video-c
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
+const VIDEO_TRANSCODE_PROGRESS_EVENT = 'framecast-video-transcode-progress';
+
+type NativeVideoTranscoder = {
+  transcode(inputUri: string, outputUri: string): Promise<{ uri?: string; size?: number }>;
+  cancel(): void;
+};
+
+const iosVideoTranscoder = requireOptionalNativeModule<NativeVideoTranscoder>('FrameCastVideoTranscoder');
+
+function getPhoneVideoTranscoder(): NativeVideoTranscoder | null {
+  if (Platform.OS === 'ios') return iosVideoTranscoder;
+  return NativeModules.FrameCastVideoTranscoder ?? null;
+}
+
 import {
   getGetCastRoomMessagesQueryKey,
   useGetCastRoomMessages,
@@ -450,7 +465,7 @@ export default function HomeScreen() {
     if (!conversionRunningRef.current) return;
     conversionRunRef.current += 1;
     conversionRunningRef.current = false;
-    NativeModules.FrameCastVideoTranscoder?.cancel?.();
+    getPhoneVideoTranscoder()?.cancel?.();
     if (updateUi) {
       setConversionProgress(null);
       setCodecConversionAvailable(showCancelled);
@@ -1518,9 +1533,9 @@ export default function HomeScreen() {
   const prepareVideoForTv = async () => {
     const index = queueIndexRef.current;
     const media = mediaQueueRef.current[index];
-    const nativeTranscoder = NativeModules.FrameCastVideoTranscoder;
+    const nativeTranscoder = getPhoneVideoTranscoder();
     if (!media || media.kind !== 'video' || media.compatibleUri || conversionRunningRef.current) return;
-    if (Platform.OS !== 'android' || typeof nativeTranscoder?.transcode !== 'function') {
+    if ((Platform.OS !== 'android' && Platform.OS !== 'ios') || typeof nativeTranscoder?.transcode !== 'function') {
       setError('Automatic phone conversion is not available in this build. Your original video is unchanged.');
       setCodecConversionAvailable(false);
       return;
@@ -1530,9 +1545,16 @@ export default function HomeScreen() {
     const run = ++conversionRunRef.current;
     const outputName = `framecast-converted-${Date.now()}-${Math.random().toString(36).slice(2, 9)}.mp4`;
     const outputFile = new ExpoFile(Paths.cache, outputName);
-    const emitter = new NativeEventEmitter(nativeTranscoder);
+    const emitter = (Platform.OS === 'ios'
+      ? new EventEmitter(nativeTranscoder as never)
+      : new NativeEventEmitter(nativeTranscoder as never)) as unknown as {
+        addListener(
+          eventName: string,
+          listener: (progress: { percent?: number; phase?: 'encoding' | 'audio' | 'complete' }) => void,
+        ): { remove(): void };
+      };
     const progressSubscription = emitter.addListener(
-      'framecast-video-transcode-progress',
+      VIDEO_TRANSCODE_PROGRESS_EVENT,
       (progress: { percent?: number; phase?: 'encoding' | 'audio' | 'complete' }) => {
         if (conversionRunRef.current !== run) return;
         setConversionProgress(Math.max(0, Math.min(100, Number(progress.percent) || 0)));

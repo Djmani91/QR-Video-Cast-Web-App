@@ -1,0 +1,6 @@
+{
+  "name": "@framecast/video-transcoder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private iOS video conversion for FrameCast playback compatibility"
+}
