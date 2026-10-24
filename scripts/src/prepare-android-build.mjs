@@ -24,6 +24,7 @@ await mkdir(output, { recursive: true });
 // media, .agents, .conversation, .replit, .config, credentials, or .env files.
 const files = [
   'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.base.json', '.npmrc',
+  'patches',
   'artifacts/framecast-mobile/app',
   'artifacts/framecast-mobile/components',
   'artifacts/framecast-mobile/constants',
@@ -61,6 +62,7 @@ await writeFile(path.join(output, 'package.json'), `${JSON.stringify({
   packageManager: 'pnpm@10.26.1',
   dependencies: originalRoot.dependencies,
   devDependencies: originalRoot.devDependencies,
+  pnpm: originalRoot.pnpm,
 }, null, 2)}\n`);
 await writeFile(path.join(output, '.gitignore'), [
   'node_modules', '.expo/', 'dist/', '*.tsbuildinfo', '.env', '.env.*',
