@@ -7,4 +7,4 @@ Replit Support states that App Store publishing uploads the whole project, not j
 
 **Why:** A large FrameCast upload failed before an App Store launch session began.
 
-**How to apply:** Before App Store publishing, estimate compressed size using only the publisher's standard exclusions. Do not remove build outputs until the owner has chosen what to preserve. Keep Play upload keys secure and preserve the test APK debug signing key so test builds can update installed copies.
+**How to apply:** Before App Store publishing, estimate package size using the publisher's exclusions. Keep Android build archives under top-level `attached_assets` so they stay in the workspace but out of the iOS upload; restore them to `generated-artifacts` before a local Android build. Preserve Play upload keys and the test APK debug key.
