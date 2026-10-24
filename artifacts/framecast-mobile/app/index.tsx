@@ -47,12 +47,14 @@ import { useColors } from '@/hooks/useColors';
 import { CastTabs, type CastTab } from '@/components/CastTabs';
 import { MediaPlaylist, type SelectedMedia } from '@/components/MediaPlaylist';
 import { AppSettings } from '@/components/AppSettings';
+import { SetupTutorial } from '@/components/SetupTutorial';
 import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 import { getTemporaryMediaUris, shouldOfferPhoneConversion } from '@/lib/video-compatibility';
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
+const SETUP_TUTORIAL_SEEN_KEY = 'framecast.setupTutorialSeen.v1';
 const VIDEO_TRANSCODE_PROGRESS_EVENT = 'framecast-video-transcode-progress';
 
 type NativeVideoTranscoder = {
@@ -359,6 +361,7 @@ export default function HomeScreen() {
   const [code, setCode] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scannerStarting, setScannerStarting] = useState(false);
+  const [setupTutorialVisible, setSetupTutorialVisible] = useState(false);
   const [roomId, setRoomId] = useState('');
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
@@ -505,6 +508,28 @@ export default function HomeScreen() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void AsyncStorage.getItem(SETUP_TUTORIAL_SEEN_KEY).then((seen) => {
+      if (active && seen !== '1') setSetupTutorialVisible(true);
+    }).catch(() => {
+      if (active) setSetupTutorialVisible(true);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const finishSetupTutorial = useCallback(async () => {
+    setSetupTutorialVisible(false);
+    try {
+      await AsyncStorage.setItem(SETUP_TUTORIAL_SEEN_KEY, '1');
+    } catch {
+      setError('The setup guide could not be marked as complete and may appear again next time.');
+    }
   }, []);
 
   const messagesQuery = useGetCastRoomMessages(roomId, {
@@ -1896,6 +1921,7 @@ export default function HomeScreen() {
   }
 
   return (
+    <>
     <SafeAreaView style={[styles.safeArea, { backgroundColor: activeColors.background, paddingTop: Platform.OS === 'web' ? Math.max(insets.top, 67) : 0, paddingBottom: Platform.OS === 'web' ? Math.max(insets.bottom, 34) : 0 }]} testID="screen-framecast-mobile">
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
@@ -1909,6 +1935,7 @@ export default function HomeScreen() {
           </View>
           <AppSettings
             onClearLocalData={clearLocalData}
+            onOpenTutorial={() => setSetupTutorialVisible(true)}
             clearDisabled={preparingMedia || checkingVideoLink}
             showBackgroundCasting={backgroundCastingAvailable}
             backgroundCastingEnabled={backgroundPreference === true}
@@ -2445,6 +2472,12 @@ export default function HomeScreen() {
         ) : null}
       </ScrollView>
     </SafeAreaView>
+    <SetupTutorial
+      visible={setupTutorialVisible}
+      tvAddress={TV_BROWSER_ADDRESS}
+      onDismiss={() => { void finishSetupTutorial(); }}
+    />
+    </>
   );
 }
 

@@ -7,6 +7,7 @@ import { useColors } from '@/hooks/useColors';
 
 type Props = {
   onClearLocalData: () => Promise<void>;
+  onOpenTutorial: () => void;
   clearDisabled?: boolean;
   showBackgroundCasting: boolean;
   backgroundCastingEnabled: boolean;
@@ -17,7 +18,7 @@ type Phase = 'idle' | 'confirm' | 'busy' | 'success' | 'error';
 const HOW = [
   'Connect your phone and TV to the same Wi-Fi network.',
   'Open FrameCast in the TV browser, then scan its QR code or enter its pairing code.',
-  'Choose URL, Videos or Images to pick what to show.',
+  'Choose Images, Videos, URL or Mirror to pick what to show.',
   'Use this phone to play, pause, skip and control the TV.',
   'If enabled once, Android background casting starts automatically when you connect and stays active until you tap Disconnect.',
 ];
@@ -31,6 +32,7 @@ const PRIVACY = [
 
 export function AppSettings({
   onClearLocalData,
+  onOpenTutorial,
   clearDisabled = false,
   showBackgroundCasting,
   backgroundCastingEnabled,
@@ -135,6 +137,28 @@ export function AppSettings({
               <Text style={[styles.kicker, { color: colors.primary }]}>HOW IT WORKS</Text>
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 {HOW.map((t, i) => <Bullet key={i} n={i + 1} text={t} />)}
+                <Pressable
+                  onPress={() => {
+                    if (busyRef.current) return;
+                    close();
+                    setTimeout(onOpenTutorial, 280);
+                  }}
+                  disabled={busy}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open the step-by-step setup tutorial"
+                  testID="button-open-setup-tutorial"
+                  style={({ pressed }) => [
+                    styles.tutorialButton,
+                    { backgroundColor: colors.secondary, opacity: busy ? 0.5 : pressed ? 0.72 : 1 },
+                  ]}
+                >
+                  <Ionicons name="play-circle-outline" size={22} color={colors.primary} />
+                  <View style={styles.tutorialCopy}>
+                    <Text style={[styles.subhead, { color: colors.foreground }]}>Step-by-step setup guide</Text>
+                    <Text style={[styles.small, { color: colors.mutedForeground }]}>TV browser, Wi-Fi, pairing and controls</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
+                </Pressable>
               </View>
 
               <Text style={[styles.kicker, { color: colors.primary }]}>PRIVACY & LOCAL DATA</Text>
@@ -228,6 +252,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   settingCopy: { flex: 1, gap: 5 },
+  tutorialButton: { minHeight: 64, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 12, marginTop: 4 },
+  tutorialCopy: { flex: 1, gap: 3 },
   num: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   numText: { fontFamily: 'Inter_700Bold', fontSize: 12 },
   body: { flex: 1, fontFamily: 'Inter_400Regular', fontSize: 14, lineHeight: 20 },
