@@ -149,6 +149,12 @@ For iOS Lighttpd builds, pass Lemon the grammar basename from its source directo
 
 **How to apply:** For iOS, generate the parser during CMake configuration with the host-built Lemon binary, use the grammar basename and source-directory working directory, and output generated C files to the binary directory. Confirm with a fresh Expo Launch archive.
 
+Avoid redundant conditional downcasts from Core Foundation types in Swift code built by Expo Launch. Swift may already infer the exact CF type and reject `as?` as an always-successful cast.
+
+**Why:** The next Launch archive reached native compilation but failed because `CMFormatDescription` was conditionally downcast even though `formatDescriptions.first` already had that type.
+
+**How to apply:** Read the precise Swift diagnostic in Launch logs and preserve the inferred type directly when the cast cannot fail. Recheck the next archive; local Linux checks cannot compile Apple's AVFoundation APIs.
+
 Standalone Android APK bundles must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
 
 **Why:** React Native cannot resolve the web app's relative `/api` routes without a base URL.

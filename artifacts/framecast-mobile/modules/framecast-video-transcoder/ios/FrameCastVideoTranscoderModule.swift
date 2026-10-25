@@ -170,7 +170,7 @@ public final class FrameCastVideoTranscoderModule: Module {
   private static func verifyH264Video(at outputURL: URL) throws {
     let asset = AVURLAsset(url: outputURL)
     guard let track = asset.tracks(withMediaType: .video).first,
-          let description = track.formatDescriptions.first as? CMFormatDescription,
+          let description = track.formatDescriptions.first,
           CMFormatDescriptionGetMediaSubType(description) == kCMVideoCodecType_H264 else {
       throw FrameCastConversionError.wrongOutputCodec
     }
