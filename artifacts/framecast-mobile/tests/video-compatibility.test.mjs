@@ -1,36 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { getTemporaryMediaUris, shouldOfferPhoneConversion } from '../lib/video-compatibility.ts';
+import {
+  getTemporaryMediaUris,
+  getUnsupportedTvVideoHelp,
+  isUnsupportedTvVideoError,
+} from '../lib/video-compatibility.ts';
 
-test('phone conversion is offered for unsupported Android and iOS video codecs only', () => {
-  assert.equal(shouldOfferPhoneConversion(
-    'android',
-    'video',
+test('only unsupported TV codec errors trigger conversion guidance', () => {
+  assert.equal(isUnsupportedTvVideoError(
     'This TV browser does not support this video format or codec. Try a standard H.264/AVC MP4.',
-    false,
   ), true);
-  assert.equal(shouldOfferPhoneConversion(
-    'android',
-    'video',
+  assert.equal(isUnsupportedTvVideoError(
     'The TV is playing sound but has not decoded a picture. HEVC/H.265 may not be supported.',
-    false,
   ), true);
-  assert.equal(shouldOfferPhoneConversion('android', 'video', 'The TV connection was interrupted.', false), false);
-  assert.equal(shouldOfferPhoneConversion('ios', 'video', 'The TV connection was interrupted.', false), false);
-  assert.equal(shouldOfferPhoneConversion('android', 'image', 'unsupported codec', false), false);
-  assert.equal(shouldOfferPhoneConversion('ios', 'video', 'unsupported codec', false), true);
-  assert.equal(shouldOfferPhoneConversion('web', 'video', 'unsupported codec', false), false);
-  assert.equal(shouldOfferPhoneConversion('android', 'video', 'unsupported codec', true), false);
+  assert.equal(isUnsupportedTvVideoError('The TV connection was interrupted.'), false);
+  assert.equal(isUnsupportedTvVideoError('Press Play on the TV remote to start this video.'), false);
 });
 
-test('temporary media cleanup keeps staged originals and their converted TV copies', () => {
+test('converter guidance names the recommended format and warns about third-party uploads', () => {
+  const message = getUnsupportedTvVideoHelp('The TV could not decode this video.');
+  assert.match(message, /did not identify the exact video codec/i);
+  assert.match(message, /MP4 with H\.264\/AVC video and AAC audio/i);
+  assert.match(message, /FrameCast will not upload your video/i);
+  assert.match(message, /CloudConvert.*receives and processes it/i);
+});
+
+test('temporary media cleanup keeps only the staged original file', () => {
   assert.deepEqual(getTemporaryMediaUris({
     uri: 'file:///cache/framecast-transfer-1792454412345-abc1234.mov',
     temporaryCopy: true,
-    compatibleUri: 'file:///cache/framecast-converted-1792454412345-abc1234.mp4',
   }), [
     'file:///cache/framecast-transfer-1792454412345-abc1234.mov',
-    'file:///cache/framecast-converted-1792454412345-abc1234.mp4',
   ]);
   assert.deepEqual(getTemporaryMediaUris({
     uri: 'content://photos/original.mp4',

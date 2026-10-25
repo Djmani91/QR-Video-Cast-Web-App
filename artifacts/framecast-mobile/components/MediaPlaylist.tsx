@@ -11,9 +11,6 @@ export type SelectedMedia = {
   size?: number;
   duration?: number;
   temporaryCopy?: boolean;
-  compatibleUri?: string;
-  compatibleName?: string;
-  compatibleSize?: number;
 };
 
 type Palette = {
