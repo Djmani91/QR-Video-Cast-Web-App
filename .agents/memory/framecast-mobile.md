@@ -143,11 +143,11 @@ Replit Expo Launch uses a custom native build path that does not execute standar
 
 **How to apply:** Check the actual Launch logs for hook output. Provision or resolve required tools from the native build phase itself, or use a build step explicitly supported by the Launch workflow, then confirm with a fresh iOS Launch run.
 
-For Lighttpd's Lemon parser generation under Xcode, pass each option and the grammar file as explicit CMake command arguments with `VERBATIM`; legacy argument handling can invoke Lemon without its input file.
+For iOS Lighttpd builds, pass Lemon the grammar basename from its source directory. Lemon misreads an absolute grammar path containing `=` as an option; pnpm's patched-package store paths contain `patch_hash=`.
 
-**Why:** The Launch archive passed CMake and then failed at parser generation, where Lemon printed its option help because the Xcode-generated command arrived incomplete.
+**Why:** Expo Launch logs showed Lemon's option help at parser generation. Reproduction confirmed that an absolute grammar path under pnpm's patched-package path fails, while the same grammar basename succeeds.
 
-**How to apply:** When maintaining the static-server dependency, check nested CMake custom commands as well as host-tool discovery, then verify with a fresh Expo Launch archive.
+**How to apply:** For iOS, generate the parser during CMake configuration with the host-built Lemon binary, use the grammar basename and source-directory working directory, and output generated C files to the binary directory. Confirm with a fresh Expo Launch archive.
 
 Standalone Android APK bundles must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
 

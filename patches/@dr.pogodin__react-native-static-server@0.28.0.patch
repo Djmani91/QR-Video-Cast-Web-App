@@ -1,7 +1,8 @@
 diff --git a/ReactNativeStaticServer.podspec b/ReactNativeStaticServer.podspec
+index b28627525f0c2b187eaa74bbeb23c7668327b494..33899af089c2e9d928400f4af3a216977cfbbefd 100644
 --- a/ReactNativeStaticServer.podspec
 +++ b/ReactNativeStaticServer.podspec
-@@ -55,6 +55,36 @@ Pod::Spec.new do |s|
+@@ -56,6 +56,36 @@ Pod::Spec.new do |s|
      :output_files => $outputFiles,
      :script => <<-CMD
        set -e
@@ -52,18 +53,84 @@ diff --git a/ReactNativeStaticServer.podspec b/ReactNativeStaticServer.podspec
        cp  ${TARGET_TEMP_DIR}/lighttpd1.4/build${BUILD_OUTPUT_FOLDER_LIGHTTPD}/*.a \
            ${TARGET_TEMP_DIR}/pcre2${BUILD_OUTPUT_FOLDER_PCRE2}/*.a \
 diff --git a/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake b/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake
+index 709de0ad134127afba7121402947e27633b11491..e55d417c1ead4b619c96b41e513cd8035f75641b 100644
 --- a/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake
 +++ b/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake
-@@ -32,6 +32,10 @@ macro(LEMON_PARSER SRCFILE)
- 	add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.c ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.h
+@@ -24,17 +24,55 @@ endmacro(ADD_AND_INSTALL_LIBRARY)
+ 
+ macro(LEMON_PARSER SRCFILE)
+ 	get_filename_component(SRCBASE ${SRCFILE} NAME_WE)
+-	if((NOT "${CMAKE_BUILD_TYPE}" STREQUAL "") AND EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
+-		set(LEMON_PATH "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/lemon")
+-	else()
++	if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME MATCHES "iOS")
+ 		set(LEMON_PATH "${CMAKE_CURRENT_BINARY_DIR}/lemon")
++		execute_process(
++			COMMAND cc "${CMAKE_CURRENT_SOURCE_DIR}/lemon.c" -o "${LEMON_PATH}" ${LEMON_BUILD_FLAGS}
++			RESULT_VARIABLE LEMON_BUILD_RESULT
++			OUTPUT_VARIABLE LEMON_BUILD_OUTPUT
++			ERROR_VARIABLE LEMON_BUILD_ERROR
++		)
++		if(NOT LEMON_BUILD_RESULT EQUAL 0)
++			message(FATAL_ERROR "Failed to build the host Lemon parser generator: ${LEMON_BUILD_OUTPUT}${LEMON_BUILD_ERROR}")
++		endif()
++
++		execute_process(
++			COMMAND "${LEMON_PATH}"
++				-q
++				"-d${CMAKE_CURRENT_BINARY_DIR}"
++				"-T${CMAKE_CURRENT_SOURCE_DIR}/lempar.c"
++				"${SRCFILE}"
++			WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
++			RESULT_VARIABLE LEMON_RESULT
++			OUTPUT_VARIABLE LEMON_OUTPUT
++			ERROR_VARIABLE LEMON_ERROR
++		)
++		if(NOT LEMON_RESULT EQUAL 0)
++			message(FATAL_ERROR "Failed to generate ${SRCBASE}.c with Lemon: ${LEMON_OUTPUT}${LEMON_ERROR}")
++		endif()
++		set_source_files_properties(
++			"${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.c"
++			"${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.h"
++			PROPERTIES GENERATED TRUE
++		)
++	else()
++		if((NOT "${CMAKE_BUILD_TYPE}" STREQUAL "") AND EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}")
++			set(LEMON_PATH "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/lemon")
++		else()
++			set(LEMON_PATH "${CMAKE_CURRENT_BINARY_DIR}/lemon")
++		endif()
++		add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.c ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.h
++			COMMAND "${LEMON_PATH}"
++				-q
++				"-d${CMAKE_CURRENT_BINARY_DIR}"
++				"-T${CMAKE_CURRENT_SOURCE_DIR}/lempar.c"
++				"${SRCFILE}"
++			DEPENDS ${LEMON_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE} ${CMAKE_CURRENT_SOURCE_DIR}/lempar.c
++			COMMENT "Generating ${SRCBASE}.c from ${SRCFILE}"
++			WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
++			VERBATIM
++		)
+ 	endif()
+-	add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.c ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.h
 -		COMMAND ${LEMON_PATH}
 -		ARGS -q -d${CMAKE_CURRENT_BINARY_DIR} -T${CMAKE_CURRENT_SOURCE_DIR}/lempar.c ${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE}
-+		COMMAND "${LEMON_PATH}"
-+			-q
-+			"-d${CMAKE_CURRENT_BINARY_DIR}"
-+			"-T${CMAKE_CURRENT_SOURCE_DIR}/lempar.c"
-+			"${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE}"
- 		DEPENDS ${LEMON_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE} ${CMAKE_CURRENT_SOURCE_DIR}/lempar.c
- 		COMMENT "Generating ${SRCBASE}.c from ${SRCFILE}"
-+		VERBATIM
- 	)
+-		DEPENDS ${LEMON_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE} ${CMAKE_CURRENT_SOURCE_DIR}/lempar.c
+-		COMMENT "Generating ${SRCBASE}.c from ${SRCFILE}"
+-	)
+ endmacro(LEMON_PARSER)
+ 
+ macro(ADD_TARGET_PROPERTIES _target _name)
+diff --git a/lighttpd1.4/src/CMakeLists.txt b/lighttpd1.4/src/CMakeLists.txt
+index 81a709d3665a3457d0768f3994f751d8914dafef..d8824e1bb727ddc212ff12b7bb73fb324b86e7b1 100644
+--- a/lighttpd1.4/src/CMakeLists.txt
++++ b/lighttpd1.4/src/CMakeLists.txt
+@@ -978,7 +978,7 @@ set(SERVER_SRC
+ 	network_write.c
+ 	data_config.c
+ 	configfile.c
+-	configparser.c
++${CMAKE_CURRENT_BINARY_DIR}/configparser.c
+ )
+ 
+ if(BUILD_LIBRARY)
