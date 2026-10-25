@@ -51,3 +51,19 @@ diff --git a/ReactNativeStaticServer.podspec b/ReactNativeStaticServer.podspec
  
        cp  ${TARGET_TEMP_DIR}/lighttpd1.4/build${BUILD_OUTPUT_FOLDER_LIGHTTPD}/*.a \
            ${TARGET_TEMP_DIR}/pcre2${BUILD_OUTPUT_FOLDER_PCRE2}/*.a \
+diff --git a/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake b/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake
+--- a/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake
++++ b/lighttpd1.4/scripts/cmake/LighttpdMacros.cmake
+@@ -32,6 +32,10 @@ macro(LEMON_PARSER SRCFILE)
+ 	add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.c ${CMAKE_CURRENT_BINARY_DIR}/${SRCBASE}.h
+-		COMMAND ${LEMON_PATH}
+-		ARGS -q -d${CMAKE_CURRENT_BINARY_DIR} -T${CMAKE_CURRENT_SOURCE_DIR}/lempar.c ${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE}
++		COMMAND "${LEMON_PATH}"
++			-q
++			"-d${CMAKE_CURRENT_BINARY_DIR}"
++			"-T${CMAKE_CURRENT_SOURCE_DIR}/lempar.c"
++			"${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE}"
+ 		DEPENDS ${LEMON_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/${SRCFILE} ${CMAKE_CURRENT_SOURCE_DIR}/lempar.c
+ 		COMMENT "Generating ${SRCBASE}.c from ${SRCFILE}"
++		VERBATIM
+ 	)

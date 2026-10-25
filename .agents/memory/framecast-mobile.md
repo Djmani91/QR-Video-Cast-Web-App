@@ -143,6 +143,12 @@ Replit Expo Launch uses a custom native build path that does not execute standar
 
 **How to apply:** Check the actual Launch logs for hook output. Provision or resolve required tools from the native build phase itself, or use a build step explicitly supported by the Launch workflow, then confirm with a fresh iOS Launch run.
 
+For Lighttpd's Lemon parser generation under Xcode, pass each option and the grammar file as explicit CMake command arguments with `VERBATIM`; legacy argument handling can invoke Lemon without its input file.
+
+**Why:** The Launch archive passed CMake and then failed at parser generation, where Lemon printed its option help because the Xcode-generated command arrived incomplete.
+
+**How to apply:** When maintaining the static-server dependency, check nested CMake custom commands as well as host-tool discovery, then verify with a fresh Expo Launch archive.
+
 Standalone Android APK bundles must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
 
 **Why:** React Native cannot resolve the web app's relative `/api` routes without a base URL.
