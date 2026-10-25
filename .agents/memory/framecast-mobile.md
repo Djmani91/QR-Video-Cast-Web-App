@@ -137,6 +137,12 @@ Expo SDK 57's Android activity-result launcher can become unregistered after And
 
 **How to apply:** Check the installed Expo Modules Core source or changelog before removing the local backport. Keep the patch scoped to activity-result re-registration.
 
+Replit Expo Launch uses a custom native build path that does not execute standard EAS package lifecycle hooks. Do not rely on `eas-build-pre-install` alone to install tools required by an iOS pod's Xcode build phase.
+
+**Why:** An iOS archive still failed with `cmake: command not found` after the app declared an EAS pre-install hook; Expo documents that custom builds do not execute lifecycle hooks automatically.
+
+**How to apply:** Check the actual Launch logs for hook output. Provision or resolve required tools from the native build phase itself, or use a build step explicitly supported by the Launch workflow, then confirm with a fresh iOS Launch run.
+
 Standalone Android APK bundles must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
 
 **Why:** React Native cannot resolve the web app's relative `/api` routes without a base URL.

@@ -11,7 +11,8 @@
   "private": true,
   "pnpm": {
     "patchedDependencies": {
-      "expo-modules-core@57.0.23": "patches/expo-modules-core@57.0.23.patch"
+      "expo-modules-core@57.0.23": "patches/expo-modules-core@57.0.23.patch",
+      "@dr.pogodin/react-native-static-server@0.28.0": "patches/@dr.pogodin__react-native-static-server@0.28.0.patch"
     }
   },
   "dependencies": {
