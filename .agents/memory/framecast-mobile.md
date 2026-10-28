@@ -89,6 +89,12 @@ Verify authenticated repository access before promising GitHub changes; the sour
 
 **How to apply:** Try an authenticated read before remote writes. After one reconnect and retry, stop asking for repeated integration reconnects. Use GitHub CLI's official browser/device approval as an alternate authorization path; never request a raw token in chat. For a non-default config, export `GH_CONFIG_DIR` for `gh auth setup-git --hostname github.com` and the Git push. Confirm the intended account and private repository visibility before pushing.
 
+For Actions in Replit's GitHub proxy, the `gh run` commands may target `api.github.com` and return 404 even when the authenticated run list works through the proxy.
+
+**Why:** In this workspace, `gh run watch` could list the run but failed to fetch its jobs from the public API host; `gh api --hostname github.replit.internal` retrieved the same run's job status.
+
+**How to apply:** Query run/job status and artifacts with `gh api --hostname github.replit.internal` for this proxy instead of retrying `gh run watch` against the wrong host.
+
 Workspace recreation can discard the global Git credential-helper setting while the isolated GitHub CLI login remains valid. For a guarded push, pass the official `gh auth git-credential` helper per Git invocation with the same `GH_CONFIG_DIR`.
 
 **Why:** Authenticated API reads continued to work after a restart, but Git push waited for credentials until its helper was supplied explicitly.

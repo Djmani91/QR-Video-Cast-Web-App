@@ -31,6 +31,7 @@ const files = [
   'artifacts/framecast-mobile/hooks',
   'artifacts/framecast-mobile/lib',
   'artifacts/framecast-mobile/assets',
+  'artifacts/framecast-mobile/google-services.json',
   'artifacts/framecast-mobile/plugins',
   'artifacts/framecast-mobile/native',
   'artifacts/framecast-mobile/app.json',
@@ -88,6 +89,9 @@ The app connects to the existing FrameCast service at https://${domain}.
 It does not require Expo Go, Metro, an EAS account, or a computer on the Wi-Fi.
 The Android AdMob unit is configured for this build. Do not click ads while
 testing; new ad units may take time to begin serving.
+Google Analytics is optional and starts disabled. On Android, enable **Share app
+usage with Google Analytics** in Settings to send pairing and casting events.
+FrameCast does not send media, filenames, links, or pairing codes to Analytics.
 
 ## On-device testing
 Open FrameCast on the TV and join from this app by QR or five-digit code.
