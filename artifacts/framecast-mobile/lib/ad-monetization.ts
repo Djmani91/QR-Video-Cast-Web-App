@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 const AD_LOAD_TIMEOUT_MS = 60_000;
+const ANDROID_INTERSTITIAL_UNIT_ID = 'ca-app-pub-9928204391830083/9055409035';
 
 export async function manageAdPrivacyOptions(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
@@ -32,7 +33,7 @@ export async function showPairingInterstitialAd(
     ? TestIds.INTERSTITIAL
     : Platform.OS === 'ios'
       ? process.env.EXPO_PUBLIC_ADMOB_IOS_INTERSTITIAL_UNIT_ID
-      : process.env.EXPO_PUBLIC_ADMOB_ANDROID_INTERSTITIAL_UNIT_ID;
+      : ANDROID_INTERSTITIAL_UNIT_ID;
   if (!adUnitId) return 'unavailable';
   await mobileAds().initialize();
 
