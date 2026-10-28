@@ -392,6 +392,7 @@ export default function HomeScreen() {
   const [localPlayback, setLocalPlayback] = useState(false);
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
   const [pairingAdStatus, setPairingAdStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle');
+  const [pairingAdMessage, setPairingAdMessage] = useState('');
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -619,13 +620,20 @@ export default function HomeScreen() {
     if (Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
       pairingAdRoomRef.current = roomId;
       setPairingAdStatus('loading');
-      void showPairingInterstitialAd(() => (
-        currentRoomRef.current === roomId && stageRef.current === 'paired'
-      )).then((result) => {
+      setPairingAdMessage('');
+      void showPairingInterstitialAd(
+        () => currentRoomRef.current === roomId && stageRef.current === 'paired',
+        (message) => {
+          if (currentRoomRef.current === roomId) setPairingAdMessage(message);
+        },
+      ).then((result) => {
         if (currentRoomRef.current !== roomId) return;
         setPairingAdStatus(result === 'unavailable' ? 'unavailable' : 'idle');
       }).catch(() => {
-        if (currentRoomRef.current === roomId) setPairingAdStatus('unavailable');
+        if (currentRoomRef.current === roomId) {
+          setPairingAdMessage('The ad service failed unexpectedly. Casting can continue.');
+          setPairingAdStatus('unavailable');
+        }
       });
     }
     seenMessages.current.clear();
@@ -2045,7 +2053,7 @@ export default function HomeScreen() {
             )}
             {roomId && Platform.OS !== 'web' && pairingAdStatus === 'unavailable' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
-                No ad is available right now. You can continue casting.
+                {pairingAdMessage || 'No ad is available right now. You can continue casting.'}
               </Text>
             )}
 
