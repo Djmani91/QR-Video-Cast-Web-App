@@ -75,21 +75,19 @@ await writeFile(path.join(output, '.github/workflows/android-apk.yml'), workflow
 await writeFile(path.join(output, 'README.md'), `# FrameCast Android test build
 
 This private repository contains only the FrameCast mobile app, its API client,
-and the files needed to build standalone Android test APK and AAB artifacts.
+and the files needed to build a standalone Android test APK.
 No user photos, videos, credentials, conversations, or prior Git history are included.
 
 ## Build and download
-Open **Actions → Build FrameCast Android APK and AAB**. A push to main or a manual
-run builds both files. Download **framecast-android-builds** from the successful
-run's artifacts. The APK is for direct device testing. The AAB uses the generated
-Android template's test signing key and is not ready for Google Play publishing;
-a stable upload key must be configured for store release. The Expo config plugin
-accepts FRAMECAST_UPLOAD_KEYSTORE_FILE and FRAMECAST_ANDROID_UPLOAD_KEY_PASSWORD
-at Gradle build time; set FRAMECAST_REQUIRE_UPLOAD_SIGNING=true to fail rather than
-falling back to the test key when preparing a Play upload.
+Open **Actions → Build FrameCast Android APK**. A push to main or a manual run
+builds the test APK. Download **framecast-android-apk** from the successful
+run's artifacts. This test APK uses the generated Android template's test
+signing key and is not a Google Play release.
 
 The app connects to the existing FrameCast service at https://${domain}.
 It does not require Expo Go, Metro, an EAS account, or a computer on the Wi-Fi.
+The Android AdMob unit is configured for this build. Do not click ads while
+testing; new ad units may take time to begin serving.
 
 ## On-device testing
 Open FrameCast on the TV and join from this app by QR or five-digit code.
