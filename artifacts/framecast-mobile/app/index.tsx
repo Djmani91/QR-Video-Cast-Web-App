@@ -52,6 +52,12 @@ import { clearFrameCastCache } from '@/lib/local-data-policy';
 import { getTemporaryMediaUris, getUnsupportedTvVideoHelp, isUnsupportedTvVideoError } from '@/lib/video-compatibility';
 import { manageAdPrivacyOptions, showPairingInterstitialAd } from '@/lib/ad-monetization';
 import { shouldShowPairingInterstitial } from '@/lib/pairing-ad';
+import {
+  initializeAppAnalytics,
+  setAppAnalyticsConsent,
+  trackCastStarted,
+  trackPairingCompleted,
+} from '@/lib/app-analytics';
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
@@ -357,6 +363,7 @@ export default function HomeScreen() {
   const [backgroundEnabled, setBackgroundEnabled] = useState(false);
   const [backgroundPreference, setBackgroundPreference] = useState<boolean | null>(null);
   const [backgroundPreferenceLoaded, setBackgroundPreferenceLoaded] = useState(false);
+  const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
   const backgroundStartedRoomRef = useRef('');
   const backgroundPromptedRoomRef = useRef('');
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
@@ -410,6 +417,7 @@ export default function HomeScreen() {
   const temporaryMediaUrisRef = useRef(new Set<string>());
   const unsupportedVideoAlertUriRef = useRef('');
   const pairingAdRoomRef = useRef('');
+  const analyticsPairingRoomRef = useRef('');
   const stageRef = useRef(stage);
   stageRef.current = stage;
   const pendingMediaPreparationsRef = useRef(new Set<Promise<unknown>>());
@@ -462,6 +470,21 @@ export default function HomeScreen() {
     } catch {
       setError('FrameCast could not save this background casting choice. Please check the app storage and try again.');
     }
+  }, []);
+
+  const saveAnalyticsConsent = useCallback(async (enabled: boolean) => {
+    await setAppAnalyticsConsent(enabled);
+    setAnalyticsEnabled(enabled);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void initializeAppAnalytics().then((enabled) => {
+      if (mounted) setAnalyticsEnabled(enabled);
+    });
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -585,8 +608,13 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!roomId) {
       pairingAdRoomRef.current = '';
+      analyticsPairingRoomRef.current = '';
       setPairingAdStatus('idle');
       return;
+    }
+    if (analyticsPairingRoomRef.current !== roomId) {
+      analyticsPairingRoomRef.current = roomId;
+      void trackPairingCompleted();
     }
     if (Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
       pairingAdRoomRef.current = roomId;
@@ -1073,6 +1101,16 @@ export default function HomeScreen() {
     if (!roomId || (!castUrl && !screenStream && !queue.length)) {
       setError('Choose photos or a video first.');
       return;
+    }
+    if (!forceCompatibilityTransfer) {
+      const castMode = screenStream
+        ? 'screen_mirror'
+        : castUrl
+          ? 'url'
+          : queue[0]?.kind === 'image'
+            ? 'images'
+            : 'video';
+      void trackCastStarted(castMode);
     }
     if (castUrl) {
       cleanupTemporaryCopies();
@@ -1866,6 +1904,8 @@ export default function HomeScreen() {
             onClearLocalData={clearLocalData}
             onOpenTutorial={() => setSetupTutorialVisible(true)}
             onManageAdPrivacy={openAdPrivacyOptions}
+            analyticsEnabled={analyticsEnabled}
+            onAnalyticsChange={saveAnalyticsConsent}
             clearDisabled={preparingMedia || checkingVideoLink}
             showBackgroundCasting={backgroundCastingAvailable}
             backgroundCastingEnabled={backgroundPreference === true}

@@ -9,6 +9,8 @@ type Props = {
   onClearLocalData: () => Promise<void>;
   onOpenTutorial: () => void;
   onManageAdPrivacy: () => Promise<void>;
+  analyticsEnabled: boolean;
+  onAnalyticsChange: (enabled: boolean) => Promise<void>;
   clearDisabled?: boolean;
   showBackgroundCasting: boolean;
   backgroundCastingEnabled: boolean;
@@ -28,6 +30,7 @@ const PRIVACY = [
   'Photos and videos from your phone are not uploaded to or stored on our servers.',
   'Pairing uses temporary signals only to connect your phone and TV.',
   'Google ads may process device and ad-interaction information. FrameCast does not send your photos or videos to the ads SDK.',
+  'If enabled, Google Analytics receives basic pairing and casting events plus app and device information. Media, filenames, links and pairing codes are not sent.',
   'FrameCast may make temporary copies on this device to stream media.',
   'Website and video links are opened by the TV directly from the original website and follow that site\u2019s policies.',
 ];
@@ -36,6 +39,8 @@ export function AppSettings({
   onClearLocalData,
   onOpenTutorial,
   onManageAdPrivacy,
+  analyticsEnabled,
+  onAnalyticsChange,
   clearDisabled = false,
   showBackgroundCasting,
   backgroundCastingEnabled,
@@ -46,6 +51,8 @@ export function AppSettings({
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState('');
+  const [analyticsBusy, setAnalyticsBusy] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
   const busyRef = useRef(false);
   const version = Constants.expoConfig?.version;
 
@@ -73,6 +80,19 @@ export function AppSettings({
   };
 
   const busy = phase === 'busy';
+
+  const updateAnalyticsConsent = async (enabled: boolean) => {
+    if (analyticsBusy) return;
+    setAnalyticsBusy(true);
+    setAnalyticsError('');
+    try {
+      await onAnalyticsChange(enabled);
+    } catch {
+      setAnalyticsError('Could not update analytics consent. Please try again.');
+    } finally {
+      setAnalyticsBusy(false);
+    }
+  };
 
   const Bullet = ({ text, n }: { text: string; n?: number }) => (
     <View style={styles.row}>
@@ -188,6 +208,29 @@ export function AppSettings({
                   </Pressable>
                 )}
 
+                {Platform.OS === 'android' && (
+                  <View style={styles.analyticsSetting} testID="setting-google-analytics">
+                    <View style={styles.settingRow}>
+                      <View style={styles.settingCopy}>
+                        <Text style={[styles.subhead, { color: colors.foreground }]}>Share app usage with Google Analytics</Text>
+                        <Text style={[styles.small, { color: colors.mutedForeground }]}>
+                          Optional. Sends basic pairing and casting events plus app and device information. You can turn this off at any time.
+                        </Text>
+                      </View>
+                      <Switch
+                        value={analyticsEnabled}
+                        onValueChange={(enabled) => { void updateAnalyticsConsent(enabled); }}
+                        disabled={analyticsBusy}
+                        trackColor={{ false: colors.border, true: colors.primary }}
+                        thumbColor={colors.card}
+                        accessibilityLabel="Share app usage with Google Analytics"
+                        testID="switch-google-analytics"
+                      />
+                    </View>
+                    {analyticsError ? <Text style={[styles.small, { color: colors.destructive }]} accessibilityLiveRegion="assertive">{analyticsError}</Text> : null}
+                  </View>
+                )}
+
                 <View style={[styles.divider, { backgroundColor: colors.border }]} />
                 <Text style={[styles.subhead, { color: colors.foreground }]}>Clear local data</Text>
                 <Text style={[styles.small, { color: colors.mutedForeground }]}>
@@ -274,6 +317,7 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
   row: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  analyticsSetting: { gap: 8, paddingVertical: 4 },
   settingCopy: { flex: 1, gap: 5 },
   tutorialButton: { minHeight: 64, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 12, marginTop: 4 },
   tutorialCopy: { flex: 1, gap: 3 },

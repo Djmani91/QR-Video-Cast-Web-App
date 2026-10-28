@@ -17,6 +17,7 @@
     },
     "android": {
       "package": "com.tvcast.com",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 12,
       "permissions": [
         "android.permission.CAMERA",
@@ -39,6 +40,7 @@
       "favicon": "./assets/images/icon.png"
     },
     "plugins": [
+      "./plugins/with-firebase-android-only.cjs",
       "./plugins/with-background-casting.cjs",
       "./plugins/with-screen-audio-capture.cjs",
       "./plugins/with-android-upload-signing.cjs",

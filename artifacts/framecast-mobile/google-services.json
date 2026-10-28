@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "412432872051",
+    "project_id": "framecast-1e810",
+    "storage_bucket": "framecast-1e810.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:412432872051:android:f83fe402f7dc09de13b006",
+        "android_client_info": {
+          "package_name": "com.tvcast.com"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBwJpjUEEa1ZyKHGJ4eUJf10pFUZCBXr5Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
