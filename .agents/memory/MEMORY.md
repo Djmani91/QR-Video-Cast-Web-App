@@ -11,3 +11,4 @@
 - [FrameCast video playback](framecast-video-streaming.md) — local files stream directly; ordinary YouTube links use the official player, never stream extraction or proxying.
 - [FrameCast TV cinema standby](framecast-samsung.md) — after phone pairing, use an immersive waiting screen; fullscreen remains best-effort with a TV-remote fallback.
 - [FrameCast App Store packaging](framecast-appstore-packaging.md) — App Store uploads may include generated artifacts despite ignore files; preserve Android signing material before cleanup.
+- [FrameCast rewarded casting](framecast-rewarded-casting.md) — one free hour; each completed, opt-in rewarded ad adds one more hour.

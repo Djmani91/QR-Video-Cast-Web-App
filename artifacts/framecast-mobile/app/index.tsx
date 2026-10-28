@@ -50,6 +50,14 @@ import { SetupTutorial } from '@/components/SetupTutorial';
 import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 import { getTemporaryMediaUris, getUnsupportedTvVideoHelp, isUnsupportedTvVideoError } from '@/lib/video-compatibility';
+import {
+  extendCastingDeadline,
+  formatCastingTime,
+  FREE_CASTING_DURATION_MS,
+  getCastingTimeRemaining,
+  startCastingDeadline,
+} from '@/lib/casting-session';
+import { manageAdPrivacyOptions, showRewardedCastingAd } from '@/lib/rewarded-ads';
 
 const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
@@ -382,6 +390,10 @@ export default function HomeScreen() {
   const [videoStreaming, setVideoStreaming] = useState(false);
   const [localPlayback, setLocalPlayback] = useState(false);
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
+  const [castingRemainingMs, setCastingRemainingMs] = useState<number | null>(null);
+  const [rewardedCastingAdGranted, setRewardedCastingAdGranted] = useState(false);
+  const [rewardedAdLoading, setRewardedAdLoading] = useState(false);
+  const [rewardedAdMessage, setRewardedAdMessage] = useState('');
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -406,6 +418,10 @@ export default function HomeScreen() {
   const playQueuedItemRef = useRef<(index: number) => void>(() => {});
   const temporaryMediaUrisRef = useRef(new Set<string>());
   const unsupportedVideoAlertUriRef = useRef('');
+  const castingDeadlineRef = useRef<number | null>(null);
+  const castingRoomIdRef = useRef('');
+  const rewardedAdInProgressRef = useRef(false);
+  const castingExpiryHandledRef = useRef(false);
   const pendingMediaPreparationsRef = useRef(new Set<Promise<unknown>>());
   const queueIndexRef = useRef(0);
   const queueRunningRef = useRef(false);
@@ -577,7 +593,25 @@ export default function HomeScreen() {
   }, [cleanupTemporaryCopies]);
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId) {
+      castingDeadlineRef.current = null;
+      castingRoomIdRef.current = '';
+      rewardedAdInProgressRef.current = false;
+      castingExpiryHandledRef.current = false;
+      setCastingRemainingMs(null);
+      setRewardedCastingAdGranted(false);
+      setRewardedAdLoading(false);
+      setRewardedAdMessage('');
+      return;
+    }
+    if (Platform.OS !== 'web' && castingRoomIdRef.current !== roomId) {
+      castingRoomIdRef.current = roomId;
+      castingDeadlineRef.current = startCastingDeadline(Date.now());
+      castingExpiryHandledRef.current = false;
+      setCastingRemainingMs(FREE_CASTING_DURATION_MS);
+      setRewardedCastingAdGranted(false);
+      setRewardedAdMessage('');
+    }
     seenMessages.current.clear();
     queuedIce.current = [];
     setStage('paired');
@@ -1620,6 +1654,70 @@ export default function HomeScreen() {
     setError('');
   };
 
+  const watchRewardedCastingAd = async () => {
+    if (!roomId || !castingDeadlineRef.current || rewardedAdLoading) return;
+    rewardedAdInProgressRef.current = true;
+    setRewardedAdLoading(true);
+    setRewardedAdMessage('');
+    try {
+      const result = await showRewardedCastingAd();
+      if (result === 'unavailable') {
+        setRewardedAdMessage('Ads are not configured or available in this build. No extra hour was added; your current casting time is unchanged.');
+        return;
+      }
+      if (result === 'dismissed') {
+        setRewardedAdMessage('The ad was not completed, so no extra hour was added. Your current casting time is unchanged.');
+        return;
+      }
+      const now = Date.now();
+      const deadline = extendCastingDeadline(castingDeadlineRef.current, now);
+      castingDeadlineRef.current = deadline;
+      setRewardedCastingAdGranted(true);
+      setCastingRemainingMs(getCastingTimeRemaining(deadline, now));
+      setRewardedAdMessage('');
+    } catch {
+      setRewardedAdMessage('The ad could not load. No extra hour was added, and casting remains available until the timer ends.');
+    } finally {
+      rewardedAdInProgressRef.current = false;
+      setRewardedAdLoading(false);
+    }
+  };
+
+  const openAdPrivacyOptions = async () => {
+    try {
+      const opened = await manageAdPrivacyOptions();
+      Alert.alert(
+        'Advertising privacy',
+        opened
+          ? 'Your Google advertising privacy choices have been updated.'
+          : 'No additional advertising privacy choices are currently required for your region.',
+      );
+    } catch {
+      Alert.alert('Advertising privacy', 'The privacy choices form could not be opened. Check your connection and try again.');
+    }
+  };
+
+  useEffect(() => {
+    if (!roomId || Platform.OS === 'web') return;
+    const updateCastingTime = () => {
+      const deadline = castingDeadlineRef.current;
+      if (deadline === null) return;
+      const remaining = getCastingTimeRemaining(deadline, Date.now());
+      setCastingRemainingMs(remaining);
+      if (remaining === 0 && !rewardedAdInProgressRef.current && !castingExpiryHandledRef.current) {
+        castingExpiryHandledRef.current = true;
+        leaveRoom();
+        Alert.alert(
+          'Casting hour ended',
+          'Your one-hour casting time has ended. Connect again to start another free hour.',
+        );
+      }
+    };
+    updateCastingTime();
+    const timer = setInterval(updateCastingTime, 1000);
+    return () => clearInterval(timer);
+  }, [roomId]);
+
   const clearLocalData = async () => {
     if (preparingMedia || checkingVideoLink) {
       throw new Error('Finish preparing media or checking the link before clearing local data.');
@@ -1829,6 +1927,7 @@ export default function HomeScreen() {
           <AppSettings
             onClearLocalData={clearLocalData}
             onOpenTutorial={() => setSetupTutorialVisible(true)}
+            onManageAdPrivacy={openAdPrivacyOptions}
             clearDisabled={preparingMedia || checkingVideoLink}
             showBackgroundCasting={backgroundCastingAvailable}
             backgroundCastingEnabled={backgroundPreference === true}
@@ -1960,6 +2059,48 @@ export default function HomeScreen() {
                   ? isUrlPlayback ? 'The TV opens this link directly. The source must allow playback on the TV.' : Platform.OS !== 'web' ? 'Play directly over the same Wi-Fi without sending the whole file first. The TV must support the video format.' : 'MP4 and MOV videos are prepared on the phone for streaming. Other small videos transfer first; the TV must support their codec.'
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
+
+            {roomId && castingRemainingMs !== null && Platform.OS !== 'web' && (
+              <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="casting-reward-card">
+                <View style={styles.rewardedTimeRow}>
+                  <Ionicons name="time-outline" size={20} color={activeColors.primary} />
+                  <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>
+                    {formatCastingTime(castingRemainingMs)} left in your free hour
+                  </Text>
+                </View>
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
+                  {rewardedCastingAdGranted
+                    ? 'Extra time earned. Each completed ad adds another hour; ads never start automatically.'
+                    : 'Watch and finish a video ad to add one extra hour. You can skip it and still cast during your first hour.'}
+                </Text>
+                <Pressable
+                  onPress={() => void watchRewardedCastingAd()}
+                  disabled={rewardedAdLoading || castingRemainingMs <= 0}
+                  style={({ pressed }) => [
+                    styles.primaryButton,
+                    {
+                      backgroundColor: activeColors.primary,
+                      opacity: rewardedAdLoading || castingRemainingMs <= 0 ? 0.55 : pressed ? 0.86 : 1,
+                    },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Watch a rewarded video ad to add one hour of casting"
+                  testID="button-watch-rewarded-ad"
+                >
+                  {rewardedAdLoading
+                    ? <ActivityIndicator color={activeColors.primaryForeground} />
+                    : <Ionicons name="play-circle-outline" size={20} color={activeColors.primaryForeground} />}
+                  <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
+                    {rewardedAdLoading
+                      ? 'Loading ad…'
+                      : rewardedCastingAdGranted ? 'Watch another ad for one hour' : 'Watch ad for one extra hour'}
+                  </Text>
+                </Pressable>
+                {rewardedAdMessage ? (
+                  <Text style={[styles.rewardedAdMessage, { color: activeColors.mutedForeground }]}>{rewardedAdMessage}</Text>
+                ) : null}
+              </View>
+            )}
 
             {castTab === 'screen' && (
               <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="screen-mirroring-card">
@@ -2378,6 +2519,8 @@ const styles = StyleSheet.create({
   tvAddress: { fontFamily: 'Inter_600SemiBold', fontSize: 13, lineHeight: 19 },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
   videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
+  rewardedTimeRow: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  rewardedAdMessage: { fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 18 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },
   actionIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   scanButtonCopy: { flex: 1 },

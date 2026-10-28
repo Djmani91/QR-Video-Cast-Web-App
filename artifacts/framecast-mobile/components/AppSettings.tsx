@@ -8,6 +8,7 @@ import { useColors } from '@/hooks/useColors';
 type Props = {
   onClearLocalData: () => Promise<void>;
   onOpenTutorial: () => void;
+  onManageAdPrivacy: () => Promise<void>;
   clearDisabled?: boolean;
   showBackgroundCasting: boolean;
   backgroundCastingEnabled: boolean;
@@ -26,6 +27,7 @@ const HOW = [
 const PRIVACY = [
   'Photos and videos from your phone are not uploaded to or stored on our servers.',
   'Pairing uses temporary signals only to connect your phone and TV.',
+  'Google ads may process device and ad-interaction information. FrameCast does not send your photos or videos to the ads SDK.',
   'FrameCast may make temporary copies on this device to stream media.',
   'Website and video links are opened by the TV directly from the original website and follow that site\u2019s policies.',
 ];
@@ -33,6 +35,7 @@ const PRIVACY = [
 export function AppSettings({
   onClearLocalData,
   onOpenTutorial,
+  onManageAdPrivacy,
   clearDisabled = false,
   showBackgroundCasting,
   backgroundCastingEnabled,
@@ -164,6 +167,26 @@ export function AppSettings({
               <Text style={[styles.kicker, { color: colors.primary }]}>PRIVACY & LOCAL DATA</Text>
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 {PRIVACY.map((t, i) => <Bullet key={i} text={t} />)}
+
+                {Platform.OS !== 'web' && (
+                  <Pressable
+                    onPress={() => { void onManageAdPrivacy(); }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Manage advertising privacy choices"
+                    testID="button-manage-ad-privacy"
+                    style={({ pressed }) => [
+                      styles.tutorialButton,
+                      { backgroundColor: colors.secondary, opacity: pressed ? 0.72 : 1 },
+                    ]}
+                  >
+                    <Ionicons name="shield-checkmark-outline" size={20} color={colors.primary} />
+                    <View style={styles.tutorialCopy}>
+                      <Text style={[styles.subhead, { color: colors.foreground }]}>Advertising privacy choices</Text>
+                      <Text style={[styles.small, { color: colors.mutedForeground }]}>Review or change Google ad consent</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
+                  </Pressable>
+                )}
 
                 <View style={[styles.divider, { backgroundColor: colors.border }]} />
                 <Text style={[styles.subhead, { color: colors.foreground }]}>Clear local data</Text>
