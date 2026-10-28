@@ -7,6 +7,10 @@ const apkPath = resolve(
   process.cwd(),
   "../../attached_assets/framecast-android-build-archive/framecast-setup-guide-apk/FrameCast-Setup-Guide.apk",
 );
+const diagnosticApkPath = resolve(
+  process.cwd(),
+  "../../generated-artifacts/framecast-ad-diagnostic-20261028/final/FrameCast-Android-test.apk",
+);
 
 router.get("/download/framecast.apk", (_req, res): void => {
   if (!existsSync(apkPath)) {
@@ -23,6 +27,25 @@ router.get("/download/framecast.apk", (_req, res): void => {
   res.sendFile(apkPath, (error) => {
     if (error && !res.headersSent) {
       res.status(500).send("The FrameCast APK could not be downloaded.");
+    }
+  });
+});
+
+router.get("/download/framecast-diagnostic.apk", (_req, res): void => {
+  if (!existsSync(diagnosticApkPath)) {
+    res.status(404).send("The diagnostic FrameCast APK is not available.");
+    return;
+  }
+
+  res.setHeader("Content-Type", "application/vnd.android.package-archive");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="FrameCast-Android-diagnostic.apk"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(diagnosticApkPath, (error) => {
+    if (error && !res.headersSent) {
+      res.status(500).send("The diagnostic FrameCast APK could not be downloaded.");
     }
   });
 });
