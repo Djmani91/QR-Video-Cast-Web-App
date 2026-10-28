@@ -43,13 +43,23 @@ function withFirebaseAndroidOnly(config) {
   });
 
   config = withAndroidManifest(config, (result) => {
+    result.modResults.manifest.$['xmlns:tools'] ??= 'http://schemas.android.com/tools';
     const application = result.modResults.manifest.application?.[0];
     if (!application) throw new Error('Could not find the Android application manifest entry.');
     application['meta-data'] ??= [];
     const metadataName = 'firebase_analytics_collection_enabled';
     const existing = application['meta-data'].find((item) => item.$?.['android:name'] === metadataName);
-    const metadata = { $: { 'android:name': metadataName, 'android:value': 'false' } };
-    if (existing) existing.$['android:value'] = 'false';
+    const metadata = {
+      $: {
+        'android:name': metadataName,
+        'android:value': 'false',
+        'tools:replace': 'android:value',
+      },
+    };
+    if (existing) {
+      existing.$['android:value'] = 'false';
+      existing.$['tools:replace'] = 'android:value';
+    }
     else application['meta-data'].push(metadata);
     return result;
   });

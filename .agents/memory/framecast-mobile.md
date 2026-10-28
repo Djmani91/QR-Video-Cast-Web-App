@@ -93,7 +93,7 @@ For Actions in Replit's GitHub proxy, the `gh run` commands may target `api.gith
 
 **Why:** In this workspace, `gh run watch` could list the run but failed to fetch its jobs from the public API host; `gh api --hostname github.replit.internal` retrieved the same run's job status.
 
-**How to apply:** Query run/job status and artifacts with `gh api --hostname github.replit.internal` for this proxy instead of retrying `gh run watch` against the wrong host.
+**How to apply:** Query run/job status and artifacts with `gh api --hostname github.replit.internal` for this proxy instead of retrying `gh run watch` against the wrong host. Use `--allow-escape-sequences` when retrieving completed job logs; active job logs may return `BlobNotFound` until the log artifact is uploaded.
 
 Workspace recreation can discard the global Git credential-helper setting while the isolated GitHub CLI login remains valid. For a guarded push, pass the official `gh auth git-credential` helper per Git invocation with the same `GH_CONFIG_DIR`.
 
