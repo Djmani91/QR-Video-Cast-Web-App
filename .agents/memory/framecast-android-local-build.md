@@ -9,6 +9,12 @@ For local Android builds, resolve Android packages from the Nix flake registry r
 
 **How to apply:** Import the flake's `outPath` and validate SDK component versions. If its full closure fails on the 32-bit helper, keep the Nix SDK minimal and install the exact Gradle-requested Build Tools, platform, NDK, and CMake packages with `sdkmanager`. Keep the toolchain, caches, native project and outputs under ignored generated-artifact directories. Prefer SDK-provided AAPT2 over Maven's executable. Obtain Android SDK licence consent for each build; a one-build approval is not standing approval for future builds.
 
+For Android 36 release builds in this workspace, use the existing Java 17 toolchain with Gradle. Java 19 failed the `JdkImageTransform` for `core-for-system-modules.jar`, while Java 17 completed the signed bundle.
+
+**Why:** The Android 36 platform image transform did not work with the Replit Java 19 module, but the same project and SDK succeeded under the cached Java 17 toolchain.
+
+**How to apply:** Set `JAVA_HOME` to the cached Android build toolchain before invoking Gradle; use a Java 17 runtime for SDK 36 release bundles.
+
 Verify permissions in the generated and merged Android manifests, not just Expo's configuration.
 
 **Why:** Setting `cameraPermission: false` on Expo's image-picker plugin removes CAMERA from the shared Android manifest, including for a separate QR scanner. Listing CAMERA in the app's permissions array is not enough to counter that removal.
