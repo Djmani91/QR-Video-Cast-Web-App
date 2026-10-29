@@ -32,6 +32,8 @@ type Props = {
   paused: boolean;
   status: string;
   canAdd: boolean;
+  bulkSelectionUnlocked: boolean;
+  addBusy: boolean;
   canControlVideo: boolean;
   canSelectItem(index: number): boolean;
   colors: Palette;
@@ -64,6 +66,8 @@ export function MediaPlaylist({
   paused,
   status,
   canAdd,
+  bulkSelectionUnlocked,
+  addBusy,
   canControlVideo,
   canSelectItem,
   colors,
@@ -82,6 +86,10 @@ export function MediaPlaylist({
     selected.kind === 'video' ? formatDuration(selected.duration) : '',
     formatSize(selected.size),
   ].filter(Boolean).join(' · ');
+  const itemCountLabel = items.length === 1 ? '1 item' : `${items.length} items`;
+  const galleryCountLabel = !bulkSelectionUnlocked && items.length < 20
+    ? `${itemCountLabel} · watch an ad to choose up to 20 ${selected.kind === 'video' ? 'videos' : 'photos'}`
+    : items.length === 1 ? '1 item · tap one to play' : `${itemCountLabel} · tap one to play`;
 
   const previewContent = (
     <>
@@ -153,20 +161,27 @@ export function MediaPlaylist({
         <View>
           <Text style={[styles.galleryTitle, { color: colors.foreground }]}>PLAYLIST</Text>
           <Text style={[styles.galleryCount, { color: colors.mutedForeground }]}>
-            {items.length === 1 ? '1 item' : `${items.length} items · tap one to play`}
+            {galleryCountLabel}
           </Text>
         </View>
         <View style={styles.galleryActions}>
           {canAdd ? (
             <Pressable
-              style={[styles.galleryAction, { backgroundColor: colors.secondary }]}
+              disabled={addBusy}
+              style={[styles.galleryAction, { backgroundColor: colors.secondary, opacity: addBusy ? 0.55 : 1 }]}
               onPress={onAdd}
               accessibilityRole="button"
-              accessibilityLabel={`Add more ${selected.kind === 'video' ? 'videos' : 'photos'}`}
+              accessibilityLabel={addBusy
+                ? 'Loading rewarded ad'
+                : bulkSelectionUnlocked
+                  ? `Add more ${selected.kind === 'video' ? 'videos' : 'photos'}`
+                  : `Watch a rewarded ad to choose up to 20 ${selected.kind === 'video' ? 'videos' : 'photos'}`}
               testID={`button-add-more-${selected.kind === 'video' ? 'videos' : 'photos'}`}
             >
-              <Ionicons name="add" size={17} color={colors.primary} />
-              <Text style={[styles.galleryActionText, { color: colors.primary }]}>Add</Text>
+              <Ionicons name={bulkSelectionUnlocked ? 'add' : 'play-circle-outline'} size={17} color={colors.primary} />
+              <Text style={[styles.galleryActionText, { color: colors.primary }]}>
+                {addBusy ? 'Loading' : bulkSelectionUnlocked ? 'Add' : 'Watch ad'}
+              </Text>
             </Pressable>
           ) : null}
           <Pressable

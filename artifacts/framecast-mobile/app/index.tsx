@@ -55,7 +55,9 @@ import {
   manageAdPrivacyOptions,
   showBetweenVideoInterstitialAd,
   showPairingInterstitialAd,
+  showSelectionRewardedAd,
 } from '@/lib/ad-monetization';
+import { getRemainingMediaSelectionSlots, MAX_MEDIA_SELECTION_ITEMS } from '@/lib/media-selection';
 import { CastingBannerAd } from '@/components/CastingBannerAd';
 import { shouldAttemptBetweenVideoInterstitial, shouldShowPairingInterstitial } from '@/lib/pairing-ad';
 import {
@@ -374,6 +376,10 @@ export default function HomeScreen() {
   const backgroundPromptedRoomRef = useRef('');
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
+  const [screenMirrorUnlocked, setScreenMirrorUnlocked] = useState(false);
+  const [photoSelectionUnlocked, setPhotoSelectionUnlocked] = useState(false);
+  const [videoSelectionUnlocked, setVideoSelectionUnlocked] = useState(false);
+  const [rewardedAdLoading, setRewardedAdLoading] = useState(false);
   const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
   const screenAudioChannelRef = useRef<DataChannelLike | null>(null);
   const screenAudioSubscriptionRef = useRef<{ remove(): void } | null>(null);
@@ -418,6 +424,10 @@ export default function HomeScreen() {
   const localFallbackRef = useRef<(() => void) | null>(null);
   const peerRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
+  const photoSelectionUnlockRoomRef = useRef('');
+  const videoSelectionUnlockRoomRef = useRef('');
+  const screenMirrorUnlockRoomRef = useRef('');
+  const rewardedAdInProgressRef = useRef(false);
   const videoThumbnailRunRef = useRef(0);
   const videoThumbnailUrisRef = useRef(new Set<string>());
   const videoThumbnailInProgressRef = useRef(new Set<string>());
@@ -785,6 +795,12 @@ export default function HomeScreen() {
           clearVideoThumbnailData();
           setVideoEnded(false);
           setRoomId('');
+          photoSelectionUnlockRoomRef.current = '';
+          videoSelectionUnlockRoomRef.current = '';
+          screenMirrorUnlockRoomRef.current = '';
+          setPhotoSelectionUnlocked(false);
+          setVideoSelectionUnlocked(false);
+          setScreenMirrorUnlocked(false);
           setSelectedMedia(null);
           setMediaQueue([]);
           mediaQueueRef.current = [];
@@ -826,6 +842,12 @@ export default function HomeScreen() {
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setRoomId(id);
+    photoSelectionUnlockRoomRef.current = '';
+    videoSelectionUnlockRoomRef.current = '';
+    screenMirrorUnlockRoomRef.current = '';
+    setPhotoSelectionUnlocked(false);
+    setVideoSelectionUnlocked(false);
+    setScreenMirrorUnlocked(false);
     setCastTab('url');
     setSelectedMedia(null);
     setMediaQueue([]);
@@ -944,6 +966,23 @@ export default function HomeScreen() {
     autoSendAfterSelectionRef.current = true;
   };
 
+  const showRewardedAdForRoom = async (roomAtPrompt: string) => {
+    if (rewardedAdInProgressRef.current) return 'unavailable' as const;
+    rewardedAdInProgressRef.current = true;
+    setRewardedAdLoading(true);
+    try {
+      return await showSelectionRewardedAd(
+        () => currentRoomRef.current === roomAtPrompt && AppState.currentState === 'active',
+        (message) => {
+          if (currentRoomRef.current === roomAtPrompt) setError(message);
+        },
+      );
+    } finally {
+      rewardedAdInProgressRef.current = false;
+      setRewardedAdLoading(false);
+    }
+  };
+
   const prepareVideoThumbnails = async (queue: SelectedMedia[], generation: number) => {
     if (Platform.OS === 'web') return;
     try {
@@ -978,18 +1017,28 @@ export default function HomeScreen() {
 
   const pickPhotos = async (append = false) => {
     setError('');
+    const unlocked = photoSelectionUnlockRoomRef.current === currentRoomRef.current;
     const existingPhotos = append ? mediaQueueRef.current.filter((media) => media.kind === 'image') : [];
+    const canAppend = append && existingPhotos.length === mediaQueueRef.current.length;
+    const existingCount = canAppend ? existingPhotos.length : 0;
+    const selectionLimit = getRemainingMediaSelectionSlots(unlocked, existingCount);
+    if (selectionLimit < 1) {
+      setError(unlocked
+        ? `You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} photos in this TV session.`
+        : 'One photo is free. Watch a rewarded ad to choose up to 20 photos.');
+      return;
+    }
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsEditing: false,
         allowsMultipleSelection: true,
-        selectionLimit: 30,
+        selectionLimit,
         quality: 0.85,
       });
       if (result.canceled || !result.assets?.length) return;
-      if (existingPhotos.length + result.assets.length > 30) {
-        setError('Choose up to 30 photos in one queue. Remove some and try again.');
+      if (existingCount + result.assets.length > (unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1)) {
+        setError(`Choose up to ${unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1} photos in this TV session.`);
         return;
       }
       setPreparingMedia(true);
@@ -1007,7 +1056,7 @@ export default function HomeScreen() {
           temporaryCopy: cached.temporaryCopy,
         });
       }
-      if (append && existingPhotos.length) {
+      if (canAppend && existingPhotos.length) {
         const queue = [...existingPhotos, ...pickedPhotos];
         mediaQueueRef.current = queue;
         setMediaQueue(queue);
@@ -1024,10 +1073,15 @@ export default function HomeScreen() {
 
   const pickVideo = async (append = false) => {
     setError('');
+    const unlocked = videoSelectionUnlockRoomRef.current === currentRoomRef.current;
     const existingVideos = append ? mediaQueueRef.current.filter((media) => media.kind === 'video') : [];
-    const remainingSlots = 30 - existingVideos.length;
+    const canAppend = append && existingVideos.length === mediaQueueRef.current.length;
+    const existingCount = canAppend ? existingVideos.length : 0;
+    const remainingSlots = getRemainingMediaSelectionSlots(unlocked, existingCount);
     if (remainingSlots < 1) {
-      setError('A playlist can contain up to 30 videos.');
+      setError(unlocked
+        ? `You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} videos in this TV session.`
+        : 'One video is free. Watch a rewarded ad to choose up to 20 videos.');
       return;
     }
     try {
@@ -1039,6 +1093,10 @@ export default function HomeScreen() {
         quality: 1,
       });
       if (result.canceled || !result.assets?.length) return;
+      if (existingCount + result.assets.length > (unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1)) {
+        setError(`Choose up to ${unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1} videos in this TV session.`);
+        return;
+      }
       setPreparingMedia(true);
       const pickedVideos: SelectedMedia[] = [];
       for (const [index, asset] of result.assets.entries()) {
@@ -1056,7 +1114,7 @@ export default function HomeScreen() {
         });
       }
       const queue = [...existingVideos, ...pickedVideos];
-      if (append && existingVideos.length) {
+      if (canAppend && existingVideos.length) {
         mediaQueueRef.current = queue;
         setMediaQueue(queue);
         const generation = ++videoThumbnailRunRef.current;
@@ -1071,6 +1129,62 @@ export default function HomeScreen() {
     } finally {
       setPreparingMedia(false);
     }
+  };
+
+  const requestMoreMedia = (kind: 'image' | 'video') => {
+    if (rewardedAdLoading || preparingMedia) return;
+    const roomAtPrompt = currentRoomRef.current;
+    if (!roomAtPrompt) {
+      setError('Connect to the TV before adding more media.');
+      return;
+    }
+    const unlockedRoom = kind === 'image'
+      ? photoSelectionUnlockRoomRef.current
+      : videoSelectionUnlockRoomRef.current;
+    if (unlockedRoom === roomAtPrompt) {
+      if (kind === 'image') void pickPhotos(true);
+      else void pickVideo(true);
+      return;
+    }
+    if (mediaQueueRef.current.length >= MAX_MEDIA_SELECTION_ITEMS) {
+      setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${kind === 'image' ? 'photos' : 'videos'} in this TV session.`);
+      return;
+    }
+
+    const mediaLabel = kind === 'image' ? 'photos' : 'videos';
+    Alert.alert(
+      `Unlock up to 20 ${mediaLabel}`,
+      `One ${kind === 'image' ? 'photo' : 'video'} is free. Watch a rewarded ad to choose up to 20 ${mediaLabel} for this TV session. This reward applies only to ${mediaLabel}.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Watch ad',
+          onPress: () => {
+            void (async () => {
+              const result = await showRewardedAdForRoom(roomAtPrompt);
+              if (result === 'earned') {
+                const activeRoom = currentRoomRef.current;
+                if (!activeRoom) {
+                  setError('The TV connection ended before the selection could be unlocked.');
+                  return;
+                }
+                if (kind === 'image') {
+                  photoSelectionUnlockRoomRef.current = activeRoom;
+                  setPhotoSelectionUnlocked(true);
+                  await pickPhotos(true);
+                } else {
+                  videoSelectionUnlockRoomRef.current = activeRoom;
+                  setVideoSelectionUnlocked(true);
+                  await pickVideo(true);
+                }
+              } else if (result === 'cancelled' && currentRoomRef.current) {
+                setError('The ad was not completed. Your one-item selection is still available.');
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   const castVideoLink = async () => {
@@ -1736,6 +1850,12 @@ export default function HomeScreen() {
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setRoomId('');
+    photoSelectionUnlockRoomRef.current = '';
+    videoSelectionUnlockRoomRef.current = '';
+    screenMirrorUnlockRoomRef.current = '';
+    setPhotoSelectionUnlocked(false);
+    setVideoSelectionUnlocked(false);
+    setScreenMirrorUnlocked(false);
     setSelectedMedia(null);
     setMediaQueue([]);
     mediaQueueRef.current = [];
@@ -1930,6 +2050,55 @@ export default function HomeScreen() {
     } finally {
       setScreenMirrorStarting(false);
     }
+  };
+
+  const requestScreenMirror = () => {
+    if (Platform.OS !== 'android') {
+      void startScreenMirror();
+      return;
+    }
+    const roomAtPrompt = currentRoomRef.current;
+    if (!roomAtPrompt) {
+      setError('Connect to the TV before starting screen mirroring.');
+      return;
+    }
+    if (screenMirrorStarting || screenMirrorActive || rewardedAdLoading) return;
+    if (screenMirrorUnlockRoomRef.current === roomAtPrompt) {
+      void startScreenMirror();
+      return;
+    }
+
+    Alert.alert(
+      'Unlock screen mirroring',
+      'Watch a rewarded ad to unlock screen mirroring for this TV connection. This reward is separate from photo and video selections, and it lasts until you disconnect.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        {
+          text: 'Watch ad',
+          onPress: () => {
+            void (async () => {
+              const result = await showRewardedAdForRoom(roomAtPrompt);
+              if (result === 'earned') {
+                const activeRoom = currentRoomRef.current;
+                if (!activeRoom) {
+                  setError('The TV connection ended before screen mirroring could be unlocked.');
+                  return;
+                }
+                screenMirrorUnlockRoomRef.current = activeRoom;
+                setScreenMirrorUnlocked(true);
+                if (activeRoom !== roomAtPrompt) {
+                  setError('The TV connection changed while the ad was playing. Screen mirroring is unlocked; tap Start again.');
+                  return;
+                }
+                await startScreenMirror();
+              } else if (result === 'cancelled' && currentRoomRef.current) {
+                setError('The ad was not completed. Screen mirroring has not started.');
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   const stopScreenMirror = () => {
@@ -2148,16 +2317,16 @@ export default function HomeScreen() {
                   </Pressable>
                 ) : (
                   <Pressable
-                    onPress={() => void startScreenMirror()}
-                    disabled={!roomId || screenMirrorStarting || stage === 'connecting' || stage === 'sending'}
-                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
+                    onPress={() => requestScreenMirror()}
+                    disabled={!roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending'}
+                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
                     accessibilityRole="button"
-                    accessibilityLabel="Start screen mirroring"
+                    accessibilityLabel={screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch a rewarded ad to unlock screen mirroring'}
                     testID="button-start-screen-mirroring"
                   >
                     <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
                     <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                      {screenMirrorStarting ? 'Waiting for permission…' : !roomId ? 'Connect to the TV first' : 'Start screen mirroring'}
+                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Loading rewarded ad…' : !roomId ? 'Connect to the TV first' : screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch ad to unlock mirroring'}
                     </Text>
                   </Pressable>
                 )}
@@ -2172,7 +2341,9 @@ export default function HomeScreen() {
                 status={selectedMedia.kind === 'video'
                   ? videoStreaming && !paused && !videoEnded ? 'Playing' : stage === 'sending' ? 'Starting' : 'Ready'
                   : stage === 'sending' ? 'Sending' : 'Ready'}
-                canAdd={stage !== 'sending' && stage !== 'connecting'}
+                canAdd={stage !== 'sending' && stage !== 'connecting' && mediaQueue.length < MAX_MEDIA_SELECTION_ITEMS}
+                bulkSelectionUnlocked={selectedMedia.kind === 'video' ? videoSelectionUnlocked : photoSelectionUnlocked}
+                addBusy={rewardedAdLoading || preparingMedia}
                 canControlVideo={stage === 'sent' || videoStreaming || localPlayback}
                 canSelectItem={(index) => mediaQueue[index]?.kind === 'video' || stage !== 'sending' || index < sentQueueCount}
                 colors={{
@@ -2186,7 +2357,7 @@ export default function HomeScreen() {
                   secondary: activeColors.secondary,
                 }}
                 onSelect={playQueuedItem}
-                onAdd={() => void (selectedMedia.kind === 'video' ? pickVideo(true) : pickPhotos(true))}
+                onAdd={() => requestMoreMedia(selectedMedia.kind)}
                 onChange={() => void (selectedMedia.kind === 'video' ? pickVideo() : pickPhotos())}
                 onPlayPause={() => sendPlaybackControl(paused || videoEnded ? 'play' : 'pause')}
                 onPrevious={() => playQueuedItem(queueIndex - 1)}
@@ -2203,15 +2374,15 @@ export default function HomeScreen() {
                     <Ionicons name="images-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : 'Choose up to 30 photos'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : 'Select photos and they appear on the TV automatically'}</Text>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : photoSelectionUnlocked ? 'Choose up to 20 photos' : 'Choose one photo free'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : photoSelectionUnlocked ? 'Select photos and they appear on the TV automatically' : 'Watch a rewarded ad to choose up to 20 photos'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
             ) : (
                 <Pressable
                   onPress={() => void pickVideo()}
-                  disabled={preparingMedia}
+                  disabled={preparingMedia || rewardedAdLoading}
                   style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
                   testID="button-choose-video"
                 >
@@ -2219,8 +2390,8 @@ export default function HomeScreen() {
                     <Ionicons name="videocam-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing videos on this phone…' : 'Choose up to 30 videos'}</Text>
-                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : 'First video starts now; the next plays when it ends'}</Text>
+                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing videos on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : videoSelectionUnlocked ? 'Choose up to 20 videos' : 'Choose one video free'}</Text>
+                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : videoSelectionUnlocked ? 'First video starts now; the next plays when it ends' : 'Watch a rewarded ad to choose up to 20 videos'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
