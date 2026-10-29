@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import type { VideoThumbnail } from 'expo-video';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { NativeVideoAdPreview } from './NativeVideoAdPreview';
 
 export type SelectedMedia = {
   uri: string;
@@ -82,62 +83,70 @@ export function MediaPlaylist({
     formatSize(selected.size),
   ].filter(Boolean).join(' · ');
 
+  const previewContent = (
+    <>
+      {selected.kind === 'image' ? (
+        <Image
+          source={{ uri: selected.uri }}
+          style={StyleSheet.absoluteFill}
+          contentFit="contain"
+          cachePolicy="none"
+          accessibilityLabel={`Preview of ${selected.name}`}
+        />
+      ) : selectedThumbnail ? (
+        <Image
+          source={selectedThumbnail}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          cachePolicy="none"
+          accessibilityLabel={`Video thumbnail for ${selected.name}`}
+        />
+      ) : (
+        <View style={styles.videoPoster}>
+          <Ionicons name="film-outline" size={54} color={colors.primary} />
+          <Text style={[styles.posterText, { color: colors.mutedForeground }]}>VIDEO</Text>
+        </View>
+      )}
+
+      <View style={[styles.positionBadge, { backgroundColor: `${colors.background}E8` }]}>
+        <Ionicons
+          name={selected.kind === 'video' ? 'videocam-outline' : 'images-outline'}
+          size={14}
+          color={colors.primary}
+        />
+        <Text style={[styles.positionText, { color: colors.foreground }]}>
+          {selected.kind === 'video' ? 'VIDEO' : 'PHOTO'} {selectedIndex + 1} / {items.length}
+        </Text>
+      </View>
+
+      {selected.kind === 'video' ? (
+        <Pressable
+          style={[styles.heroPlayButton, { backgroundColor: `${colors.background}D9` }]}
+          onPress={onPlayPause}
+          disabled={!canControlVideo}
+          accessibilityRole="button"
+          accessibilityLabel={paused ? 'Play video on TV' : 'Pause video on TV'}
+        >
+          <Ionicons name={paused ? 'play' : 'pause'} size={28} color={colors.primary} />
+        </Pressable>
+      ) : null}
+
+      <View style={[styles.caption, { backgroundColor: `${colors.background}E8` }]}>
+        <View style={styles.captionCopy}>
+          <Text numberOfLines={1} style={[styles.mediaName, { color: colors.foreground }]}>{selected.name}</Text>
+          {fileMeta ? <Text style={[styles.mediaMeta, { color: colors.mutedForeground }]}>{fileMeta}</Text> : null}
+        </View>
+        <Text style={[styles.status, { color: colors.primary }]} numberOfLines={1}>{status}</Text>
+      </View>
+    </>
+  );
+
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} testID="media-playlist">
       <View style={[styles.preview, { backgroundColor: colors.background }]}>
-        {selected.kind === 'image' ? (
-          <Image
-            source={{ uri: selected.uri }}
-            style={StyleSheet.absoluteFill}
-            contentFit="contain"
-            cachePolicy="none"
-            accessibilityLabel={`Preview of ${selected.name}`}
-          />
-        ) : selectedThumbnail ? (
-          <Image
-            source={selectedThumbnail}
-            style={StyleSheet.absoluteFill}
-            contentFit="cover"
-            cachePolicy="none"
-            accessibilityLabel={`Video thumbnail for ${selected.name}`}
-          />
-        ) : (
-          <View style={styles.videoPoster}>
-            <Ionicons name="film-outline" size={54} color={colors.primary} />
-            <Text style={[styles.posterText, { color: colors.mutedForeground }]}>VIDEO</Text>
-          </View>
-        )}
-
-        <View style={[styles.positionBadge, { backgroundColor: `${colors.background}E8` }]}>
-          <Ionicons
-            name={selected.kind === 'video' ? 'videocam-outline' : 'images-outline'}
-            size={14}
-            color={colors.primary}
-          />
-          <Text style={[styles.positionText, { color: colors.foreground }]}>
-            {selected.kind === 'video' ? 'VIDEO' : 'PHOTO'} {selectedIndex + 1} / {items.length}
-          </Text>
-        </View>
-
-        {selected.kind === 'video' ? (
-          <Pressable
-            style={[styles.heroPlayButton, { backgroundColor: `${colors.background}D9` }]}
-            onPress={onPlayPause}
-            disabled={!canControlVideo}
-            accessibilityRole="button"
-            accessibilityLabel={paused ? 'Play video on TV' : 'Pause video on TV'}
-          >
-            <Ionicons name={paused ? 'play' : 'pause'} size={28} color={colors.primary} />
-          </Pressable>
-        ) : null}
-
-        <View style={[styles.caption, { backgroundColor: `${colors.background}E8` }]}>
-          <View style={styles.captionCopy}>
-            <Text numberOfLines={1} style={[styles.mediaName, { color: colors.foreground }]}>{selected.name}</Text>
-            {fileMeta ? <Text style={[styles.mediaMeta, { color: colors.mutedForeground }]}>{fileMeta}</Text> : null}
-          </View>
-          <Text style={[styles.status, { color: colors.primary }]} numberOfLines={1}>{status}</Text>
-        </View>
+        {selected.kind === 'video'
+          ? <NativeVideoAdPreview colors={colors}>{previewContent}</NativeVideoAdPreview>
+          : previewContent}
       </View>
 
       <View style={styles.galleryHeader}>
