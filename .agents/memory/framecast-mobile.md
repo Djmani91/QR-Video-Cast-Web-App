@@ -5,6 +5,12 @@ description: The selected iOS and Android companion-app direction and its native
 
 FrameCast's phone companion should be a true native iOS/Android app with QR scanning, five-digit room entry, and native photo/video selection. The user chose this over a browser wrapper. Native WebRTC requires a custom development build; Expo Go alone cannot run the casting transport.
 
+The user selected `2tx1.com` as FrameCast's public website and TV browser address because it is short and easy to type. Keep the mobile API host deployment-injected; the user-facing TV address and backend API host serve different purposes.
+
+**Why:** The user explicitly chose this domain to make manual TV entry easier.
+
+**How to apply:** Use `2tx1.com` for public-site and TV setup copy after the custom domain is verified in Replit. Do not replace the app's deployment-injected API host with this domain unless its API routing is separately verified.
+
 Keep phone media on a direct local-device transport; do not require an entire long video to reach the TV before starting. On Android, native media pickers may return temporary `content://` access that can expire before a delayed transfer. Stage those URIs in the app's temporary cache immediately after selection, then remove the copies at selection/session boundaries. Keep media out of signaling and server storage.
 
 **Why:** The user explicitly chose native iOS and Android with a separate build path while retaining direct phone-to-TV privacy. Android's picker URI access can lapse between selection and transfer, causing file-read failures.

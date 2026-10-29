@@ -69,7 +69,7 @@ import {
   trackPairingCompleted,
 } from '@/lib/app-analytics';
 
-const TV_BROWSER_ADDRESS = 'https://qr-video-cast-web-app.replit.app';
+const TV_BROWSER_ADDRESS = 'https://2tx1.com';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
 const SETUP_TUTORIAL_SEEN_KEY = 'framecast.setupTutorialSeen.v1';

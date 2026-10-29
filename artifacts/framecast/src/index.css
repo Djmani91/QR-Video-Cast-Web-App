@@ -125,6 +125,7 @@
 }
 .brand-name { font: 800 19px/1 var(--app-font-serif); letter-spacing: -.045em; }
 .topbar-note { color: hsl(var(--muted-foreground)); font-size: 13px; display: inline-flex; gap: 8px; align-items: center; }
+.topbar-domain { border-left: 1px solid hsl(var(--border)); padding-left: 8px; color: hsl(var(--foreground)); font: 500 11px/1 var(--app-font-mono); white-space: nowrap; }
 .eyebrow { color: hsl(var(--primary)); font: 500 11px/1.2 var(--app-font-mono); text-transform: uppercase; letter-spacing: .14em; }
 .page-wrap { width: min(1180px, calc(100% - 56px)); margin: 0 auto; padding: 62px 0 72px; }
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 410px; gap: 76px; align-items: center; }

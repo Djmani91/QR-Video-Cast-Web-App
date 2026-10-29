@@ -177,6 +177,7 @@ function BrandHeader({ phone = false }: { phone?: boolean }) {
       </Link>
       <span className="topbar-note">
         {phone ? <><LockKeyhole size={14} /> No video upload</> : <><Wifi size={14} /> Works in your browser</>}
+        <span className="topbar-domain" data-testid="text-public-domain">2tx1.com</span>
       </span>
     </header>
   );
