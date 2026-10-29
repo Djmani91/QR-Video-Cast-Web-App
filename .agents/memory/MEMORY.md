@@ -11,4 +11,4 @@
 - [FrameCast video playback](framecast-video-streaming.md) — local files stream directly; ordinary YouTube links use the official player, never stream extraction or proxying.
 - [FrameCast TV cinema standby](framecast-samsung.md) — after phone pairing, use an immersive waiting screen; fullscreen remains best-effort with a TV-remote fallback.
 - [FrameCast App Store packaging](framecast-appstore-packaging.md) — App Store uploads may include generated artifacts despite ignore files; preserve Android signing material before cleanup.
-- [FrameCast ad placement](framecast-ad-placement.md) — never cap or interrupt TV playback; agree a policy-safe ad placement before adding recurring ads.
+- [FrameCast ad placement](framecast-ad-placement.md) — keep one after-pairing interstitial only; no timer ads, extra banners, or casting cutoff.
