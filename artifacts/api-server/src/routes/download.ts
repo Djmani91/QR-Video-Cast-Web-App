@@ -10,7 +10,7 @@ const apkPath = resolve(
 const diagnosticApkPath = apkPath;
 const releaseAabPath = resolve(
   process.cwd(),
-  "../../generated-artifacts/framecast-play-release/FrameCast-Android-1.1.6.aab",
+  "../../generated-artifacts/framecast-play-release/FrameCast-Android-1.1.7.aab",
 );
 
 router.get("/download/framecast.apk", (_req, res): void => {
@@ -60,7 +60,7 @@ router.get("/download/framecast-release.aab", (_req, res): void => {
   res.setHeader("Content-Type", "application/octet-stream");
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="FrameCast-Android-1.1.6.aab"',
+    'attachment; filename="FrameCast-Android-1.1.7.aab"',
   );
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(releaseAabPath, (error) => {
