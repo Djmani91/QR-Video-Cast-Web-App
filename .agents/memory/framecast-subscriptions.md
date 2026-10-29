@@ -10,3 +10,9 @@ The production Google Play product ID is `framecast_monthly` with base plan `mon
 **Why:** The user specifically selected a three-day trial, monthly billing, first-launch-only presentation, and clarified the target price is USD 3.99.
 
 **How to apply:** Keep this offer Android-only until the user asks for iOS billing. Keep the current RevenueCat package mapped to the exact Google Play product and base plan above. Do not advertise or start a free trial unless the store product reports the configured 3-day offer. The current implementation treats active Premium as ad-free, including bypassing rewarded-ad gates; free users keep the agreed ad placements and reward rules.
+
+Before changing app entitlement code to troubleshoot a completed Play purchase, verify RevenueCat's Play Store service-account connection as well as the product and entitlement mappings.
+
+**Why:** A valid product and entitlement mapping still cannot grant Premium if RevenueCat cannot verify purchases with Google Play.
+
+**How to apply:** Check that RevenueCat reports the Play service account configured for the `com.tvcast.com` Android app; never ask the user to paste service-account credentials into chat.
