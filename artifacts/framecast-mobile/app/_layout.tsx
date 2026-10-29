@@ -20,7 +20,8 @@ import { setBaseUrl } from '@workspace/api-client-react';
 SplashScreen.preventAutoHideAsync();
 
 const apiDomain = process.env.EXPO_PUBLIC_DOMAIN;
-setBaseUrl(apiDomain ? `https://${apiDomain}` : null);
+const apiBaseDomain = __DEV__ ? apiDomain : '2tx1.com';
+setBaseUrl(`https://${apiBaseDomain || '2tx1.com'}`);
 
 const queryClient = new QueryClient();
 
