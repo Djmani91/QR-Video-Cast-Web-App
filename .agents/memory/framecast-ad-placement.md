@@ -14,3 +14,9 @@ The user chose separate rewarded gates for photos, videos, and screen mirroring.
 **Why:** The user clarified that photos, videos, and mirroring are distinct behaviors, then selected the same one-free-to-20 rule for photos and videos and a separate optional rewarded ad for mirroring.
 
 **How to apply:** Track photo and video unlocks independently. Reset all three unlocks when the user disconnects or joins a new TV room. Grant only on AdMob's earned-reward event; closing early, declining consent, no-fill, or ad failure must preserve free one-item casting and must not unlock mirroring.
+
+The user wants Appodeal demand to help fill Android ad requests when AdMob has no fill.
+
+**Why:** The user wants another demand source so an AdMob no-fill does not automatically mean no ad.
+
+**How to apply:** Prefer a mediation setup that includes AdMob and Appodeal demand over issuing a second independent SDK request. Check each ad format's React Native support and coordinate consent before changing the Android build.
