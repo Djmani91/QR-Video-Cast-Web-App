@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Alert,
   Keyboard,
   Linking,
@@ -50,8 +51,13 @@ import { SetupTutorial } from '@/components/SetupTutorial';
 import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 import { getTemporaryMediaUris, getUnsupportedTvVideoHelp, isUnsupportedTvVideoError } from '@/lib/video-compatibility';
-import { manageAdPrivacyOptions, showPairingInterstitialAd } from '@/lib/ad-monetization';
-import { shouldShowPairingInterstitial } from '@/lib/pairing-ad';
+import {
+  manageAdPrivacyOptions,
+  showBetweenVideoInterstitialAd,
+  showPairingInterstitialAd,
+} from '@/lib/ad-monetization';
+import { CastingBannerAd } from '@/components/CastingBannerAd';
+import { shouldAttemptBetweenVideoInterstitial, shouldShowPairingInterstitial } from '@/lib/pairing-ad';
 import {
   initializeAppAnalytics,
   setAppAnalyticsConsent,
@@ -393,6 +399,8 @@ export default function HomeScreen() {
   const [stage, setStage] = useState<'join' | 'paired' | 'connecting' | 'sending' | 'sent'>('join');
   const [pairingAdStatus, setPairingAdStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle');
   const [pairingAdMessage, setPairingAdMessage] = useState('');
+  const [betweenVideoAdStatus, setBetweenVideoAdStatus] = useState<'idle' | 'loading'>('idle');
+  const [betweenVideoAdMessage, setBetweenVideoAdMessage] = useState('');
   const [sentBytes, setSentBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -415,6 +423,9 @@ export default function HomeScreen() {
   const videoThumbnailInProgressRef = useRef(new Set<string>());
   const autoAdvancedVideoIndexRef = useRef(-1);
   const playQueuedItemRef = useRef<(index: number) => void>(() => {});
+  const continueVideoQueueRef = useRef<(completedIndex: number) => void>(() => {});
+  const completedVideosSinceInterstitialRef = useRef(0);
+  const lastInterstitialAttemptAtRef = useRef<number | null>(null);
   const temporaryMediaUrisRef = useRef(new Set<string>());
   const unsupportedVideoAlertUriRef = useRef('');
   const pairingAdRoomRef = useRef('');
@@ -610,7 +621,11 @@ export default function HomeScreen() {
     if (!roomId) {
       pairingAdRoomRef.current = '';
       analyticsPairingRoomRef.current = '';
+      completedVideosSinceInterstitialRef.current = 0;
+      lastInterstitialAttemptAtRef.current = null;
       setPairingAdStatus('idle');
+      setBetweenVideoAdStatus('idle');
+      setBetweenVideoAdMessage('');
       return;
     }
     if (analyticsPairingRoomRef.current !== roomId) {
@@ -619,6 +634,7 @@ export default function HomeScreen() {
     }
     if (Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
       pairingAdRoomRef.current = roomId;
+      lastInterstitialAttemptAtRef.current = Date.now();
       setPairingAdStatus('loading');
       setPairingAdMessage('');
       void showPairingInterstitialAd(
@@ -628,6 +644,10 @@ export default function HomeScreen() {
         },
       ).then((result) => {
         if (currentRoomRef.current !== roomId) return;
+        if (result === 'shown') {
+          lastInterstitialAttemptAtRef.current = Date.now();
+          completedVideosSinceInterstitialRef.current = 0;
+        }
         setPairingAdStatus(result === 'unavailable' ? 'unavailable' : 'idle');
       }).catch(() => {
         if (currentRoomRef.current === roomId) {
@@ -701,7 +721,7 @@ export default function HomeScreen() {
               && autoAdvancedVideoIndexRef.current !== currentIndex
             ) {
               autoAdvancedVideoIndexRef.current = currentIndex;
-              playQueuedItemRef.current(currentIndex + 1);
+              continueVideoQueueRef.current(currentIndex);
             }
           }
         } else if (state.playback === 'error' || state.playback === 'blocked') {
@@ -1363,7 +1383,7 @@ export default function HomeScreen() {
                   && autoAdvancedVideoIndexRef.current !== currentIndex
                 ) {
                   autoAdvancedVideoIndexRef.current = currentIndex;
-                  playQueuedItemRef.current(currentIndex + 1);
+                  continueVideoQueueRef.current(currentIndex);
                 }
               }
             }
@@ -1660,6 +1680,48 @@ export default function HomeScreen() {
     void startTransfer(undefined, undefined, index);
   };
   playQueuedItemRef.current = playQueuedItem;
+
+  const continueVideoQueue = async (completedIndex: number) => {
+    const completedItem = mediaQueueRef.current[completedIndex];
+    const nextItem = mediaQueueRef.current[completedIndex + 1];
+    if (completedItem?.kind !== 'video' || nextItem?.kind !== 'video') return;
+
+    completedVideosSinceInterstitialRef.current += 1;
+    const roomAtVideoEnd = currentRoomRef.current;
+    const now = Date.now();
+    const shouldShowBreakAd = Platform.OS === 'android'
+      && AppState.currentState === 'active'
+      && shouldAttemptBetweenVideoInterstitial(
+        completedVideosSinceInterstitialRef.current,
+        lastInterstitialAttemptAtRef.current,
+        now,
+      );
+
+    if (shouldShowBreakAd) {
+      lastInterstitialAttemptAtRef.current = now;
+      setBetweenVideoAdStatus('loading');
+      setBetweenVideoAdMessage('');
+      const result = await showBetweenVideoInterstitialAd(
+        () => currentRoomRef.current === roomAtVideoEnd
+          && stageRef.current === 'sent'
+          && queueIndexRef.current === completedIndex
+          && AppState.currentState === 'active',
+        (message) => {
+          if (currentRoomRef.current === roomAtVideoEnd) setBetweenVideoAdMessage(message);
+        },
+      );
+      if (currentRoomRef.current !== roomAtVideoEnd) return;
+      if (result === 'shown') {
+        lastInterstitialAttemptAtRef.current = Date.now();
+        completedVideosSinceInterstitialRef.current = 0;
+      }
+      setBetweenVideoAdStatus('idle');
+    }
+
+    if (currentRoomRef.current !== roomAtVideoEnd || queueIndexRef.current !== completedIndex) return;
+    playQueuedItemRef.current(completedIndex + 1);
+  };
+  continueVideoQueueRef.current = (completedIndex) => { void continueVideoQueue(completedIndex); };
 
   const leaveRoom = () => {
     if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
@@ -2046,16 +2108,26 @@ export default function HomeScreen() {
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
-            {roomId && Platform.OS !== 'web' && pairingAdStatus === 'loading' && (
+            {Boolean(roomId) && Platform.OS !== 'web' && pairingAdStatus === 'loading' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
                 Preparing your connection ad…
               </Text>
             )}
-            {roomId && Platform.OS !== 'web' && pairingAdStatus === 'unavailable' && (
+            {Boolean(roomId) && Platform.OS !== 'web' && pairingAdStatus === 'unavailable' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
                 {pairingAdMessage || 'No ad is available right now. You can continue casting.'}
               </Text>
             )}
+            {Boolean(roomId) && Platform.OS === 'android' && betweenVideoAdStatus === 'loading' && (
+              <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
+                This video has ended. The next one will start after the ad break.
+              </Text>
+            )}
+            {Boolean(roomId) && Platform.OS === 'android' && betweenVideoAdStatus === 'idle' && betweenVideoAdMessage ? (
+              <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
+                {betweenVideoAdMessage}
+              </Text>
+            ) : null}
 
             {castTab === 'screen' && (
               <View style={[styles.videoLinkCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]} testID="screen-mirroring-card">
@@ -2447,6 +2519,12 @@ export default function HomeScreen() {
           <Text style={[styles.errorText, { color: activeColors.destructive }]}>Could not reach the TV. Check that its FrameCast page is still open.</Text>
         ) : null}
       </ScrollView>
+      {Boolean(roomId) && Platform.OS === 'android' && pairingAdStatus !== 'loading' && (
+        <CastingBannerAd
+          backgroundColor={activeColors.background}
+          borderColor={activeColors.border}
+        />
+      )}
     </SafeAreaView>
     <SetupTutorial
       visible={setupTutorialVisible}

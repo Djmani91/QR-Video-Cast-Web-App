@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 const AD_LOAD_TIMEOUT_MS = 60_000;
+const VIDEO_BREAK_AD_LOAD_TIMEOUT_MS = 15_000;
 const ANDROID_INTERSTITIAL_UNIT_ID = 'ca-app-pub-9928204391830083/9055409035';
 
 export async function manageAdPrivacyOptions(): Promise<boolean> {
@@ -17,6 +18,22 @@ export type PairingInterstitialResult = 'shown' | 'cancelled' | 'unavailable';
 export async function showPairingInterstitialAd(
   canShow: () => boolean,
   reportIssue: (message: string) => void = () => undefined,
+): Promise<PairingInterstitialResult> {
+  return showInterstitialAdAtPlacement('pairing', canShow, reportIssue, AD_LOAD_TIMEOUT_MS);
+}
+
+export async function showBetweenVideoInterstitialAd(
+  canShow: () => boolean,
+  reportIssue: (message: string) => void = () => undefined,
+): Promise<PairingInterstitialResult> {
+  return showInterstitialAdAtPlacement('between-videos', canShow, reportIssue, VIDEO_BREAK_AD_LOAD_TIMEOUT_MS);
+}
+
+async function showInterstitialAdAtPlacement(
+  placement: 'pairing' | 'between-videos',
+  canShow: () => boolean,
+  reportIssue: (message: string) => void,
+  timeoutMs: number,
 ): Promise<PairingInterstitialResult> {
   if (Platform.OS === 'web') return 'unavailable';
 
@@ -61,9 +78,11 @@ export async function showPairingInterstitialAd(
       };
 
       timeout = setTimeout(() => {
-        reportIssue('The ad request timed out. Check the phone’s internet connection and try pairing again.');
+        reportIssue(placement === 'pairing'
+          ? 'The ad request timed out. Check the phone’s internet connection and try pairing again.'
+          : 'The ad request timed out. The next video will continue without an ad.');
         finish('unavailable');
-      }, AD_LOAD_TIMEOUT_MS);
+      }, timeoutMs);
       subscriptions.push(ad.addAdEventListener(AdEventType.LOADED, () => {
         if (showStarted || settled) return;
         if (!canShow()) {
