@@ -32,3 +32,9 @@ Use Android-aware validators for APK packaging; do not rewrite a signed APK to s
 **Why:** This environment's InfoZIP rejects Android alignment extra fields as invalid even when APK signatures, Android alignment validation, and entry CRCs are valid. Repacking would invalidate the signature.
 
 **How to apply:** Prefer Android signature/alignment checks and a compatible ZIP reader for CRC validation. When inspecting Hermes bundles, check UTF-16 as well as ASCII: a whole HTML template containing Unicode can be stored as UTF-16, so an ASCII-only search can falsely suggest stale source.
+
+The Gradle-cached `bundletool` artifact is a thin library JAR, not the standalone CLI.
+
+**Why:** Running it with `java -jar` fails because it has no main manifest, and using only that JAR on the classpath misses runtime dependencies such as protobuf.
+
+**How to apply:** For local AAB validation, use the official `bundletool-all` distribution or invoke `BundleToolMain` with the bundletool JAR and its cached runtime dependencies on the classpath.

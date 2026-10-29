@@ -11,6 +11,10 @@ const diagnosticApkPath = resolve(
   process.cwd(),
   "../../generated-artifacts/framecast-ad-diagnostic-20261028/final/FrameCast-Android-test.apk",
 );
+const releaseAabPath = resolve(
+  process.cwd(),
+  "../../generated-artifacts/framecast-play-release/FrameCast-Android-1.1.3.aab",
+);
 
 router.get("/download/framecast.apk", (_req, res): void => {
   if (!existsSync(apkPath)) {
@@ -46,6 +50,25 @@ router.get("/download/framecast-diagnostic.apk", (_req, res): void => {
   res.sendFile(diagnosticApkPath, (error) => {
     if (error && !res.headersSent) {
       res.status(500).send("The diagnostic FrameCast APK could not be downloaded.");
+    }
+  });
+});
+
+router.get("/download/framecast-release.aab", (_req, res): void => {
+  if (!existsSync(releaseAabPath)) {
+    res.status(404).send("The FrameCast Android App Bundle is not available.");
+    return;
+  }
+
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="FrameCast-Android-1.1.3.aab"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.sendFile(releaseAabPath, (error) => {
+    if (error && !res.headersSent) {
+      res.status(500).send("The FrameCast Android App Bundle could not be downloaded.");
     }
   });
 });
