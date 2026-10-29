@@ -20,7 +20,7 @@ type Props = {
 
 const ANDROID_NATIVE_AD_UNIT_ID = __DEV__
   ? TestIds.NATIVE
-  : process.env.EXPO_PUBLIC_ADMOB_ANDROID_NATIVE_UNIT_ID || null;
+  : 'ca-app-pub-9928204391830083/1508839939';
 
 export function NativeVideoAdPreview({ children, colors }: Props) {
   const [consentReady, setConsentReady] = useState(false);
