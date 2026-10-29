@@ -5,12 +5,9 @@ import { Router, type IRouter } from "express";
 const router: IRouter = Router();
 const apkPath = resolve(
   process.cwd(),
-  "../../attached_assets/framecast-android-build-archive/framecast-setup-guide-apk/FrameCast-Setup-Guide.apk",
+  "../../generated-artifacts/framecast-apk-20261029/FrameCast-Android-1.1.6-test.apk",
 );
-const diagnosticApkPath = resolve(
-  process.cwd(),
-  "../../generated-artifacts/framecast-ad-diagnostic-20261028/final/FrameCast-Android-test.apk",
-);
+const diagnosticApkPath = apkPath;
 const releaseAabPath = resolve(
   process.cwd(),
   "../../generated-artifacts/framecast-play-release/FrameCast-Android-1.1.6.aab",
@@ -25,7 +22,7 @@ router.get("/download/framecast.apk", (_req, res): void => {
   res.setHeader("Content-Type", "application/vnd.android.package-archive");
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="FrameCast-Setup-Guide.apk"',
+    'attachment; filename="FrameCast-Android-1.1.6-test.apk"',
   );
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(apkPath, (error) => {
@@ -44,7 +41,7 @@ router.get("/download/framecast-diagnostic.apk", (_req, res): void => {
   res.setHeader("Content-Type", "application/vnd.android.package-archive");
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="FrameCast-Android-diagnostic.apk"',
+    'attachment; filename="FrameCast-Android-1.1.6-test.apk"',
   );
   res.setHeader("Cache-Control", "no-store");
   res.sendFile(diagnosticApkPath, (error) => {
