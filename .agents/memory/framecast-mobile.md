@@ -161,11 +161,11 @@ Avoid redundant conditional downcasts from Core Foundation types in Swift code b
 
 **How to apply:** Read the precise Swift diagnostic in Launch logs and preserve the inferred type directly when the cast cannot fail. Recheck the next archive; local Linux checks cannot compile Apple's AVFoundation APIs.
 
-Standalone Android APK bundles must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
+Standalone Android release bundles (APK and AAB) must set `EXPO_PUBLIC_DOMAIN` to the verified published FrameCast host; otherwise native API calls remain relative and phone-to-TV signaling fails.
 
 **Why:** React Native cannot resolve the web app's relative `/api` routes without a base URL.
 
-**How to apply:** Set the production host in the Gradle build environment and verify the final JS bundle contains it before sharing an APK.
+**How to apply:** Resolve the production host from deployment metadata, set it in the Gradle build environment, and verify the final JS bundle contains it before sharing an Android release bundle.
 
 For Android test builds, provide a direct download URL rather than only a Replit asset/library card; the user reports those cards do not work for them. Verify the endpoint before sharing it.
 
