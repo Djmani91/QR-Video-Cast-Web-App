@@ -12,3 +12,4 @@
 - [FrameCast TV cinema standby](framecast-samsung.md) — after phone pairing, use an immersive waiting screen; fullscreen remains best-effort with a TV-remote fallback.
 - [FrameCast App Store packaging](framecast-appstore-packaging.md) — App Store uploads may include generated artifacts despite ignore files; preserve Android signing material before cleanup.
 - [FrameCast ad placement](framecast-ad-placement.md) — keep pairing ads, add an Android casting banner, and cap interstitials to video breaks only.
+- [FrameCast subscriptions](framecast-subscriptions.md) — Android offers a first-launch Google Play choice: three-day trial or continue with ads.

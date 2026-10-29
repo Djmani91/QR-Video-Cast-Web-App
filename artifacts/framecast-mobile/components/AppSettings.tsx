@@ -15,6 +15,9 @@ type Props = {
   showBackgroundCasting: boolean;
   backgroundCastingEnabled: boolean;
   onBackgroundCastingChange: (enabled: boolean) => void;
+  premiumActive: boolean;
+  onOpenPremium: () => void;
+  onManagePremium: () => void;
 };
 type Phase = 'idle' | 'confirm' | 'busy' | 'success' | 'error';
 
@@ -45,6 +48,9 @@ export function AppSettings({
   showBackgroundCasting,
   backgroundCastingEnabled,
   onBackgroundCastingChange,
+  premiumActive,
+  onOpenPremium,
+  onManagePremium,
 }: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -133,6 +139,33 @@ export function AppSettings({
             </View>
 
             <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.kicker, { color: colors.primary }]}>SUBSCRIPTION</Text>
+              <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} testID="setting-premium">
+                <View style={styles.settingRow}>
+                  <View style={styles.settingCopy}>
+                    <Text style={[styles.subhead, { color: colors.foreground }]}>
+                      {premiumActive ? 'FrameCast Premium is active' : 'Try FrameCast Premium'}
+                    </Text>
+                    <Text style={[styles.small, { color: colors.mutedForeground }]}>
+                      {premiumActive
+                        ? 'Manage or cancel your subscription in Google Play.'
+                        : 'Eligible new subscribers can try 3 days free, then the Google Play monthly price.'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={premiumActive ? onManagePremium : onOpenPremium}
+                    accessibilityRole="button"
+                    testID="button-premium-settings"
+                    style={({ pressed }) => [styles.tutorialButton, { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 }]}
+                  >
+                    <Text style={[styles.subhead, { color: colors.primary }]}>
+                      {premiumActive ? 'Manage' : 'View'}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                  </Pressable>
+                </View>
+              </View>
+
               {showBackgroundCasting && (
                 <>
                   <Text style={[styles.kicker, { color: colors.primary }]}>BACKGROUND CASTING</Text>

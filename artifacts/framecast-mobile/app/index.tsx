@@ -59,6 +59,8 @@ import {
 } from '@/lib/ad-monetization';
 import { getRemainingMediaSelectionSlots, MAX_MEDIA_SELECTION_ITEMS } from '@/lib/media-selection';
 import { CastingBannerAd } from '@/components/CastingBannerAd';
+import { SubscriptionChoiceGate, useSubscriptionChoiceGate } from '@/components/SubscriptionChoiceGate';
+import { useSubscription } from '@/lib/revenuecat';
 import { shouldAttemptBetweenVideoInterstitial, shouldShowPairingInterstitial } from '@/lib/pairing-ad';
 import {
   initializeAppAnalytics,
@@ -352,9 +354,11 @@ async function resolveVideoLink(input: string) {
   }
 }
 
-export default function HomeScreen() {
+function FrameCastHomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { isPremium } = useSubscription();
+  const { openPaywall } = useSubscriptionChoiceGate();
   const queryClient = useQueryClient();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const lookupRoom = useLookupCastRoomByCode();
@@ -642,7 +646,7 @@ export default function HomeScreen() {
       analyticsPairingRoomRef.current = roomId;
       void trackPairingCompleted();
     }
-    if (Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
+    if (!isPremium && Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
       pairingAdRoomRef.current = roomId;
       lastInterstitialAttemptAtRef.current = Date.now();
       setPairingAdStatus('loading');
@@ -967,6 +971,7 @@ export default function HomeScreen() {
   };
 
   const showRewardedAdForRoom = async (roomAtPrompt: string) => {
+    if (isPremium) return 'earned' as const;
     if (rewardedAdInProgressRef.current) return 'unavailable' as const;
     rewardedAdInProgressRef.current = true;
     setRewardedAdLoading(true);
@@ -1152,6 +1157,18 @@ export default function HomeScreen() {
     }
 
     const mediaLabel = kind === 'image' ? 'photos' : 'videos';
+    if (isPremium) {
+      if (kind === 'image') {
+        photoSelectionUnlockRoomRef.current = roomAtPrompt;
+        setPhotoSelectionUnlocked(true);
+        void pickPhotos(true);
+      } else {
+        videoSelectionUnlockRoomRef.current = roomAtPrompt;
+        setVideoSelectionUnlocked(true);
+        void pickVideo(true);
+      }
+      return;
+    }
     Alert.alert(
       `Unlock up to 20 ${mediaLabel}`,
       `One ${kind === 'image' ? 'photo' : 'video'} is free. Watch a rewarded ad to choose up to 20 ${mediaLabel} for this TV session. This reward applies only to ${mediaLabel}.`,
@@ -1803,7 +1820,8 @@ export default function HomeScreen() {
     completedVideosSinceInterstitialRef.current += 1;
     const roomAtVideoEnd = currentRoomRef.current;
     const now = Date.now();
-    const shouldShowBreakAd = Platform.OS === 'android'
+    const shouldShowBreakAd = !isPremium
+      && Platform.OS === 'android'
       && AppState.currentState === 'active'
       && shouldAttemptBetweenVideoInterstitial(
         completedVideosSinceInterstitialRef.current,
@@ -2067,6 +2085,12 @@ export default function HomeScreen() {
       void startScreenMirror();
       return;
     }
+    if (isPremium) {
+      screenMirrorUnlockRoomRef.current = roomAtPrompt;
+      setScreenMirrorUnlocked(true);
+      void startScreenMirror();
+      return;
+    }
 
     Alert.alert(
       'Unlock screen mirroring',
@@ -2149,6 +2173,11 @@ export default function HomeScreen() {
             showBackgroundCasting={backgroundCastingAvailable}
             backgroundCastingEnabled={backgroundPreference === true}
             onBackgroundCastingChange={saveBackgroundPreference}
+            premiumActive={isPremium}
+            onOpenPremium={openPaywall}
+            onManagePremium={() => {
+              void Linking.openURL('https://play.google.com/store/account/subscriptions?package=com.tvcast.com');
+            }}
           />
         </View>
 
@@ -2321,12 +2350,12 @@ export default function HomeScreen() {
                     disabled={!roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending'}
                     style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
                     accessibilityRole="button"
-                    accessibilityLabel={screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch a rewarded ad to unlock screen mirroring'}
+                    accessibilityLabel={isPremium || screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch a rewarded ad to unlock screen mirroring'}
                     testID="button-start-screen-mirroring"
                   >
                     <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
                     <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Loading rewarded ad…' : !roomId ? 'Connect to the TV first' : screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch ad to unlock mirroring'}
+                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Loading rewarded ad…' : !roomId ? 'Connect to the TV first' : isPremium || screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch ad to unlock mirroring'}
                     </Text>
                   </Pressable>
                 )}
@@ -2342,7 +2371,8 @@ export default function HomeScreen() {
                   ? videoStreaming && !paused && !videoEnded ? 'Playing' : stage === 'sending' ? 'Starting' : 'Ready'
                   : stage === 'sending' ? 'Sending' : 'Ready'}
                 canAdd={stage !== 'sending' && stage !== 'connecting' && mediaQueue.length < MAX_MEDIA_SELECTION_ITEMS}
-                bulkSelectionUnlocked={selectedMedia.kind === 'video' ? videoSelectionUnlocked : photoSelectionUnlocked}
+                bulkSelectionUnlocked={isPremium || (selectedMedia.kind === 'video' ? videoSelectionUnlocked : photoSelectionUnlocked)}
+                adsEnabled={!isPremium}
                 addBusy={rewardedAdLoading || preparingMedia}
                 canControlVideo={stage === 'sent' || videoStreaming || localPlayback}
                 canSelectItem={(index) => mediaQueue[index]?.kind === 'video' || stage !== 'sending' || index < sentQueueCount}
@@ -2374,8 +2404,8 @@ export default function HomeScreen() {
                     <Ionicons name="images-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : photoSelectionUnlocked ? 'Choose up to 20 photos' : 'Choose one photo free'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : photoSelectionUnlocked ? 'Select photos and they appear on the TV automatically' : 'Watch a rewarded ad to choose up to 20 photos'}</Text>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : isPremium || photoSelectionUnlocked ? 'Choose up to 20 photos' : 'Choose one photo free'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : isPremium || photoSelectionUnlocked ? 'Select photos and they appear on the TV automatically' : 'Watch a rewarded ad to choose up to 20 photos'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -2390,8 +2420,8 @@ export default function HomeScreen() {
                     <Ionicons name="videocam-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing videos on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : videoSelectionUnlocked ? 'Choose up to 20 videos' : 'Choose one video free'}</Text>
-                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : videoSelectionUnlocked ? 'First video starts now; the next plays when it ends' : 'Watch a rewarded ad to choose up to 20 videos'}</Text>
+                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing videos on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : isPremium || videoSelectionUnlocked ? 'Choose up to 20 videos' : 'Choose one video free'}</Text>
+                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : videoSelectionUnlocked || isPremium ? 'First video starts now; the next plays when it ends' : 'Watch a rewarded ad to choose up to 20 videos'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -2690,7 +2720,7 @@ export default function HomeScreen() {
           <Text style={[styles.errorText, { color: activeColors.destructive }]}>Could not reach the TV. Check that its FrameCast page is still open.</Text>
         ) : null}
       </ScrollView>
-      {Boolean(roomId) && Platform.OS === 'android' && pairingAdStatus !== 'loading' && (
+      {Boolean(roomId) && !isPremium && Platform.OS === 'android' && pairingAdStatus !== 'loading' && (
         <CastingBannerAd
           backgroundColor={activeColors.background}
           borderColor={activeColors.border}
@@ -2703,6 +2733,14 @@ export default function HomeScreen() {
       onDismiss={() => { void finishSetupTutorial(); }}
     />
     </>
+  );
+}
+
+export default function HomeScreen() {
+  return (
+    <SubscriptionChoiceGate>
+      <FrameCastHomeScreen />
+    </SubscriptionChoiceGate>
   );
 }
 

@@ -33,6 +33,7 @@ type Props = {
   status: string;
   canAdd: boolean;
   bulkSelectionUnlocked: boolean;
+  adsEnabled: boolean;
   addBusy: boolean;
   canControlVideo: boolean;
   canSelectItem(index: number): boolean;
@@ -67,6 +68,7 @@ export function MediaPlaylist({
   status,
   canAdd,
   bulkSelectionUnlocked,
+  adsEnabled,
   addBusy,
   canControlVideo,
   canSelectItem,
@@ -152,7 +154,7 @@ export function MediaPlaylist({
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} testID="media-playlist">
       <View style={[styles.preview, { backgroundColor: colors.background }]}>
-        {selected.kind === 'video'
+        {selected.kind === 'video' && adsEnabled
           ? <NativeVideoAdPreview colors={colors}>{previewContent}</NativeVideoAdPreview>
           : previewContent}
       </View>
