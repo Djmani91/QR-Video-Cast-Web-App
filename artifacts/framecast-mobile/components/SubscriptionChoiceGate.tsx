@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import Purchases from 'react-native-purchases';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useSubscription } from '@/lib/revenuecat';
@@ -46,22 +47,56 @@ function SubscriptionChoiceScreen({
   const { configured, error: subscriptionError, monthlyPackage, purchase, restore } = useSubscription();
   const [busy, setBusy] = useState<'purchase' | 'restore' | null>(null);
   const [message, setMessage] = useState('');
+  const [purchaseNeedsConfirmation, setPurchaseNeedsConfirmation] = useState(false);
   const trialAvailable = hasThreeDayFreeTrial(monthlyPackage);
   const priceString = monthlyPackage?.product.priceString;
 
   const startPremium = async () => {
-    if (!monthlyPackage || busy) return;
+    if (!monthlyPackage || busy || purchaseNeedsConfirmation) return;
     setBusy('purchase');
     setMessage('');
     try {
       const activated = await purchase(monthlyPackage);
-      if (activated) onPremiumActivated();
-      else setMessage('Google Play completed the purchase, but Premium is not active yet. Restore purchases or try again.');
+      if (activated) {
+        onPremiumActivated();
+        return;
+      }
+
+      setPurchaseNeedsConfirmation(true);
+      const restored = await restore().catch(() => false);
+      if (restored) {
+        onPremiumActivated();
+        return;
+      }
+      setMessage('Google Play returned from the purchase, but FrameCast has not confirmed it yet. Do not buy again. Tap “Check existing purchase” below.');
     } catch (error) {
-      const cancelled = Boolean((error as { userCancelled?: boolean })?.userCancelled);
-      setMessage(cancelled
-        ? 'Purchase cancelled. You can try again or continue with ads.'
-        : 'Google Play could not start the purchase. Check your connection and try again.');
+      const purchaseError = error as { userCancelled?: boolean; code?: string | number; message?: string };
+      const errorCode = String(purchaseError?.code ?? '');
+      const errorMessage = String(purchaseError?.message ?? '').toLowerCase();
+      const cancelled = Boolean(purchaseError?.userCancelled)
+        || errorCode === String(Purchases.PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR);
+      if (cancelled) {
+        setMessage('Purchase cancelled. You can try again or continue with ads.');
+        return;
+      }
+
+      const needsConfirmation = errorCode === String(Purchases.PURCHASES_ERROR_CODE.PRODUCT_ALREADY_PURCHASED_ERROR)
+        || errorCode === String(Purchases.PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR)
+        || errorMessage.includes('acknowledg')
+        || errorMessage.includes('already purchased');
+      if (needsConfirmation) {
+        setPurchaseNeedsConfirmation(true);
+        const restored = await restore().catch(() => false);
+        if (restored) {
+          onPremiumActivated();
+          return;
+        }
+        setMessage('Google Play already has a FrameCast purchase that is waiting for confirmation. Do not buy again. Tap “Check existing purchase” below.');
+        return;
+      }
+
+      console.warn('RevenueCat purchase failed.', { code: errorCode || 'unknown' });
+      setMessage('Google Play could not complete the purchase. Check your connection, then try again once.');
     } finally {
       setBusy(null);
     }
@@ -74,9 +109,15 @@ function SubscriptionChoiceScreen({
     try {
       const restored = await restore();
       if (restored) onPremiumActivated();
-      else setMessage('No active FrameCast Premium purchase was found for this Google Play account.');
+      else if (purchaseNeedsConfirmation) {
+        setMessage('FrameCast still cannot confirm the existing purchase. Do not buy again yet. The Google Play connection must be fixed first.');
+      } else {
+        setMessage('No active FrameCast Premium purchase was found for this Google Play account.');
+      }
     } catch {
-      setMessage('Could not restore purchases. Check your connection and try again.');
+      setMessage(purchaseNeedsConfirmation
+        ? 'FrameCast could not verify the existing purchase. Do not buy again yet. Check your connection and try “Check existing purchase” again later.'
+        : 'Could not restore purchases. Check your connection and try again.');
     } finally {
       setBusy(null);
     }
@@ -133,22 +174,31 @@ function SubscriptionChoiceScreen({
 
         <Pressable
           onPress={() => void startPremium()}
-          disabled={!monthlyPackage || busy !== null}
+          disabled={!monthlyPackage || busy !== null || purchaseNeedsConfirmation}
           accessibilityRole="button"
           testID="button-start-premium"
           style={({ pressed }) => [
             styles.primaryButton,
             {
               backgroundColor: colors.primary,
-              opacity: !monthlyPackage || busy !== null ? 0.55 : pressed ? 0.84 : 1,
+              opacity: !monthlyPackage || busy !== null || purchaseNeedsConfirmation ? 0.55 : pressed ? 0.84 : 1,
             },
           ]}
         >
           {busy === 'purchase' ? (
-            <ActivityIndicator color={colors.primaryForeground} />
+            <View style={styles.buttonBusy}>
+              <ActivityIndicator color={colors.primaryForeground} />
+              <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>Opening Google Play…</Text>
+            </View>
           ) : (
             <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
-              {trialAvailable ? 'Start 3-day free trial' : monthlyPackage ? 'Get FrameCast Premium' : 'Premium unavailable'}
+              {purchaseNeedsConfirmation
+                ? 'Purchase awaiting confirmation'
+                : trialAvailable
+                  ? 'Start 3-day free trial'
+                  : monthlyPackage
+                    ? 'Get FrameCast Premium'
+                    : 'Premium unavailable'}
             </Text>
           )}
         </Pressable>
@@ -169,6 +219,28 @@ function SubscriptionChoiceScreen({
           </Text>
         ) : null}
 
+        {purchaseNeedsConfirmation ? (
+          <Pressable
+            onPress={() => void restorePurchases()}
+            disabled={busy !== null}
+            accessibilityRole="button"
+            testID="button-check-existing-purchase"
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              { borderColor: colors.primary, backgroundColor: colors.card, opacity: busy !== null ? 0.55 : pressed ? 0.8 : 1 },
+            ]}
+          >
+            {busy === 'restore' ? (
+              <View style={styles.buttonBusy}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={[styles.secondaryButtonText, { color: colors.primary }]}>Checking purchase…</Text>
+              </View>
+            ) : (
+              <Text style={[styles.secondaryButtonText, { color: colors.primary }]}>Check existing purchase</Text>
+            )}
+          </Pressable>
+        ) : null}
+
         <Pressable
           onPress={onContinueWithAds}
           accessibilityRole="button"
@@ -182,12 +254,16 @@ function SubscriptionChoiceScreen({
         </Pressable>
 
         <View style={styles.footerRow}>
-          <Pressable onPress={() => void restorePurchases()} disabled={busy !== null} accessibilityRole="button" testID="button-restore-purchases">
-            <Text style={[styles.footerLink, { color: colors.primary, opacity: busy ? 0.55 : 1 }]}>
-              {busy === 'restore' ? 'Restoring…' : 'Restore purchases'}
-            </Text>
-          </Pressable>
-          <Text style={[styles.footerDot, { color: colors.mutedForeground }]}>·</Text>
+          {!purchaseNeedsConfirmation ? (
+            <>
+              <Pressable onPress={() => void restorePurchases()} disabled={busy !== null} accessibilityRole="button" testID="button-restore-purchases">
+                <Text style={[styles.footerLink, { color: colors.primary, opacity: busy ? 0.55 : 1 }]}>
+                  {busy === 'restore' ? 'Restoring…' : 'Restore purchases'}
+                </Text>
+              </Pressable>
+              <Text style={[styles.footerDot, { color: colors.mutedForeground }]}>·</Text>
+            </>
+          ) : null}
           <Pressable onPress={() => void Linking.openURL(PLAY_SUBSCRIPTIONS_URL)} accessibilityRole="link">
             <Text style={[styles.footerLink, { color: colors.primary }]}>Manage in Google Play</Text>
           </Pressable>
@@ -313,6 +389,7 @@ const styles = StyleSheet.create({
   message: { fontFamily: 'Inter_500Medium', fontSize: 12, lineHeight: 18, textAlign: 'center', marginBottom: 12 },
   secondaryButton: { minHeight: 52, borderWidth: 1, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
   secondaryButtonText: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  buttonBusy: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   footerRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, marginTop: 19 },
   footerLink: { fontFamily: 'Inter_500Medium', fontSize: 12 },
   footerDot: { fontSize: 16 },

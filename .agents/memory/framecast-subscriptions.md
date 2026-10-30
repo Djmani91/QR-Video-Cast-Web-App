@@ -11,11 +11,11 @@ The production Google Play product ID is `framecast_monthly` with base plan `mon
 
 **How to apply:** Keep this offer Android-only until the user asks for iOS billing. Keep the current RevenueCat package mapped to the exact Google Play product and base plan above. Show the first offer after successful TV pairing, not at app launch. Do not promise a trial unless Google Play reports the configured offer; always show the localized renewal price and cancellation terms. Premium removes ad limits and allows background casting; free casting stops when FrameCast leaves the foreground. Background casting is an explicit Premium setting and requires Android's ongoing casting notification.
 
-Before changing app entitlement code to troubleshoot a completed Play purchase, verify RevenueCat's Play Store service-account connection as well as the product and entitlement mappings.
+Before changing app entitlement code to troubleshoot a completed Play purchase, verify RevenueCat's Play Store service-account connection as well as the product and entitlement mappings. The app record exposes `play_service_account_credentials_configured`; require it to be true.
 
-**Why:** A valid product and entitlement mapping still cannot grant Premium if RevenueCat cannot verify purchases with Google Play.
+**Why:** A valid product and entitlement mapping still cannot grant Premium or acknowledge a Google Play transaction if RevenueCat cannot verify purchases with Google Play.
 
-**How to apply:** Check that RevenueCat reports the Play service account configured for the `com.tvcast.com` Android app; never ask the user to paste service-account credentials into chat. RevenueCat's app-read API omits credential status, so do not infer that the service account is connected from the app record alone; verify in the dashboard.
+**How to apply:** Read the boolean `play_service_account_credentials_configured` from the RevenueCat app record for the Android app; if false, have the owner configure the Google Play service-account JSON directly in RevenueCat. Never ask the user to paste credentials into chat. A product's existence or price does not prove Play purchase verification is configured.
 
 Google Play purchases can be completed outside FrameCast, leaving RevenueCat customer info cached until the app resumes. Refresh customer info on foreground before requesting ads, and hide stale ad errors once Premium is confirmed.
 
