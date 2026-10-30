@@ -182,3 +182,17 @@ mtime_ms = 1793228592000
 storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/335937f5-b067-44f8-946b-dfeec1dfe65a/749813c8-f268-4576-b77f-4bf9d608b370"
 storage_version_token = "1793228942371753"
 content_type = "application/octet-stream"
+
+[[outputs]]
+id = "jT9BbLIPPhP7Y63arrHyE"
+uri = "file://generated-artifacts/framecast-play-release/FrameCast-Android-1.1.9.aab"
+type = "unspecified"
+title = "FrameCast Android AAB 1.1.9"
+description = "Signed Google Play upload bundle, version code 20."
+logical_id = "923abb83-209a-409a-afad-bae9b1d0e496"
+content_hash = "sha256:931d48ef6fe5f8863ae2f134b6dd1117b180d342f1e99eef15152a8215dce237"
+size = 81675799
+mtime_ms = 1793327423266
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:3f3d1d9b-c706-4f5a-8c42-e40759778804/923abb83-209a-409a-afad-bae9b1d0e496/5978f6f7-3ef4-4446-a135-51c9f55c266b"
+storage_version_token = "1793327716128550"
+content_type = "application/octet-stream"

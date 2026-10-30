@@ -44,3 +44,9 @@ The Gradle-cached `bundletool` artifact is a thin library JAR, not the standalon
 **Why:** Running it with `java -jar` fails because it has no main manifest, and using only that JAR on the classpath misses runtime dependencies such as protobuf.
 
 **How to apply:** For local AAB validation, use the official `bundletool-all` distribution or invoke `BundleToolMain` with the bundletool JAR and its cached runtime dependencies on the classpath.
+
+Do not identify an AAB signer by grepping `jarsigner -verify -certs` output; it may verify the bundle without printing the certificate subject.
+
+**Why:** A correctly signed bundle can pass `jarsigner` verification while a subject-name grep falsely reports a signing mismatch.
+
+**How to apply:** Use `keytool -printcert -jarfile` to inspect the certificate and compare its SHA-256 fingerprint with the known-good Play upload certificate or a previously accepted Play bundle.
