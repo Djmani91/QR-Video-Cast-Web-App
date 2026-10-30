@@ -71,6 +71,12 @@ When switching between phone-hosted TV player pages, test that the next local UR
 
 **How to apply:** Probe the next phone URL from the existing local receiver, retry briefly, and preserve its cloud-polling page on failure so compatibility fallback or return-to-TV navigation can still work. Do not grant broad CORS access just for a reachability probe.
 
+The phone-hosted receiver uses a private Wi-Fi IP, not the public domain or Reserved VM. If the local media server or phone address changes during playback, the still-loaded TV page must report the failure over cloud signaling so the phone can rehost the same file and resume at the last reported position.
+
+**Why:** The static-server library binds to a selected private address at launch. A VM keeps cloud signaling available but cannot keep that phone-local address alive; once Samsung replaces the receiver with its own error page, it can no longer receive recovery messages.
+
+**How to apply:** Keep recovery on the existing TV receiver page when possible: report local media network errors, restart the phone server, probe the new private URL before navigating, and carry the current playback position. Use the bounded peer-to-peer compatibility path if rehosting fails and the file is within its size limit.
+
 For Samsung direct playback, `object-fit: contain` alone does not fix phone videos whose MP4 rotation matrix the TV browser ignores. Read only bounded MP4 metadata ranges, apply the rotation if the TV's decoded dimensions show it was not already honored, then size the rotated viewport to fit.
 
 **Why:** A portrait phone clip can be encoded as landscape pixels with a 90-degree MP4 track matrix; Samsung may crop/enlarge that unrotated frame despite a contain-fit style.

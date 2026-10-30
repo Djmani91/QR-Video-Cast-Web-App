@@ -14,6 +14,7 @@ export interface CastSignalPayload {
   sessionId?: string;
   receiverUrl?: string;
   extension?: string;
+  resumeAt?: number;
   action?: string;
   currentTime?: number;
   duration?: number;

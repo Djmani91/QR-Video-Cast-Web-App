@@ -426,6 +426,7 @@ function FrameCastHomeScreen() {
   const localSessionRef = useRef<string | null>(null);
   const localOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localFallbackRef = useRef<(() => void) | null>(null);
+  const localRuntimeRecoveryRef = useRef<((resumeAt: number) => void) | null>(null);
   const peerRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
   const photoSelectionUnlockRoomRef = useRef('');
@@ -583,6 +584,7 @@ function FrameCastHomeScreen() {
     setLocalPlayback(false);
     localSessionRef.current = null;
     localFallbackRef.current = null;
+    localRuntimeRecoveryRef.current = null;
     if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
     localOpenTimerRef.current = null;
     void stopLocalStream().catch(() => setError('The local video server could not stop cleanly. Close and reopen FrameCast before sharing again.'));
@@ -692,7 +694,11 @@ function FrameCastHomeScreen() {
         if (state.message === 'TV_LOCAL_SERVER_UNREACHABLE') {
           if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
           localOpenTimerRef.current = null;
-          localFallbackRef.current?.();
+          if (localRuntimeRecoveryRef.current) {
+            localRuntimeRecoveryRef.current(Math.max(0, Number(state.currentTime) || 0));
+          } else {
+            localFallbackRef.current?.();
+          }
           continue;
         }
         if (state.message === 'FULLSCREEN_NEEDS_TV_REMOTE') {
@@ -1325,20 +1331,55 @@ function FrameCastHomeScreen() {
           extension: stream.extension,
         });
         setSentQueueCount((count) => Math.max(count, queueIndexOffset + 1));
-        const fallbackToCompatibility = () => {
-          if (localSessionRef.current !== stream.sessionId) return;
+        let recoveryAttempts = 0;
+        function fallbackToCompatibility(expectedSessionId: string) {
+          if (localSessionRef.current !== expectedSessionId) return;
+          if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
           localOpenTimerRef.current = null;
+          localFallbackRef.current = null;
+          localRuntimeRecoveryRef.current = null;
           const fileSize = media.size || new ExpoFile(media.uri).size || 0;
           if (shouldUseBufferedVideoFallback(fileSize)) {
-            setTransferNotice('The TV did not open direct playback. Retrying with a compatibility transfer…');
+            setTransferNotice('The phone video link stopped responding. Reconnecting through FrameCast…');
             void startTransfer(undefined, undefined, requestedQueueIndex, true);
             return;
           }
-          setStage('sent');
-          setError('The TV did not open direct playback. This large video cannot use the compatibility fallback; check the TV connection and try again.');
-        };
-        localFallbackRef.current = fallbackToCompatibility;
-        localOpenTimerRef.current = setTimeout(fallbackToCompatibility, LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS);
+          closePeer(true);
+          setStage('paired');
+          setError('The phone video link stopped responding. The TV has returned to FrameCast. Reconnect and try again.');
+        }
+        function recoverLocalPlayback(expectedSessionId: string, resumeAt: number) {
+          if (localSessionRef.current !== expectedSessionId) return;
+          if (recoveryAttempts >= 1) {
+            fallbackToCompatibility(expectedSessionId);
+            return;
+          }
+          recoveryAttempts += 1;
+          setTransferNotice('Reconnecting to your video over Wi-Fi…');
+          void trackMediaPreparation(startLocalStream(media.uri, media.name)).then((refreshed) => {
+            if (transferRun !== transferRunRef.current || localSessionRef.current !== expectedSessionId) return;
+            localSessionRef.current = refreshed.sessionId;
+            localRuntimeRecoveryRef.current = (position) => recoverLocalPlayback(refreshed.sessionId, position);
+            localFallbackRef.current = () => fallbackToCompatibility(refreshed.sessionId);
+            sendSignal('local-video', {
+              sessionId: refreshed.sessionId,
+              receiverUrl: refreshed.receiverUrl,
+              extension: refreshed.extension,
+              resumeAt: Math.max(0, Number(resumeAt) || 0),
+            });
+            if (localOpenTimerRef.current) clearTimeout(localOpenTimerRef.current);
+            localOpenTimerRef.current = setTimeout(() => {
+              localOpenTimerRef.current = null;
+              localFallbackRef.current?.();
+            }, LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS);
+          }).catch(() => fallbackToCompatibility(expectedSessionId));
+        }
+        localRuntimeRecoveryRef.current = (resumeAt) => recoverLocalPlayback(stream.sessionId, resumeAt);
+        localFallbackRef.current = () => fallbackToCompatibility(stream.sessionId);
+        localOpenTimerRef.current = setTimeout(
+          () => fallbackToCompatibility(stream.sessionId),
+          LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS,
+        );
         return;
       }
       let totalQueueBytes = 0;

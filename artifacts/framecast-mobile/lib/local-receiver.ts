@@ -110,7 +110,7 @@ function readVideoOrientation(){
 }
 video.addEventListener('loadedmetadata',fitVideoToScreen);
 if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',fitVideoToScreen);
-var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='',fullscreenFeedback='',videoOutputTimer=0;
+  var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='',fullscreenFeedback='',videoOutputTimer=0;
 var session=config.sessionId,fullscreenAttempted=false,fullscreenDenied=false;
 function post(type,payload){
  return fetch(endpoint.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'tv',type:type,payload:payload})}).then(function(r){if(!r.ok)throw Error('Connection failed');return r.json();});
@@ -178,7 +178,7 @@ function command(action){
    // response still confirms the TV can reach the server.
    fetch(target.href,{method:'HEAD',mode:'no-cors',cache:'no-store'}).then(function(){
     if(exiting)return;
-    config.sessionId=message.payload.sessionId;config.extension=message.payload.extension;config.after=message.sequence;
+    config.sessionId=message.payload.sessionId;config.extension=message.payload.extension;config.after=message.sequence;config.resumeAt=Math.max(0,Number(message.payload.resumeAt)||0);
     exiting=true;location.replace(target.href+'#'+encodeURIComponent(JSON.stringify(config)));
    }).catch(function(){
     if(exiting)return;
@@ -235,7 +235,7 @@ document.onkeydown=function(e){
 };
 document.onmousemove=reveal;document.onclick=reveal;document.ontouchstart=reveal;
 setInterval(function(){if(--seconds<=0)bar.style.display='none';else document.getElementById('timer').textContent=String(seconds);},1000);
- var networkRetryDeadline=0,networkRetryTimer=0,startupRetryTimer=0,startupRetryCount=0,resumePosition=0,playedAtLeastOnce=false;
+ var networkRetryDeadline=0,networkRetryTimer=0,startupRetryTimer=0,startupRetryCount=0,resumePosition=Math.max(0,Number(config.resumeAt)||0),playedAtLeastOnce=false;
 function checkVideoOutput(){
  clearTimeout(videoOutputTimer);
  videoOutputTimer=setTimeout(function(){
@@ -271,13 +271,18 @@ video.onerror=function(){
    return;
   }
   if(video.error&&(errorCode===2||(playedAtLeastOnce&&errorCode===4))&&!exiting){
-  if(!networkRetryDeadline)networkRetryDeadline=Date.now()+60000;
+   if(!networkRetryDeadline)networkRetryDeadline=Date.now()+15000;
   if(Date.now()<networkRetryDeadline){
    resumePosition=Math.max(resumePosition,video.currentTime||0);
-   playback='opening';problem='';notice.textContent='Waiting for your phone. Keeping the connection for one minute…';state();
+    playback='opening';problem='';notice.textContent='Trying the phone connection again…';state();
    clearTimeout(networkRetryTimer);networkRetryTimer=setTimeout(function(){if(!exiting){video.load();play();}},2000);return;
   }
  }
+  if(errorCode===2&&playedAtLeastOnce&&!exiting){
+   playback='error';problem='TV_LOCAL_SERVER_UNREACHABLE';
+   notice.textContent='The phone video link stopped responding. Reconnecting through FrameCast…';
+   video.pause();state();reveal();return;
+  }
   playback='error';
   problem=errorCode===4
    ? 'This TV browser does not support this video format or codec. Try a standard H.264/AVC MP4.'

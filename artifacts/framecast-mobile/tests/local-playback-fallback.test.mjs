@@ -27,5 +27,6 @@ test('an unreachable phone-hosted receiver triggers the phone compatibility fall
   const end = app.indexOf('setRemoteVideoPosition({', start);
   const handler = app.slice(start, end);
   assert.match(handler, /state\.message === 'TV_LOCAL_SERVER_UNREACHABLE'/);
-  assert.match(handler, /localFallbackRef\.current\?\.\(\)/);
+  assert.match(handler, /localRuntimeRecoveryRef\.current/);
+  assert.match(app, /resumeAt: Math\.max\(0, Number\(resumeAt\) \|\| 0\)/);
 });

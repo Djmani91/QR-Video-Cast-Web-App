@@ -32,6 +32,7 @@ function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, 
   const timers = new Map();
   let messages = [];
   let headCount = 0;
+  let now = 1_000;
   const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back'].map((id) => [id, { style: {}, textContent: '' }]));
   const video = {
     currentTime: 12, duration: 3600, volume: 1, muted: false, paused: true,
@@ -57,6 +58,7 @@ function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, 
   };
   const context = vm.createContext({
     URL, Number, JSON, Math, Infinity, isFinite, decodeURIComponent, encodeURIComponent,
+    Date: { now: () => now },
     document, location,
     window: { innerWidth: windowSize.width, innerHeight: windowSize.height, addEventListener() {} },
     setInterval(fn, delay) { timers.set(delay, fn); },
@@ -86,7 +88,11 @@ function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, 
     },
   });
   vm.runInContext(LOCAL_RECEIVER_HTML.match(/<script>([\s\S]*)<\/script>/)[1], context);
-  return { video, elements, location, document, requests, timers, setMessages(value) { messages = value; } };
+  return {
+    video, elements, location, document, requests, timers,
+    setMessages(value) { messages = value; },
+    advanceTime(milliseconds) { now += milliseconds; },
+  };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -103,6 +109,53 @@ test('starts the original local video immediately, without fetching or uploading
   assert.equal(telemetry.type, 'player-state');
   assert.equal(telemetry.payload.duration, 3600);
   assert.equal(telemetry.payload.sessionId, 'session1');
+});
+
+test('reports an active phone-server failure so the app can recover the TV session', async () => {
+  const r = receiver();
+  await flush();
+  r.video.paused = false;
+  r.video.onplaying();
+  await flush();
+
+  r.video.error = { code: 2 };
+  r.video.onerror();
+  await flush();
+  assert.match(r.elements.notice.textContent, /Trying the phone connection again/);
+
+  r.advanceTime(16_000);
+  r.video.onerror();
+  await flush();
+  const recoveryState = r.requests
+    .filter((request) => request.method === 'POST')
+    .map((request) => JSON.parse(request.body))
+    .find((request) => request.payload.message === 'TV_LOCAL_SERVER_UNREACHABLE');
+  assert.ok(recoveryState);
+  assert.equal(recoveryState.payload.playback, 'error');
+});
+
+test('preserves playback position when the phone restarts its local video server', async () => {
+  const r = receiver();
+  await flush();
+  r.video.currentTime = 84;
+  r.setMessages([{
+    sequence: 11,
+    from: 'phone',
+    type: 'local-video',
+    payload: {
+      sessionId: 'session2',
+      receiverUrl: 'http://192.168.1.46:4040/session2/receiver.html',
+      extension: '.mp4',
+      resumeAt: 84,
+    },
+  }]);
+  r.timers.get(500)();
+  await flush();
+  await flush();
+  const nextUrl = new URL(r.location.next);
+  const nextConfig = JSON.parse(decodeURIComponent(nextUrl.hash.slice(1)));
+  assert.equal(nextConfig.resumeAt, 84);
+  assert.equal(nextConfig.sessionId, 'session2');
 });
 
 test('rotates portrait metadata and sizes it to fit inside the TV screen', async () => {
