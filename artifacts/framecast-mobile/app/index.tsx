@@ -69,7 +69,7 @@ import {
   trackPairingCompleted,
 } from '@/lib/app-analytics';
 
-const TV_BROWSER_ADDRESS = 'https://2tx1.com';
+const TV_BROWSER_ADDRESS = '2tx1.com';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
 const SETUP_TUTORIAL_SEEN_KEY = 'framecast.setupTutorialSeen.v1';
@@ -1894,7 +1894,7 @@ function FrameCastHomeScreen() {
       Alert.alert(
         'Advertising privacy',
         opened
-          ? 'Your Google advertising privacy choices have been updated.'
+          ? 'Your advertising privacy choices have been updated.'
           : 'No additional advertising privacy choices are currently required for your region.',
       );
     } catch {
@@ -2758,7 +2758,7 @@ const styles = StyleSheet.create({
   subtitle: { fontFamily: 'Inter_400Regular', fontSize: 15, lineHeight: 22, marginTop: 10, marginBottom: 16 },
   tvAddressHint: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 13, paddingVertical: 10, marginBottom: 12, gap: 3 },
   tvAddressLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 0.7, textTransform: 'uppercase' },
-  tvAddress: { fontFamily: 'Inter_600SemiBold', fontSize: 13, lineHeight: 19 },
+  tvAddress: { fontFamily: 'Inter_600SemiBold', fontSize: 22, lineHeight: 28 },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
   videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },

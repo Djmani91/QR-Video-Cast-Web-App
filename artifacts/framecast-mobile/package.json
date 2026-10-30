@@ -69,6 +69,7 @@
     "mp4box": "^2.4.1",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-appodeal": "4.3.0",
     "react-native-google-mobile-ads": "17.4.0",
     "react-native-purchases": "^10.16.0",
     "react-native-webrtc": "124.0.7",

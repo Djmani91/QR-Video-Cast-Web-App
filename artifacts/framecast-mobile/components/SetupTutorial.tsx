@@ -298,7 +298,7 @@ const styles = StyleSheet.create({
   addressCard: { alignItems: 'center', borderWidth: 1, borderRadius: 18, paddingHorizontal: 13, paddingVertical: 16, gap: 10 },
   addressIcon: { width: 48, height: 48, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   addressLabel: { fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 1 },
-  addressText: { fontFamily: 'Inter_600SemiBold', fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  addressText: { fontFamily: 'Inter_600SemiBold', fontSize: 24, lineHeight: 30, textAlign: 'center' },
   scanCard: { alignItems: 'center', borderWidth: 1, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 14, gap: 9 },
   scanIcon: { width: 76, height: 76, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   scanTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
