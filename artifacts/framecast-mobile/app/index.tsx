@@ -636,6 +636,8 @@ function FrameCastHomeScreen() {
     if (isPremium) {
       setPairingAdStatus('idle');
       setPairingAdMessage('');
+      setBetweenVideoAdStatus('idle');
+      setBetweenVideoAdMessage('');
       return;
     }
   }, [isPremium]);
@@ -686,8 +688,13 @@ function FrameCastHomeScreen() {
         setPairingAdStatus(result === 'unavailable' ? 'unavailable' : 'idle');
       }).catch(() => {
         if (currentRoomRef.current === roomId) {
-          setPairingAdMessage('The ad service failed unexpectedly. Casting can continue.');
-          setPairingAdStatus('unavailable');
+          if (!premiumStateRef.current && !subscriptionLoadingRef.current) {
+            setPairingAdMessage('The ad service failed unexpectedly. Casting can continue.');
+            setPairingAdStatus('unavailable');
+          } else {
+            setPairingAdMessage('');
+            setPairingAdStatus('idle');
+          }
         }
       });
     }
@@ -1001,15 +1008,23 @@ function FrameCastHomeScreen() {
   };
 
   const showRewardedAdForRoom = async (roomAtPrompt: string) => {
-    if (isPremium) return 'earned' as const;
+    if (premiumStateRef.current) return 'earned' as const;
+    if (subscriptionLoadingRef.current) return 'unavailable' as const;
     if (rewardedAdInProgressRef.current) return 'unavailable' as const;
     rewardedAdInProgressRef.current = true;
     setRewardedAdLoading(true);
     try {
       return await showSelectionRewardedAd(
-        () => currentRoomRef.current === roomAtPrompt && AppState.currentState === 'active',
+        () => !premiumStateRef.current
+          && !subscriptionLoadingRef.current
+          && currentRoomRef.current === roomAtPrompt
+          && AppState.currentState === 'active',
         (message) => {
-          if (currentRoomRef.current === roomAtPrompt) setError(message);
+          if (
+            currentRoomRef.current === roomAtPrompt
+            && !premiumStateRef.current
+            && !subscriptionLoadingRef.current
+          ) setError(message);
         },
       );
     } finally {
@@ -1952,6 +1967,7 @@ function FrameCastHomeScreen() {
 
     const now = Date.now();
     const shouldShowBreakAd = !isPremium
+      && !subscriptionLoading
       && Platform.OS === 'android'
       && AppState.currentState === 'active'
       && shouldAttemptBetweenVideoInterstitial(
@@ -1965,20 +1981,31 @@ function FrameCastHomeScreen() {
       setBetweenVideoAdStatus('loading');
       setBetweenVideoAdMessage('');
       const result = await showBetweenVideoInterstitialAd(
-        () => currentRoomRef.current === roomAtVideoEnd
+        () => !premiumStateRef.current
+          && !subscriptionLoadingRef.current
+          && currentRoomRef.current === roomAtVideoEnd
           && stageRef.current === 'sent'
           && queueIndexRef.current === completedIndex
           && AppState.currentState === 'active',
         (message) => {
-          if (currentRoomRef.current === roomAtVideoEnd) setBetweenVideoAdMessage(message);
+          if (
+            currentRoomRef.current === roomAtVideoEnd
+            && !premiumStateRef.current
+            && !subscriptionLoadingRef.current
+          ) setBetweenVideoAdMessage(message);
         },
       );
       if (currentRoomRef.current !== roomAtVideoEnd) return;
-      if (result === 'shown') {
-        lastInterstitialAttemptAtRef.current = Date.now();
-        completedVideosSinceInterstitialRef.current = 0;
+      if (premiumStateRef.current || subscriptionLoadingRef.current) {
+        setBetweenVideoAdMessage('');
+        setBetweenVideoAdStatus('idle');
+      } else {
+        if (result === 'shown') {
+          lastInterstitialAttemptAtRef.current = Date.now();
+          completedVideosSinceInterstitialRef.current = 0;
+        }
+        setBetweenVideoAdStatus('idle');
       }
-      setBetweenVideoAdStatus('idle');
     }
 
     if (currentRoomRef.current !== roomAtVideoEnd || queueIndexRef.current !== completedIndex) return;
@@ -2494,22 +2521,22 @@ function FrameCastHomeScreen() {
                   : 'Your media goes directly to the TV over WebRTC. It is not uploaded to FrameCast.'}
             </Text>
 
-            {Boolean(roomId) && Platform.OS !== 'web' && pairingAdStatus === 'loading' && (
+            {Boolean(roomId) && !isPremium && !subscriptionLoading && Platform.OS !== 'web' && pairingAdStatus === 'loading' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
                 Preparing your connection ad…
               </Text>
             )}
-            {Boolean(roomId) && Platform.OS !== 'web' && pairingAdStatus === 'unavailable' && (
+            {Boolean(roomId) && !isPremium && !subscriptionLoading && Platform.OS !== 'web' && pairingAdStatus === 'unavailable' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
                 {pairingAdMessage || 'No ad is available right now. You can continue casting.'}
               </Text>
             )}
-            {Boolean(roomId) && Platform.OS === 'android' && betweenVideoAdStatus === 'loading' && (
+            {Boolean(roomId) && !isPremium && !subscriptionLoading && Platform.OS === 'android' && betweenVideoAdStatus === 'loading' && (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
                 This video has ended. The next one will start after the ad break.
               </Text>
             )}
-            {Boolean(roomId) && Platform.OS === 'android' && betweenVideoAdStatus === 'idle' && betweenVideoAdMessage ? (
+            {Boolean(roomId) && !isPremium && !subscriptionLoading && Platform.OS === 'android' && betweenVideoAdStatus === 'idle' && betweenVideoAdMessage ? (
               <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
                 {betweenVideoAdMessage}
               </Text>
@@ -2567,7 +2594,7 @@ function FrameCastHomeScreen() {
                   : stage === 'sending' ? 'Sending' : 'Ready'}
                 canAdd={stage !== 'sending' && stage !== 'connecting' && mediaQueue.length < MAX_MEDIA_SELECTION_ITEMS}
                 bulkSelectionUnlocked={isPremium}
-                adsEnabled={!isPremium}
+                adsEnabled={!isPremium && !subscriptionLoading}
                 addBusy={rewardedAdLoading || preparingMedia}
                 canControlVideo={stage === 'sent' || videoStreaming || localPlayback}
                 canSelectItem={(index) => mediaQueue[index]?.kind === 'video' || stage !== 'sending' || index < sentQueueCount}
@@ -2915,7 +2942,7 @@ function FrameCastHomeScreen() {
           <Text style={[styles.errorText, { color: activeColors.destructive }]}>Could not reach the TV. Check that its FrameCast page is still open.</Text>
         ) : null}
       </ScrollView>
-      {Boolean(roomId) && !isPremium && Platform.OS === 'android' && pairingAdStatus !== 'loading' && (
+      {Boolean(roomId) && !isPremium && !subscriptionLoading && Platform.OS === 'android' && pairingAdStatus !== 'loading' && (
         <CastingBannerAd
           backgroundColor={activeColors.background}
           borderColor={activeColors.border}

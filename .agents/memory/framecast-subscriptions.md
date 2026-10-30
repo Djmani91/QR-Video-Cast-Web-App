@@ -16,3 +16,9 @@ Before changing app entitlement code to troubleshoot a completed Play purchase, 
 **Why:** A valid product and entitlement mapping still cannot grant Premium if RevenueCat cannot verify purchases with Google Play.
 
 **How to apply:** Check that RevenueCat reports the Play service account configured for the `com.tvcast.com` Android app; never ask the user to paste service-account credentials into chat. RevenueCat's app-read API omits credential status, so do not infer that the service account is connected from the app record alone; verify in the dashboard.
+
+Google Play purchases can be completed outside FrameCast, leaving RevenueCat customer info cached until the app resumes. Refresh customer info on foreground before requesting ads, and hide stale ad errors once Premium is confirmed.
+
+**Why:** A pairing-ad no-fill notice appeared for a reported-active subscriber; the notice came from AdMob, while the app's eligibility decision depended on the last cached entitlement.
+
+**How to apply:** Treat ad availability and subscription status as separate signals. Pause ad requests during entitlement refresh, then suppress every ad placement and its stale errors when the `premium` entitlement is active.
