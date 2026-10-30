@@ -15,4 +15,4 @@ Before changing app entitlement code to troubleshoot a completed Play purchase, 
 
 **Why:** A valid product and entitlement mapping still cannot grant Premium if RevenueCat cannot verify purchases with Google Play.
 
-**How to apply:** Check that RevenueCat reports the Play service account configured for the `com.tvcast.com` Android app; never ask the user to paste service-account credentials into chat.
+**How to apply:** Check that RevenueCat reports the Play service account configured for the `com.tvcast.com` Android app; never ask the user to paste service-account credentials into chat. RevenueCat's app-read API omits credential status, so do not infer that the service account is connected from the app record alone; verify in the dashboard.
