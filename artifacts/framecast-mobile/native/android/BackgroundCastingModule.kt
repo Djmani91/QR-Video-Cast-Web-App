@@ -58,6 +58,38 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
   }
 
   @ReactMethod
+  fun discoverSamsungTvs(promise: Promise) {
+    Thread({
+      try {
+        val devices = TvDiscovery.scan(reactApplicationContext)
+        val result = Arguments.createArray()
+        devices.forEach { device ->
+          val item = Arguments.createMap()
+          item.putString("ip", device.ip)
+          item.putString("name", device.name)
+          item.putString("model", device.model)
+          result.pushMap(item)
+        }
+        promise.resolve(result)
+      } catch (error: Exception) {
+        promise.reject("TV_DISCOVERY_FAILED", "FrameCast could not scan the local Wi-Fi network.", error)
+      }
+    }, "FrameCastTvDiscovery").start()
+  }
+
+  @ReactMethod
+  fun openSamsungTvBrowser(ip: String, url: String, promise: Promise) {
+    Thread({
+      try {
+        TvDiscovery.openBrowser(ip, url)
+        promise.resolve(null)
+      } catch (error: Exception) {
+        promise.reject("TV_BROWSER_LAUNCH_FAILED", "The TV did not accept the automatic browser launch.", error)
+      }
+    }, "FrameCastTvBrowserLaunch").start()
+  }
+
+  @ReactMethod
   @Synchronized
   fun startScreenAudioCapture(promise: Promise) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {

@@ -37,6 +37,12 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { getYouTubeVideoId } from '@/lib/youtube';
 import { findAdjacentVideoIndex } from '@/lib/video-playlist-controls';
 import {
+  buildTvRoomUrl,
+  discoverNearbySamsungTvs,
+  launchSamsungTvBrowser,
+  type NearbySamsungTv,
+} from '@/lib/tv-discovery';
+import {
   backgroundCastingAvailable,
   onBackgroundControl,
   onBackgroundStopped,
@@ -79,6 +85,7 @@ const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
 
 import {
   getGetCastRoomMessagesQueryKey,
+  useCreateCastRoom,
   useGetCastRoomMessages,
   useLookupCastRoomByCode,
   useSendCastRoomMessage,
@@ -366,6 +373,7 @@ function FrameCastHomeScreen() {
   const queryClient = useQueryClient();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const lookupRoom = useLookupCastRoomByCode();
+  const createTvRoom = useCreateCastRoom();
   const sendSignalMutation = useSendCastRoomMessage();
   const sendSignalRef = useRef(sendSignalMutation.mutate);
   sendSignalRef.current = sendSignalMutation.mutate;
@@ -400,6 +408,11 @@ function FrameCastHomeScreen() {
   const [videoThumbnails, setVideoThumbnails] = useState<Record<string, VideoThumbnail>>({});
   const [videoEnded, setVideoEnded] = useState(false);
   const [error, setError] = useState('');
+  const [nearbyTvs, setNearbyTvs] = useState<NearbySamsungTv[]>([]);
+  const [tvScanRunning, setTvScanRunning] = useState(false);
+  const [tvScanFinished, setTvScanFinished] = useState(false);
+  const [connectingTvIp, setConnectingTvIp] = useState('');
+  const [nearbyTvMessage, setNearbyTvMessage] = useState('');
   const [transferNotice, setTransferNotice] = useState('');
   const [videoLink, setVideoLink] = useState('');
   const [videoBrowserOpen, setVideoBrowserOpen] = useState(false);
@@ -924,6 +937,51 @@ function FrameCastHomeScreen() {
         : 'The camera could not be opened. You can still enter the five-digit code.');
     } finally {
       setScannerStarting(false);
+    }
+  };
+
+  const scanForNearbyTvs = async () => {
+    if (Platform.OS !== 'android' || tvScanRunning || connectingTvIp) return;
+    setError('');
+    setNearbyTvMessage('');
+    setNearbyTvs([]);
+    setTvScanRunning(true);
+    setTvScanFinished(false);
+    try {
+      const devices = await discoverNearbySamsungTvs();
+      setNearbyTvs(devices);
+      setTvScanFinished(true);
+      if (!devices.length) {
+        setError('No Samsung TVs found. Put the phone and TV on the same Wi-Fi, then scan again.');
+      }
+    } catch (scanError) {
+      setError(scanError instanceof Error
+        ? scanError.message
+        : 'Could not scan for TVs. Check that Wi-Fi is on and try again.');
+    } finally {
+      setTvScanRunning(false);
+    }
+  };
+
+  const connectToNearbyTv = async (tv: NearbySamsungTv) => {
+    if (connectingTvIp) return;
+    setError('');
+    setNearbyTvMessage(`Connecting to ${tv.name}. Approve FrameCast on the TV if it asks.`);
+    setConnectingTvIp(tv.ip);
+    try {
+      const room = await createTvRoom.mutateAsync();
+      await launchSamsungTvBrowser(tv.ip, buildTvRoomUrl(room));
+      joinRoom(room.id);
+      setNearbyTvMessage(`FrameCast is opening on ${tv.name}. If the TV does not open it, use the QR pairing option below.`);
+    } catch (launchError) {
+      setNearbyTvMessage('');
+      setError(
+        launchError instanceof Error
+          ? `${tv.name} was found, but its browser could not be opened automatically. Open ${TV_BROWSER_ADDRESS} on the TV and pair using its QR code.`
+          : `Could not open ${tv.name}. Open ${TV_BROWSER_ADDRESS} on the TV and pair using its QR code.`,
+      );
+    } finally {
+      setConnectingTvIp('');
     }
   };
 
@@ -2356,6 +2414,64 @@ function FrameCastHomeScreen() {
             </View>
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
+              {Platform.OS === 'android' && (
+                <View style={styles.tvDiscoverySection}>
+                  <Pressable
+                    style={({ pressed }) => [styles.scanButton, { borderColor: activeColors.border, backgroundColor: pressed ? activeColors.secondary : activeColors.background }]}
+                    onPress={() => void scanForNearbyTvs()}
+                    disabled={tvScanRunning || Boolean(connectingTvIp)}
+                    testID="button-find-nearby-tvs"
+                  >
+                    <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
+                      {tvScanRunning
+                        ? <ActivityIndicator color={activeColors.primary} />
+                        : <Ionicons name="wifi-outline" size={22} color={activeColors.primary} />}
+                    </View>
+                    <View style={styles.scanButtonCopy}>
+                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>
+                        {tvScanRunning ? 'Scanning for Samsung TVs…' : 'Find TVs on Wi-Fi'}
+                      </Text>
+                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>
+                        Phone and TV must use the same Wi-Fi
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
+                  </Pressable>
+                  {tvScanFinished && nearbyTvs.length === 0 && (
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]} testID="text-no-nearby-tvs">
+                      No TVs found. You can still use QR pairing below.
+                    </Text>
+                  )}
+                  {nearbyTvs.map((tv) => (
+                    <Pressable
+                      key={tv.ip}
+                      style={({ pressed }) => [styles.scanButton, { borderColor: activeColors.border, backgroundColor: pressed ? activeColors.secondary : activeColors.background }]}
+                      onPress={() => void connectToNearbyTv(tv)}
+                      disabled={Boolean(connectingTvIp)}
+                      testID={`button-connect-tv-${tv.ip}`}
+                    >
+                      <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
+                        {connectingTvIp === tv.ip
+                          ? <ActivityIndicator color={activeColors.primary} />
+                          : <Ionicons name="tv-outline" size={22} color={activeColors.primary} />}
+                      </View>
+                      <View style={styles.scanButtonCopy}>
+                        <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{tv.name}</Text>
+                        <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{tv.ip}{tv.model !== 'Samsung Smart TV' ? ` · ${tv.model}` : ''}</Text>
+                      </View>
+                      <Text style={[styles.buttonSubtitle, { color: activeColors.primary }]}>
+                        {connectingTvIp === tv.ip ? 'Opening…' : 'Connect'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                  {nearbyTvMessage ? (
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]} accessibilityLiveRegion="polite">
+                      {nearbyTvMessage}
+                    </Text>
+                  ) : null}
+                </View>
+              )}
+
               {scanning ? (
                 <View style={[styles.cameraFrame, { backgroundColor: '#101713' }]}>
                   <CameraView
@@ -2918,6 +3034,7 @@ const styles = StyleSheet.create({
   tvAddressLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 0.7, textTransform: 'uppercase' },
   tvAddress: { fontFamily: 'Inter_600SemiBold', fontSize: 22, lineHeight: 28 },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
+  tvDiscoverySection: { gap: 10, marginBottom: 16 },
   videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },
   actionIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },

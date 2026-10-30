@@ -69,6 +69,45 @@ const queryClient = new QueryClient();
 
 type PeerStatus = 'idle' | 'paired' | 'connecting' | 'connected' | 'disconnected' | 'failed';
 type MediaKind = 'video' | 'image';
+
+function readInitialTvRoom() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('resume') === '1') {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('framecast-tv-resume') || 'null') as {
+        id?: unknown;
+        code?: unknown;
+        expiresAt?: unknown;
+      } | null;
+      if (
+        saved
+        && typeof saved.id === 'string'
+        && /^[0-9a-f-]{36}$/i.test(saved.id)
+        && typeof saved.code === 'string'
+        && /^\d{5}$/.test(saved.code)
+        && typeof saved.expiresAt === 'string'
+        && Number.isFinite(Date.parse(saved.expiresAt))
+      ) {
+        return { id: saved.id, code: saved.code, expiresAt: saved.expiresAt };
+      }
+    } catch {
+      // Start a fresh TV room when the saved session is malformed.
+    }
+  }
+
+  const id = params.get('join') ?? '';
+  const code = params.get('code') ?? '';
+  const expiresAt = params.get('expiresAt') ?? '';
+  if (
+    /^[0-9a-f-]{36}$/i.test(id)
+    && /^\d{5}$/.test(code)
+    && Number.isFinite(Date.parse(expiresAt))
+  ) {
+    return { id, code, expiresAt };
+  }
+  return null;
+}
+
 function formatPlaybackTime(seconds: number) {
   const value = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
   const hours = Math.floor(value / 3600);
@@ -474,13 +513,7 @@ function TvPage() {
   const { mutate: createRoomMutation, data: createdRoom, isPending: creatingRoom, isError: createRoomError } = createRoom;
   const createRoomRef = useRef(createRoomMutation);
   createRoomRef.current = createRoomMutation;
-  const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(() => {
-    if (new URLSearchParams(window.location.search).get('resume') !== '1') return null;
-    try {
-      const saved = JSON.parse(sessionStorage.getItem('framecast-tv-resume') || 'null');
-      return saved && typeof saved.id === 'string' && typeof saved.code === 'string' && typeof saved.expiresAt === 'string' ? saved : null;
-    } catch { return null; }
-  });
+  const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(readInitialTvRoom);
   const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
@@ -1956,6 +1989,9 @@ function TvPage() {
     const cleanUrl = new URL(window.location.href);
     cleanUrl.searchParams.delete('resume');
     cleanUrl.searchParams.delete('after');
+    cleanUrl.searchParams.delete('join');
+    cleanUrl.searchParams.delete('code');
+    cleanUrl.searchParams.delete('expiresAt');
     window.history.replaceState(null, '', cleanUrl.href);
     if (room) send('tv', 'close', { reason: 'new-room' });
     stopPeer();
