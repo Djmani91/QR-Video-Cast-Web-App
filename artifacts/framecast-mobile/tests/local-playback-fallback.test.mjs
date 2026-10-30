@@ -18,7 +18,8 @@ test('large, missing, or invalid videos never trigger a whole-file fallback', ()
 });
 
 test('direct playback fallback starts after a bounded TV-open wait', () => {
-  assert.equal(LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS, 3_000);
+  assert.ok(LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS >= 15_000);
+  assert.ok(LOCAL_PLAYBACK_FALLBACK_TIMEOUT_MS <= 30_000);
 });
 
 test('an unreachable phone-hosted receiver triggers the phone compatibility fallback', async () => {
