@@ -22,3 +22,15 @@ run = [ "pnpm", "--filter", "@workspace/framecast-mobile", "run", "serve" ]
 [services.env]
 PORT = "25062"
 BASE_PATH = "/framecast-mobile/"
+
+[[services]]
+name = "aab-build"
+paths = []
+localPort = 25063
+
+[services.development]
+run = "bash /home/runner/workspace/generated-artifacts/framecast-play-release/build-aab.sh"
+
+[services.env]
+PORT = "25063"
+BASE_PATH = "/framecast-mobile/"
