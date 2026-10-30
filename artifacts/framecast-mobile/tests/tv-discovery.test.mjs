@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTvRoomUrl } from '../lib/tv-discovery.ts';
+import { buildTvRoomUrl } from '../lib/tv-room-url.ts';
 
 test('nearby TV launch URL joins the room created by the phone', () => {
   const url = new URL(buildTvRoomUrl({

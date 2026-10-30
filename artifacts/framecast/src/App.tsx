@@ -23,6 +23,7 @@ import { RotatedVideoCanvas } from './components/RotatedVideoCanvas';
 import { needsVideoCanvas } from './lib/rotated-video-canvas';
 import { createConnectionGrace } from './lib/connection-grace';
 import { createAutoFullscreen } from './lib/auto-fullscreen';
+import { parseDirectTvRoom } from './lib/direct-tv-room';
 import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, type ScopedIceCandidate } from './lib/session-recovery';
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
@@ -95,17 +96,7 @@ function readInitialTvRoom() {
     }
   }
 
-  const id = params.get('join') ?? '';
-  const code = params.get('code') ?? '';
-  const expiresAt = params.get('expiresAt') ?? '';
-  if (
-    /^[0-9a-f-]{36}$/i.test(id)
-    && /^\d{5}$/.test(code)
-    && Number.isFinite(Date.parse(expiresAt))
-  ) {
-    return { id, code, expiresAt };
-  }
-  return null;
+  return parseDirectTvRoom(window.location.search);
 }
 
 function formatPlaybackTime(seconds: number) {
@@ -514,6 +505,7 @@ function TvPage() {
   const createRoomRef = useRef(createRoomMutation);
   createRoomRef.current = createRoomMutation;
   const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(readInitialTvRoom);
+  const [launchedFromPhone, setLaunchedFromPhone] = useState(() => parseDirectTvRoom(window.location.search) !== null);
   const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
@@ -1993,6 +1985,7 @@ function TvPage() {
     cleanUrl.searchParams.delete('code');
     cleanUrl.searchParams.delete('expiresAt');
     window.history.replaceState(null, '', cleanUrl.href);
+    setLaunchedFromPhone(false);
     if (room) send('tv', 'close', { reason: 'new-room' });
     stopPeer();
     queuedCandidates.current = [];
@@ -2023,7 +2016,11 @@ function TvPage() {
         ? 'Phone away. Pairing kept — it will reconnect when the phone returns.'
         : status === 'failed'
           ? 'Waiting for the phone to reconnect. Keep this room open; no new code is needed.'
-          : room ? 'Ready when you are. Scan the code with your phone camera.' : 'Create a private room to pair your phone with this screen.';
+          : room
+            ? launchedFromPhone
+              ? 'FrameCast is ready. Choose media on your phone.'
+              : 'Ready when you are. Scan the code with your phone camera.'
+            : 'Create a private room to pair your phone with this screen.';
 
   const showCinemaStandby = Boolean(room && !roomExpired && status !== 'idle' && !hasActiveTvMedia);
   const cinemaConnectionLabel = status === 'disconnected' || status === 'failed'

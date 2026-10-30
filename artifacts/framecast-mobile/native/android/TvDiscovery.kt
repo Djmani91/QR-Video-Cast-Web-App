@@ -70,10 +70,9 @@ internal object TvDiscovery {
         }
       }
 
-      return candidates.keys
-        .filter { ip ->
-          candidates[ip].orEmpty().contains("samsung", ignoreCase = true) || remoteControlPortOpen(ip)
-        }
+      return candidates.entries
+        .filter { (_, response) -> response.contains("samsung", ignoreCase = true) }
+        .map { (ip, _) -> ip }
         .sorted()
         .take(16)
         .map { ip ->
@@ -85,17 +84,6 @@ internal object TvDiscovery {
       } catch (_: Exception) {
         // A scan result should not be lost because the Wi-Fi lock was already released.
       }
-    }
-  }
-
-  private fun remoteControlPortOpen(ip: String): Boolean {
-    return try {
-      Socket().use { socket ->
-        socket.connect(InetSocketAddress(ip, 8001), 350)
-        true
-      }
-    } catch (_: Exception) {
-      false
     }
   }
 
@@ -146,7 +134,7 @@ internal object TvDiscovery {
       }
       val expectedAccept = Base64.encodeToString(
         MessageDigest.getInstance("SHA-1")
-          .digest("$wsKey" + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11".toByteArray(Charsets.US_ASCII)),
+          .digest((wsKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray(Charsets.US_ASCII)),
         Base64.NO_WRAP,
       )
       val accept = response.lineSequence()

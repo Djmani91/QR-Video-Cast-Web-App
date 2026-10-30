@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
+import type { TvLaunchRoom } from './tv-room-url';
 
 export type NearbySamsungTv = {
   ip: string;
@@ -9,12 +10,6 @@ export type NearbySamsungTv = {
 type FrameCastTvDiscoveryModule = {
   discoverSamsungTvs?: () => Promise<NearbySamsungTv[]>;
   openSamsungTvBrowser?: (ip: string, url: string) => Promise<void>;
-};
-
-type PairingRoom = {
-  id: string;
-  code: string;
-  expiresAt: string;
 };
 
 const nativeDiscovery = NativeModules.FrameCastBackground as FrameCastTvDiscoveryModule | undefined;
@@ -35,14 +30,6 @@ export async function discoverNearbySamsungTvs(): Promise<NearbySamsungTv[]> {
     && isPrivateIpv4(tv.ip)
     && typeof tv.name === 'string'
     && typeof tv.model === 'string');
-}
-
-export function buildTvRoomUrl(room: PairingRoom): string {
-  const url = new URL('https://2tx1.com/');
-  url.searchParams.set('join', room.id);
-  url.searchParams.set('code', room.code);
-  url.searchParams.set('expiresAt', room.expiresAt);
-  return url.toString();
 }
 
 export function launchSamsungTvBrowser(ip: string, targetUrl: string): Promise<void> {

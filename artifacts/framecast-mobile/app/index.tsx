@@ -37,11 +37,11 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { getYouTubeVideoId } from '@/lib/youtube';
 import { findAdjacentVideoIndex } from '@/lib/video-playlist-controls';
 import {
-  buildTvRoomUrl,
   discoverNearbySamsungTvs,
   launchSamsungTvBrowser,
   type NearbySamsungTv,
 } from '@/lib/tv-discovery';
+import { buildTvRoomUrl } from '@/lib/tv-room-url';
 import {
   backgroundCastingAvailable,
   onBackgroundControl,
