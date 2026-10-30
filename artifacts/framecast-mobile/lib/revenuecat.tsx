@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import Purchases, { type CustomerInfo, type PurchasesOfferings, type PurchasesPackage } from 'react-native-purchases';
 
 export const PREMIUM_ENTITLEMENT_ID = 'premium';
@@ -7,6 +7,7 @@ export const PREMIUM_ENTITLEMENT_ID = 'premium';
 type SubscriptionContextValue = {
   configured: boolean;
   loading: boolean;
+  initialLoading: boolean;
   error: string;
   customerInfo: CustomerInfo | null;
   offerings: PurchasesOfferings | null;
@@ -48,6 +49,7 @@ function configureRevenueCat() {
 export function SubscriptionProvider({ children }: { children: React.ReactNode }) {
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState('');
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [offerings, setOfferings] = useState<PurchasesOfferings | null>(null);
@@ -56,6 +58,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const refresh = useCallback(async () => {
     if (!configuredRef.current) {
       setLoading(false);
+      setInitialLoading(false);
       return;
     }
 
@@ -79,6 +82,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
 
     setLoading(false);
+    setInitialLoading(false);
   }, []);
 
   useEffect(() => {
@@ -88,6 +92,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
     if (!isConfigured) {
       setLoading(false);
+      setInitialLoading(false);
       return;
     }
 
@@ -97,6 +102,15 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     return () => {
       Purchases.removeCustomerInfoUpdateListener(onCustomerInfoUpdated);
     };
+  }, [refresh]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && configuredRef.current) {
+        void refresh();
+      }
+    });
+    return () => subscription.remove();
   }, [refresh]);
 
   const purchase = useCallback(async (pkg: PurchasesPackage) => {
@@ -118,6 +132,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
   const value = useMemo<SubscriptionContextValue>(() => ({
     configured,
     loading,
+    initialLoading,
     error,
     customerInfo,
     offerings,
@@ -126,7 +141,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     refresh,
     purchase,
     restore,
-  }), [configured, loading, error, customerInfo, offerings, monthlyPackage, isPremium, refresh, purchase, restore]);
+  }), [configured, loading, initialLoading, error, customerInfo, offerings, monthlyPackage, isPremium, refresh, purchase, restore]);
 
   return <SubscriptionContext.Provider value={value}>{children}</SubscriptionContext.Provider>;
 }

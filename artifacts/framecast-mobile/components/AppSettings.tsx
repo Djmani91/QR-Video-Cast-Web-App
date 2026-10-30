@@ -7,7 +7,6 @@ import { useColors } from '@/hooks/useColors';
 
 type Props = {
   onClearLocalData: () => Promise<void>;
-  onOpenTutorial: () => void;
   onManageAdPrivacy: () => Promise<void>;
   analyticsEnabled: boolean;
   onAnalyticsChange: (enabled: boolean) => Promise<void>;
@@ -21,14 +20,6 @@ type Props = {
 };
 type Phase = 'idle' | 'confirm' | 'busy' | 'success' | 'error';
 
-const HOW = [
-  'Connect your phone and TV to the same Wi-Fi network.',
-  'Open FrameCast in the TV browser, then scan its QR code or enter its pairing code.',
-  'Choose Images, Videos, URL or Mirror to pick what to show.',
-  'Use this phone to play, pause, skip and control the TV.',
-  'If enabled once, Android background casting starts automatically when you connect and stays active until you tap Disconnect.',
-];
-
 const PRIVACY = [
   'Photos and videos from your phone are not uploaded to or stored on our servers.',
   'Pairing uses temporary signals only to connect your phone and TV.',
@@ -40,7 +31,6 @@ const PRIVACY = [
 
 export function AppSettings({
   onClearLocalData,
-  onOpenTutorial,
   onManageAdPrivacy,
   analyticsEnabled,
   onAnalyticsChange,
@@ -174,48 +164,39 @@ export function AppSettings({
                       <View style={styles.settingCopy}>
                         <Text style={[styles.subhead, { color: colors.foreground }]}>Keep the TV connected in the background</Text>
                         <Text style={[styles.small, { color: colors.mutedForeground }]}>
-                          Choose once. It starts automatically after each TV connection; Disconnect ends that session. Android keeps a casting notification visible.
+                          {premiumActive
+                            ? 'Keep casting while you use other apps. Android keeps a casting notification visible.'
+                            : 'Background casting is included with Premium. Keep FrameCast open to cast with ads.'}
                         </Text>
                       </View>
-                      <Switch
-                        value={backgroundCastingEnabled}
-                        onValueChange={onBackgroundCastingChange}
-                        trackColor={{ false: colors.border, true: colors.primary }}
-                        thumbColor={colors.card}
-                        accessibilityLabel="Keep the TV connected in the background"
-                        testID="switch-background-casting"
-                      />
+                      {premiumActive ? (
+                        <Switch
+                          value={backgroundCastingEnabled}
+                          onValueChange={onBackgroundCastingChange}
+                          trackColor={{ false: colors.border, true: colors.primary }}
+                          thumbColor={colors.card}
+                          accessibilityLabel="Keep the TV connected in the background"
+                          testID="switch-background-casting"
+                        />
+                      ) : (
+                        <Pressable
+                          onPress={onOpenPremium}
+                          accessibilityRole="button"
+                          accessibilityLabel="View Premium for background casting"
+                          testID="button-background-casting-premium"
+                          style={({ pressed }) => [
+                            styles.tutorialButton,
+                            { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 },
+                          ]}
+                        >
+                          <Text style={[styles.subhead, { color: colors.primary }]}>View Premium</Text>
+                          <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                        </Pressable>
+                      )}
                     </View>
                   </View>
                 </>
               )}
-
-              <Text style={[styles.kicker, { color: colors.primary }]}>HOW IT WORKS</Text>
-              <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                {HOW.map((t, i) => <Bullet key={i} n={i + 1} text={t} />)}
-                <Pressable
-                  onPress={() => {
-                    if (busyRef.current) return;
-                    close();
-                    setTimeout(onOpenTutorial, 280);
-                  }}
-                  disabled={busy}
-                  accessibilityRole="button"
-                  accessibilityLabel="Open the step-by-step setup tutorial"
-                  testID="button-open-setup-tutorial"
-                  style={({ pressed }) => [
-                    styles.tutorialButton,
-                    { backgroundColor: colors.secondary, opacity: busy ? 0.5 : pressed ? 0.72 : 1 },
-                  ]}
-                >
-                  <Ionicons name="play-circle-outline" size={22} color={colors.primary} />
-                  <View style={styles.tutorialCopy}>
-                    <Text style={[styles.subhead, { color: colors.foreground }]}>Step-by-step setup guide</Text>
-                    <Text style={[styles.small, { color: colors.mutedForeground }]}>TV browser, Wi-Fi, pairing and controls</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
 
               <Text style={[styles.kicker, { color: colors.primary }]}>PRIVACY & LOCAL DATA</Text>
               <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>

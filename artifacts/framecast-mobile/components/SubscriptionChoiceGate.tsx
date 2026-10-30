@@ -9,8 +9,16 @@ import { useSubscription } from '@/lib/revenuecat';
 const PLAN_CHOICE_KEY = 'framecast.subscriptionChoice.v1';
 const PLAY_SUBSCRIPTIONS_URL = 'https://play.google.com/store/account/subscriptions?package=com.tvcast.com';
 
-type GateContextValue = { openPaywall: () => void };
-const GateContext = createContext<GateContextValue>({ openPaywall: () => undefined });
+type GateContextValue = {
+  openPaywall: () => void;
+  openFirstPairChoice: () => void;
+  firstPairChoicePending: boolean;
+};
+const GateContext = createContext<GateContextValue>({
+  openPaywall: () => undefined,
+  openFirstPairChoice: () => undefined,
+  firstPairChoicePending: false,
+});
 
 export function useSubscriptionChoiceGate() {
   return useContext(GateContext);
@@ -39,12 +47,10 @@ function SubscriptionChoiceScreen({
   const [busy, setBusy] = useState<'purchase' | 'restore' | null>(null);
   const [message, setMessage] = useState('');
   const trialAvailable = hasThreeDayFreeTrial(monthlyPackage);
-  const priceString = monthlyPackage
-    ? `${monthlyPackage.product.currencyCode} ${monthlyPackage.product.priceString}`
-    : undefined;
+  const priceString = monthlyPackage?.product.priceString;
 
-  const startTrial = async () => {
-    if (!monthlyPackage || !trialAvailable || busy) return;
+  const startPremium = async () => {
+    if (!monthlyPackage || busy) return;
     setBusy('purchase');
     setMessage('');
     try {
@@ -55,7 +61,7 @@ function SubscriptionChoiceScreen({
       const cancelled = Boolean((error as { userCancelled?: boolean })?.userCancelled);
       setMessage(cancelled
         ? 'Purchase cancelled. You can try again or continue with ads.'
-        : 'Google Play could not start the trial. Check your connection and try again.');
+        : 'Google Play could not start the purchase. Check your connection and try again.');
     } finally {
       setBusy(null);
     }
@@ -88,12 +94,16 @@ function SubscriptionChoiceScreen({
 
         <View style={[styles.trialBadge, { backgroundColor: colors.secondary }]}>
           <Ionicons name="sparkles-outline" size={15} color={colors.primary} />
-          <Text style={[styles.badgeText, { color: colors.primary }]}>3-DAY FREE TRIAL</Text>
+          <Text style={[styles.badgeText, { color: colors.primary }]}>
+            {trialAvailable ? '3-DAY FREE TRIAL' : 'PREMIUM ACCESS'}
+          </Text>
         </View>
 
         <Text style={[styles.title, { color: colors.foreground }]}>Choose how to use FrameCast</Text>
         <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-          Try Premium without ads, or continue with the free ad-supported experience.
+          {trialAvailable
+            ? 'Try Premium free for 3 days, or continue with ads. Cancel before the trial ends to avoid the monthly charge.'
+            : 'Choose Premium for background casting and ad-free access, or continue with ads.'}
         </Text>
 
         <View style={[styles.planCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -108,9 +118,10 @@ function SubscriptionChoiceScreen({
           </View>
           <View style={styles.benefits}>
             {[
-              'Choose up to 20 photos or videos without watching an ad',
-              'Use screen mirroring without a rewarded ad',
-              'Cast without banner, native or between-video ads',
+              'Choose up to 20 photos and 20 videos per TV session',
+              'Keep casting while you use other apps',
+              'Mirror your screen without time limits or rewarded ads',
+              'No banner, native, pairing or between-video ads',
             ].map((benefit) => (
               <View key={benefit} style={styles.benefitRow}>
                 <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
@@ -121,15 +132,15 @@ function SubscriptionChoiceScreen({
         </View>
 
         <Pressable
-          onPress={() => void startTrial()}
-          disabled={!trialAvailable || busy !== null}
+          onPress={() => void startPremium()}
+          disabled={!monthlyPackage || busy !== null}
           accessibilityRole="button"
-          testID="button-start-premium-trial"
+          testID="button-start-premium"
           style={({ pressed }) => [
             styles.primaryButton,
             {
               backgroundColor: colors.primary,
-              opacity: !trialAvailable || busy !== null ? 0.55 : pressed ? 0.84 : 1,
+              opacity: !monthlyPackage || busy !== null ? 0.55 : pressed ? 0.84 : 1,
             },
           ]}
         >
@@ -137,16 +148,18 @@ function SubscriptionChoiceScreen({
             <ActivityIndicator color={colors.primaryForeground} />
           ) : (
             <Text style={[styles.primaryButtonText, { color: colors.primaryForeground }]}>
-              {trialAvailable ? 'Start 3-day free trial' : 'Trial not ready yet'}
+              {trialAvailable ? 'Start 3-day free trial' : monthlyPackage ? 'Get FrameCast Premium' : 'Premium unavailable'}
             </Text>
           )}
         </Pressable>
 
         <Text style={[styles.terms, { color: colors.mutedForeground }]}>
           {trialAvailable && priceString
-            ? `Eligible new subscribers: 3 days free, then ${priceString} per month. Google Play confirms eligibility and billing before you approve. The subscription auto-renews until cancelled.`
+            ? `Eligible new subscribers: 3 days free, then ${priceString} per month unless cancelled. Google Play confirms eligibility and billing before you approve. Cancel before the trial ends to avoid a charge.`
+            : priceString
+              ? `${priceString} per month. Google Play confirms eligibility and billing before you approve. The subscription renews until cancelled.`
             : configured
-              ? 'The Google Play subscription or 3-day trial is not available yet. You can continue with ads while the store setup is completed.'
+              ? 'The Google Play subscription is not available in this build. You can continue with ads.'
               : 'Google Play billing is not configured in this build yet. You can continue with ads.'}
         </Text>
 
@@ -186,10 +199,11 @@ function SubscriptionChoiceScreen({
 
 export function SubscriptionChoiceGate({ children }: { children: React.ReactNode }) {
   const colors = useColors();
-  const { isPremium, loading } = useSubscription();
+  const { isPremium, loading, initialLoading } = useSubscription();
   const [choice, setChoice] = useState<string | null>(null);
   const [choiceLoaded, setChoiceLoaded] = useState(false);
   const [forcedOpen, setForcedOpen] = useState(false);
+  const [firstPairOfferRequested, setFirstPairOfferRequested] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -228,11 +242,23 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
   const openPaywall = useCallback(() => {
     if (!isPremium) setForcedOpen(true);
   }, [isPremium]);
-  const gateValue = useMemo(() => ({ openPaywall }), [openPaywall]);
+  const openFirstPairChoice = useCallback(() => {
+    setFirstPairOfferRequested(true);
+  }, []);
+  const firstPairChoicePending = Platform.OS === 'android'
+    && !isPremium
+    && !loading
+    && choiceLoaded
+    && choice === null
+    && firstPairOfferRequested;
+  const gateValue = useMemo(
+    () => ({ openPaywall, openFirstPairChoice, firstPairChoicePending }),
+    [openPaywall, openFirstPairChoice, firstPairChoicePending],
+  );
 
   if (Platform.OS !== 'android') return <GateContext.Provider value={gateValue}>{children}</GateContext.Provider>;
 
-  if (!choiceLoaded || loading) {
+  if (!choiceLoaded || initialLoading) {
     return (
       <GateContext.Provider value={gateValue}>
         <View style={[styles.loadingScreen, { backgroundColor: colors.background }]}>
@@ -242,20 +268,27 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
     );
   }
 
-  const showChoice = !isPremium && (forcedOpen || choice === null);
+  const showChoice = !isPremium && (forcedOpen || firstPairChoicePending);
   return (
     <GateContext.Provider value={gateValue}>
-      {showChoice ? (
-        <SubscriptionChoiceScreen
-          onContinueWithAds={() => void saveChoice('ads')}
-          onPremiumActivated={() => void saveChoice('premium')}
-        />
-      ) : children}
+      <View style={styles.appShell}>
+        {children}
+        {showChoice ? (
+          <View style={styles.offerOverlay}>
+            <SubscriptionChoiceScreen
+              onContinueWithAds={() => void saveChoice('ads')}
+              onPremiumActivated={() => void saveChoice('premium')}
+            />
+          </View>
+        ) : null}
+      </View>
     </GateContext.Provider>
   );
 }
 
 const styles = StyleSheet.create({
+  appShell: { flex: 1 },
+  offerOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 1000, elevation: 1000 },
   screen: { flex: 1 },
   scroll: { flexGrow: 1, width: '100%', maxWidth: 520, alignSelf: 'center', paddingHorizontal: 24, paddingTop: 18, paddingBottom: 18 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 28 },

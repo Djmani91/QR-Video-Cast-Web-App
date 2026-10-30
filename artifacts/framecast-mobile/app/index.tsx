@@ -47,7 +47,6 @@ import { useColors } from '@/hooks/useColors';
 import { CastTabs, type CastTab } from '@/components/CastTabs';
 import { MediaPlaylist, type SelectedMedia } from '@/components/MediaPlaylist';
 import { AppSettings } from '@/components/AppSettings';
-import { SetupTutorial } from '@/components/SetupTutorial';
 import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 import { getTemporaryMediaUris, getUnsupportedTvVideoHelp, isUnsupportedTvVideoError } from '@/lib/video-compatibility';
@@ -77,8 +76,6 @@ import {
 const TV_BROWSER_ADDRESS = '2tx1.com';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
-const SETUP_TUTORIAL_SEEN_KEY = 'framecast.setupTutorialSeen.v1';
-const MIRROR_MINUTE_MS = 60_000;
 
 import {
   getGetCastRoomMessagesQueryKey,
@@ -364,8 +361,8 @@ async function resolveVideoLink(input: string) {
 function FrameCastHomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { isPremium } = useSubscription();
-  const { openPaywall } = useSubscriptionChoiceGate();
+  const { isPremium, loading: subscriptionLoading } = useSubscription();
+  const { openPaywall, openFirstPairChoice, firstPairChoicePending } = useSubscriptionChoiceGate();
   const queryClient = useQueryClient();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const lookupRoom = useLookupCastRoomByCode();
@@ -375,7 +372,6 @@ function FrameCastHomeScreen() {
   const [code, setCode] = useState('');
   const [scanning, setScanning] = useState(false);
   const [scannerStarting, setScannerStarting] = useState(false);
-  const [setupTutorialVisible, setSetupTutorialVisible] = useState(false);
   const [roomId, setRoomId] = useState('');
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
@@ -385,9 +381,10 @@ function FrameCastHomeScreen() {
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
   const backgroundStartedRoomRef = useRef('');
   const backgroundPromptedRoomRef = useRef('');
+  const backgroundBlockedByPremiumRef = useRef(false);
+  const adOverlayActiveRef = useRef(false);
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
-  const [screenMirrorPausedForPayment, setScreenMirrorPausedForPayment] = useState(false);
   const [photoSelectionUnlocked, setPhotoSelectionUnlocked] = useState(false);
   const [videoSelectionUnlocked, setVideoSelectionUnlocked] = useState(false);
   const [photoSelectionCount, setPhotoSelectionCount] = useState(0);
@@ -441,16 +438,13 @@ function FrameCastHomeScreen() {
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
   const photoSelectionUnlockRoomRef = useRef('');
   const videoSelectionUnlockRoomRef = useRef('');
-  const screenMirrorUnlockRoomRef = useRef('');
-  const screenMirrorFreeUsedRoomRef = useRef('');
-  const screenMirrorRewardCreditRoomRef = useRef('');
-  const screenMirrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const screenMirrorPromptPendingRef = useRef(false);
-  const screenMirrorPromptShowingRef = useRef(false);
-  const screenMirrorSegmentKindRef = useRef<'free' | 'reward' | 'premium' | 'unlimited' | null>(null);
-  const previousPremiumStateRef = useRef(isPremium);
   const premiumStateRef = useRef(isPremium);
   premiumStateRef.current = isPremium;
+  const subscriptionLoadingRef = useRef(subscriptionLoading);
+  subscriptionLoadingRef.current = subscriptionLoading;
+  adOverlayActiveRef.current = rewardedAdLoading
+    || pairingAdStatus === 'loading'
+    || betweenVideoAdStatus === 'loading';
   const photoSelectionCountRef = useRef(0);
   const videoSelectionCountRef = useRef(0);
   const rewardedAdInProgressRef = useRef(false);
@@ -512,13 +506,17 @@ function FrameCastHomeScreen() {
   }, []);
 
   const saveBackgroundPreference = useCallback(async (enabled: boolean) => {
+    if (enabled && !premiumStateRef.current) {
+      openPaywall();
+      return;
+    }
     setBackgroundPreference(enabled);
     try {
       await AsyncStorage.setItem(BACKGROUND_CASTING_PREFERENCE_KEY, enabled ? '1' : '0');
     } catch {
       setError('FrameCast could not save this background casting choice. Please check the app storage and try again.');
     }
-  }, []);
+  }, [openPaywall]);
 
   const saveAnalyticsConsent = useCallback(async (enabled: boolean) => {
     await setAppAnalyticsConsent(enabled);
@@ -559,28 +557,6 @@ function FrameCastHomeScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    void AsyncStorage.getItem(SETUP_TUTORIAL_SEEN_KEY).then((seen) => {
-      if (active && seen !== '1') setSetupTutorialVisible(true);
-    }).catch(() => {
-      if (active) setSetupTutorialVisible(true);
-    });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const finishSetupTutorial = useCallback(async () => {
-    setSetupTutorialVisible(false);
-    try {
-      await AsyncStorage.setItem(SETUP_TUTORIAL_SEEN_KEY, '1');
-    } catch {
-      setError('The setup guide could not be marked as complete and may appear again next time.');
-    }
-  }, []);
-
   const messagesQuery = useGetCastRoomMessages(roomId, {
     query: {
       queryKey: getGetCastRoomMessagesQueryKey(roomId),
@@ -602,10 +578,6 @@ function FrameCastHomeScreen() {
   const closePeer = useCallback((notifyTv = false) => {
     if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
     peerRecoveryTimerRef.current = null;
-    if (screenMirrorTimerRef.current) clearTimeout(screenMirrorTimerRef.current);
-    screenMirrorTimerRef.current = null;
-    screenMirrorPromptPendingRef.current = false;
-    screenMirrorPromptShowingRef.current = false;
     setLocalPlayback(false);
     localSessionRef.current = null;
     localFallbackRef.current = null;
@@ -642,7 +614,6 @@ function FrameCastHomeScreen() {
     });
     setScreenMirrorActive(false);
     setScreenMirrorStarting(false);
-    setScreenMirrorPausedForPayment(false);
     peerRef.current?.close();
     peerRef.current = null;
   }, [roomId, sendSignal]);
@@ -662,6 +633,14 @@ function FrameCastHomeScreen() {
   }, [cleanupTemporaryCopies]);
 
   useEffect(() => {
+    if (isPremium) {
+      setPairingAdStatus('idle');
+      setPairingAdMessage('');
+      return;
+    }
+  }, [isPremium]);
+
+  useEffect(() => {
     if (!roomId) {
       pairingAdRoomRef.current = '';
       analyticsPairingRoomRef.current = '';
@@ -676,18 +655,30 @@ function FrameCastHomeScreen() {
       analyticsPairingRoomRef.current = roomId;
       void trackPairingCompleted();
     }
-    if (!isPremium && Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
+    if (!firstPairChoicePending && !subscriptionLoading && !isPremium && Platform.OS !== 'web' && shouldShowPairingInterstitial(roomId, pairingAdRoomRef.current)) {
       pairingAdRoomRef.current = roomId;
       lastInterstitialAttemptAtRef.current = Date.now();
       setPairingAdStatus('loading');
       setPairingAdMessage('');
       void showPairingInterstitialAd(
-        () => currentRoomRef.current === roomId && stageRef.current === 'paired',
+        () => !premiumStateRef.current
+          && !subscriptionLoadingRef.current
+          && currentRoomRef.current === roomId
+          && stageRef.current === 'paired',
         (message) => {
-          if (currentRoomRef.current === roomId) setPairingAdMessage(message);
+          if (
+            currentRoomRef.current === roomId
+            && !premiumStateRef.current
+            && !subscriptionLoadingRef.current
+          ) setPairingAdMessage(message);
         },
       ).then((result) => {
         if (currentRoomRef.current !== roomId) return;
+        if (premiumStateRef.current || subscriptionLoadingRef.current) {
+          setPairingAdMessage('');
+          setPairingAdStatus('idle');
+          return;
+        }
         if (result === 'shown') {
           lastInterstitialAttemptAtRef.current = Date.now();
           completedVideosSinceInterstitialRef.current = 0;
@@ -705,7 +696,7 @@ function FrameCastHomeScreen() {
     setStage('paired');
     setError('');
     sendSignal('ready', {});
-  }, [roomId, sendSignal]);
+  }, [roomId, sendSignal, firstPairChoicePending, subscriptionLoading, isPremium]);
 
   useEffect(() => {
     for (const signal of messages) {
@@ -835,10 +826,6 @@ function FrameCastHomeScreen() {
           setRoomId('');
           photoSelectionUnlockRoomRef.current = '';
           videoSelectionUnlockRoomRef.current = '';
-          screenMirrorUnlockRoomRef.current = '';
-          screenMirrorFreeUsedRoomRef.current = '';
-          screenMirrorRewardCreditRoomRef.current = '';
-          screenMirrorSegmentKindRef.current = null;
           setPhotoSelectionUnlocked(false);
           setVideoSelectionUnlocked(false);
           photoSelectionCountRef.current = 0;
@@ -888,10 +875,6 @@ function FrameCastHomeScreen() {
     setRoomId(id);
     photoSelectionUnlockRoomRef.current = '';
     videoSelectionUnlockRoomRef.current = '';
-    screenMirrorUnlockRoomRef.current = '';
-    screenMirrorFreeUsedRoomRef.current = '';
-    screenMirrorRewardCreditRoomRef.current = '';
-    screenMirrorSegmentKindRef.current = null;
     setPhotoSelectionUnlocked(false);
     setVideoSelectionUnlocked(false);
     photoSelectionCountRef.current = 0;
@@ -911,6 +894,7 @@ function FrameCastHomeScreen() {
     setTotalBytes(0);
     setError('');
     setScanning(false);
+    openFirstPairChoice();
   };
 
   const handleScan = (value: string) => {
@@ -1823,17 +1807,7 @@ function FrameCastHomeScreen() {
           connectedOnce = true;
           if (screenMirrorStreamRef.current === screenStream) {
             setStage('sent');
-            setTransferNotice(screenMirrorPausedForPayment
-              ? 'Screen mirroring is paused. Choose an ad or Premium to continue.'
-              : 'Your phone screen is mirrored to the TV. Use Stop mirroring when finished.');
-            const activeRoom = currentRoomRef.current;
-            if (screenMirrorSegmentKindRef.current === 'free') {
-              screenMirrorFreeUsedRoomRef.current = activeRoom;
-            }
-            if (screenMirrorSegmentKindRef.current === 'reward') {
-              screenMirrorRewardCreditRoomRef.current = '';
-            }
-            startScreenMirrorMinuteTimer(activeRoom);
+            setTransferNotice('Your phone screen is mirrored to the TV. Use Stop mirroring when finished.');
           }
           if (peerRecoveryTimerRef.current) setError('');
           if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
@@ -2027,10 +2001,6 @@ function FrameCastHomeScreen() {
     setRoomId('');
     photoSelectionUnlockRoomRef.current = '';
     videoSelectionUnlockRoomRef.current = '';
-    screenMirrorUnlockRoomRef.current = '';
-    screenMirrorFreeUsedRoomRef.current = '';
-    screenMirrorRewardCreditRoomRef.current = '';
-    screenMirrorSegmentKindRef.current = null;
     setPhotoSelectionUnlocked(false);
     setVideoSelectionUnlocked(false);
     photoSelectionCountRef.current = 0;
@@ -2131,6 +2101,15 @@ function FrameCastHomeScreen() {
     }
 
     if (!backgroundCastingAvailable || !backgroundPreferenceLoaded) return;
+    if (subscriptionLoading) return;
+
+    if (!isPremium) {
+      backgroundStartedRoomRef.current = '';
+      setBackgroundEnabled(false);
+      void stopBackgroundCasting().catch(() => undefined);
+      if (backgroundPreference === true) void saveBackgroundPreference(false);
+      return;
+    }
 
     if (backgroundPreference === null) {
       if (backgroundPromptedRoomRef.current === roomId) return;
@@ -2175,7 +2154,7 @@ function FrameCastHomeScreen() {
         setError(reason instanceof Error ? reason.message : 'Background casting could not start. Allow notifications to keep the TV connected.');
       }
     });
-  }, [roomId, backgroundPreference, backgroundPreferenceLoaded, saveBackgroundPreference]);
+  }, [roomId, backgroundPreference, backgroundPreferenceLoaded, saveBackgroundPreference, isPremium, subscriptionLoading]);
   useEffect(() => {
     if (backgroundEnabled && roomId) {
       updateBackgroundCasting({
@@ -2186,6 +2165,61 @@ function FrameCastHomeScreen() {
       });
     }
   }, [backgroundEnabled, roomId, selectedMedia?.name, paused, remoteVideoPosition.currentTime, remoteVideoPosition.duration]);
+
+  const stopFreeCastingForBackground = useCallback(() => {
+    const roomAtBackground = currentRoomRef.current;
+    const casting = ['connecting', 'sending', 'sent'].includes(stageRef.current);
+    if (
+      premiumStateRef.current
+      || !roomAtBackground
+      || !casting
+      || adOverlayActiveRef.current
+    ) return;
+
+    backgroundBlockedByPremiumRef.current = true;
+    closePeer(true);
+    setIsUrlPlayback(false);
+    setPaused(false);
+    setVideoEnded(false);
+    setQueueRunning(false);
+    queueRunningRef.current = false;
+    setBackgroundEnabled(false);
+    setStage('paired');
+    setError('Free casting stops when FrameCast is in the background.');
+    void stopBackgroundCasting().catch(() => undefined);
+  }, [closePeer]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const onAppStateChange = (nextState: string) => {
+      if (nextState === 'background') {
+        stopFreeCastingForBackground();
+      } else if (nextState === 'active' && backgroundBlockedByPremiumRef.current) {
+        backgroundBlockedByPremiumRef.current = false;
+        if (premiumStateRef.current) return;
+        Alert.alert(
+          'Keep casting while you use other apps',
+          'Free casting stops when FrameCast is in the background. Premium keeps your TV connected while you use other apps.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'View Premium', onPress: openPaywall },
+          ],
+        );
+      }
+    };
+    const subscription = AppState.addEventListener('change', onAppStateChange);
+    return () => subscription.remove();
+  }, [openPaywall, stopFreeCastingForBackground]);
+
+  useEffect(() => {
+    if (
+      Platform.OS !== 'web'
+      && AppState.currentState === 'background'
+      && !adOverlayActiveRef.current
+    ) {
+      stopFreeCastingForBackground();
+    }
+  }, [betweenVideoAdStatus, isPremium, pairingAdStatus, rewardedAdLoading, stage, stopFreeCastingForBackground]);
 
   const startScreenMirror = async () => {
     if (Platform.OS !== 'android' || !roomId) {
@@ -2233,172 +2267,37 @@ function FrameCastHomeScreen() {
     }
   };
 
-  const startScreenMirrorMinuteTimer = (roomAtStart: string) => {
-    if (screenMirrorTimerRef.current || premiumStateRef.current || screenMirrorUnlockRoomRef.current === roomAtStart) return;
-
-    screenMirrorTimerRef.current = setTimeout(() => {
-      screenMirrorTimerRef.current = null;
-      if (currentRoomRef.current !== roomAtStart) return;
-      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
-      if (!track) return;
-      track.enabled = false;
-      setScreenMirrorPausedForPayment(true);
-      screenMirrorPromptPendingRef.current = true;
-      setTransferNotice('Screen mirroring paused after one minute.');
-      if (AppState.currentState === 'active') showScreenMirrorLimitPrompt(roomAtStart);
-    }, MIRROR_MINUTE_MS);
-  };
-
-  const continueScreenMirrorWithReward = async (roomAtPrompt: string) => {
-    const result = await showRewardedAdForRoom(roomAtPrompt);
-    if (currentRoomRef.current !== roomAtPrompt) {
-      setError('The TV connection ended before screen mirroring could continue.');
-      return;
-    }
-    if (result === 'earned') {
-      setError('');
-      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
-      if (track) {
-        screenMirrorSegmentKindRef.current = 'reward';
-        track.enabled = true;
-        setScreenMirrorPausedForPayment(false);
-        setTransferNotice('One more minute of screen mirroring is active.');
-        startScreenMirrorMinuteTimer(roomAtPrompt);
-      } else {
-        screenMirrorRewardCreditRoomRef.current = roomAtPrompt;
-        screenMirrorSegmentKindRef.current = 'reward';
-        await startScreenMirror();
-      }
-      return;
-    }
-    if (result === 'no-fill') {
-      screenMirrorUnlockRoomRef.current = roomAtPrompt;
-      setError('');
-      if (screenMirrorTimerRef.current) clearTimeout(screenMirrorTimerRef.current);
-      screenMirrorTimerRef.current = null;
-      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
-      if (track) {
-        track.enabled = true;
-        setScreenMirrorPausedForPayment(false);
-        setTransferNotice('No ad was available, so mirroring is unlocked for this TV session.');
-      } else {
-        screenMirrorSegmentKindRef.current = 'unlimited';
-        await startScreenMirror();
-      }
-      return;
-    }
-    if (result === 'cancelled') {
-      setError('The ad was not completed. Screen mirroring is paused.');
-    }
-  };
-
-  const showScreenMirrorLimitPrompt = (roomAtPrompt: string) => {
-    if (screenMirrorPromptShowingRef.current || currentRoomRef.current !== roomAtPrompt) return;
-    if (AppState.currentState !== 'active') {
-      screenMirrorPromptPendingRef.current = true;
-      return;
-    }
-    screenMirrorPromptPendingRef.current = false;
-    screenMirrorPromptShowingRef.current = true;
-    Alert.alert(
-      'Screen mirroring is paused',
-      'Your one-minute period has ended. Watch an ad for one more minute, or buy Premium to mirror without a time limit.',
-      [
-        { text: 'Stop mirroring', style: 'cancel', onPress: () => stopScreenMirror() },
-        { text: 'Watch ad · +1 minute', onPress: () => { void continueScreenMirrorWithReward(roomAtPrompt); } },
-        { text: 'Buy Premium', onPress: () => openPaywall() },
-      ],
-      {
-        cancelable: true,
-        onDismiss: () => {
-          screenMirrorPromptShowingRef.current = false;
-        },
-      },
-    );
-  };
-
   const requestScreenMirror = () => {
     if (Platform.OS !== 'android') {
       void startScreenMirror();
       return;
     }
-    const roomAtPrompt = currentRoomRef.current;
-    if (!roomAtPrompt) {
+    if (!currentRoomRef.current) {
       setError('Connect to the TV before starting screen mirroring.');
       return;
     }
-    if (screenMirrorStarting || screenMirrorActive || rewardedAdLoading) return;
-    if (isPremium) {
-      screenMirrorSegmentKindRef.current = 'premium';
-      void startScreenMirror();
+    if (screenMirrorStarting || screenMirrorActive) return;
+    if (!isPremium) {
+      Alert.alert(
+        'Screen mirroring needs Premium',
+        'Mirroring another app requires FrameCast to run in the background. Free casting stops when FrameCast is not open.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'View Premium', onPress: openPaywall },
+        ],
+      );
       return;
     }
-    if (screenMirrorUnlockRoomRef.current === roomAtPrompt) {
-      screenMirrorSegmentKindRef.current = 'unlimited';
-      void startScreenMirror();
-      return;
-    }
-    if (screenMirrorRewardCreditRoomRef.current === roomAtPrompt) {
-      screenMirrorSegmentKindRef.current = 'reward';
-      void startScreenMirror();
-      return;
-    }
-    if (screenMirrorFreeUsedRoomRef.current !== roomAtPrompt) {
-      screenMirrorSegmentKindRef.current = 'free';
-      void startScreenMirror();
-      return;
-    }
-    showScreenMirrorLimitPrompt(roomAtPrompt);
+    void startScreenMirror();
   };
 
   const stopScreenMirror = () => {
-    screenMirrorSegmentKindRef.current = null;
     screenAudioAllowedRef.current = false;
     closePeer(true);
     setStage(roomId ? 'paired' : 'join');
     setTransferNotice('');
     setError('');
   };
-
-  useEffect(() => {
-    if (!screenMirrorPausedForPayment) return;
-    const promptIfReady = (state: string) => {
-      if (state === 'active' && screenMirrorPromptPendingRef.current) {
-        showScreenMirrorLimitPrompt(currentRoomRef.current);
-      }
-    };
-    promptIfReady(AppState.currentState);
-    const subscription = AppState.addEventListener('change', promptIfReady);
-    return () => subscription.remove();
-  }, [screenMirrorPausedForPayment]);
-
-  useEffect(() => {
-    const previouslyPremium = previousPremiumStateRef.current;
-    previousPremiumStateRef.current = isPremium;
-    if (isPremium) {
-      if (screenMirrorTimerRef.current) clearTimeout(screenMirrorTimerRef.current);
-      screenMirrorTimerRef.current = null;
-      if (!screenMirrorPausedForPayment) return;
-      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
-      if (!track) return;
-      track.enabled = true;
-      setScreenMirrorPausedForPayment(false);
-      screenMirrorPromptPendingRef.current = false;
-      setError('');
-      setTransferNotice('Screen mirroring continues with Premium.');
-      return;
-    }
-    if (
-      previouslyPremium
-      && screenMirrorActive
-      && !screenMirrorPausedForPayment
-      && screenMirrorStreamRef.current
-      && screenMirrorUnlockRoomRef.current !== currentRoomRef.current
-    ) {
-      setTransferNotice('Premium has ended. One minute of screen mirroring remains.');
-      startScreenMirrorMinuteTimer(currentRoomRef.current);
-    }
-  }, [isPremium, screenMirrorActive, screenMirrorPausedForPayment]);
 
   const progress = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
   const activeColors = colors;
@@ -2455,7 +2354,6 @@ function FrameCastHomeScreen() {
           </View>
           <AppSettings
             onClearLocalData={clearLocalData}
-            onOpenTutorial={() => setSetupTutorialVisible(true)}
             onManageAdPrivacy={openAdPrivacyOptions}
             analyticsEnabled={analyticsEnabled}
             onAnalyticsChange={saveAnalyticsConsent}
@@ -2624,26 +2522,12 @@ function FrameCastHomeScreen() {
                   Android asks you to approve screen sharing and playback-audio capture. Everything visible on your phone, including notifications, can appear on the TV. Supported app audio goes directly to the TV; protected apps may block video or sound. FrameCast does not record microphone audio.
                 </Text>
                 <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
-                  One minute is free. After that, watch an ad for one more minute or buy Premium for unlimited mirroring.
+                  {isPremium
+                    ? 'Premium lets you mirror other apps while FrameCast runs in the background.'
+                    : 'Screen mirroring needs Premium because FrameCast must stay active while another app is on screen.'}
                 </Text>
                 {screenMirrorActive ? (
                   <>
-                    {screenMirrorPausedForPayment ? (
-                      <>
-                        <Text style={[styles.urlHelp, { color: activeColors.accent }]} accessibilityLiveRegion="polite">
-                          Screen sharing is paused. Watch an ad for one more minute or buy Premium to continue.
-                        </Text>
-                        <Pressable
-                          onPress={() => showScreenMirrorLimitPrompt(currentRoomRef.current)}
-                          style={({ pressed }) => [styles.secondaryButton, { backgroundColor: activeColors.secondary, opacity: pressed ? 0.82 : 1 }]}
-                          accessibilityRole="button"
-                          accessibilityLabel="Choose an ad or Premium to continue screen mirroring"
-                          testID="button-mirror-limit-options"
-                        >
-                          <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Continue screen mirroring</Text>
-                        </Pressable>
-                      </>
-                    ) : null}
                     <Pressable
                       onPress={stopScreenMirror}
                       style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.destructive, opacity: pressed ? 0.86 : 1 }]}
@@ -2658,15 +2542,15 @@ function FrameCastHomeScreen() {
                 ) : (
                   <Pressable
                     onPress={() => requestScreenMirror()}
-                    disabled={!roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending'}
-                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
+                    disabled={!roomId || screenMirrorStarting || stage === 'connecting' || stage === 'sending'}
+                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
                     accessibilityRole="button"
                     accessibilityLabel="Start screen mirroring"
                     testID="button-start-screen-mirroring"
                   >
                     <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
                     <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Preparing…' : !roomId ? 'Connect to the TV first' : !isPremium && screenMirrorUnlockRoomRef.current !== roomId && screenMirrorFreeUsedRoomRef.current !== roomId ? 'Start screen mirroring · 1 minute free' : 'Start screen mirroring'}
+                      {screenMirrorStarting ? 'Waiting for permission…' : !roomId ? 'Connect to the TV first' : isPremium ? 'Start screen mirroring' : 'View Premium to mirror'}
                     </Text>
                   </Pressable>
                 )}
@@ -3038,11 +2922,6 @@ function FrameCastHomeScreen() {
         />
       )}
     </SafeAreaView>
-    <SetupTutorial
-      visible={setupTutorialVisible}
-      tvAddress={TV_BROWSER_ADDRESS}
-      onDismiss={() => { void finishSetupTutorial(); }}
-    />
     </>
   );
 }
