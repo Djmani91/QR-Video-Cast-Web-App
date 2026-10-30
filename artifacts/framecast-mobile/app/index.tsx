@@ -57,7 +57,12 @@ import {
   showPairingInterstitialAd,
   showSelectionRewardedAd,
 } from '@/lib/ad-monetization';
-import { getRemainingMediaSelectionSlots, MAX_MEDIA_SELECTION_ITEMS } from '@/lib/media-selection';
+import {
+  getRemainingMediaSelectionSlots,
+  getRemainingPremiumMediaSelectionSlots,
+  MAX_MEDIA_SELECTION_ITEMS,
+  REWARDED_MEDIA_SELECTION_LIMIT,
+} from '@/lib/media-selection';
 import { CastingBannerAd } from '@/components/CastingBannerAd';
 import { SubscriptionChoiceGate, useSubscriptionChoiceGate } from '@/components/SubscriptionChoiceGate';
 import { useSubscription } from '@/lib/revenuecat';
@@ -73,6 +78,7 @@ const TV_BROWSER_ADDRESS = '2tx1.com';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
 const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
 const SETUP_TUTORIAL_SEEN_KEY = 'framecast.setupTutorialSeen.v1';
+const MIRROR_MINUTE_MS = 60_000;
 
 import {
   getGetCastRoomMessagesQueryKey,
@@ -142,6 +148,7 @@ type PeerLike = {
 };
 
 type ScreenTrackLike = {
+  enabled: boolean;
   stop(): void;
   getSettings?: () => { width?: number; height?: number; frameRate?: number };
   onended?: (() => void) | null;
@@ -380,9 +387,11 @@ function FrameCastHomeScreen() {
   const backgroundPromptedRoomRef = useRef('');
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
-  const [screenMirrorUnlocked, setScreenMirrorUnlocked] = useState(false);
+  const [screenMirrorPausedForPayment, setScreenMirrorPausedForPayment] = useState(false);
   const [photoSelectionUnlocked, setPhotoSelectionUnlocked] = useState(false);
   const [videoSelectionUnlocked, setVideoSelectionUnlocked] = useState(false);
+  const [photoSelectionCount, setPhotoSelectionCount] = useState(0);
+  const [videoSelectionCount, setVideoSelectionCount] = useState(0);
   const [rewardedAdLoading, setRewardedAdLoading] = useState(false);
   const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
   const screenAudioChannelRef = useRef<DataChannelLike | null>(null);
@@ -433,6 +442,17 @@ function FrameCastHomeScreen() {
   const photoSelectionUnlockRoomRef = useRef('');
   const videoSelectionUnlockRoomRef = useRef('');
   const screenMirrorUnlockRoomRef = useRef('');
+  const screenMirrorFreeUsedRoomRef = useRef('');
+  const screenMirrorRewardCreditRoomRef = useRef('');
+  const screenMirrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const screenMirrorPromptPendingRef = useRef(false);
+  const screenMirrorPromptShowingRef = useRef(false);
+  const screenMirrorSegmentKindRef = useRef<'free' | 'reward' | 'premium' | 'unlimited' | null>(null);
+  const previousPremiumStateRef = useRef(isPremium);
+  const premiumStateRef = useRef(isPremium);
+  premiumStateRef.current = isPremium;
+  const photoSelectionCountRef = useRef(0);
+  const videoSelectionCountRef = useRef(0);
   const rewardedAdInProgressRef = useRef(false);
   const videoThumbnailRunRef = useRef(0);
   const videoThumbnailUrisRef = useRef(new Set<string>());
@@ -582,6 +602,10 @@ function FrameCastHomeScreen() {
   const closePeer = useCallback((notifyTv = false) => {
     if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
     peerRecoveryTimerRef.current = null;
+    if (screenMirrorTimerRef.current) clearTimeout(screenMirrorTimerRef.current);
+    screenMirrorTimerRef.current = null;
+    screenMirrorPromptPendingRef.current = false;
+    screenMirrorPromptShowingRef.current = false;
     setLocalPlayback(false);
     localSessionRef.current = null;
     localFallbackRef.current = null;
@@ -618,6 +642,7 @@ function FrameCastHomeScreen() {
     });
     setScreenMirrorActive(false);
     setScreenMirrorStarting(false);
+    setScreenMirrorPausedForPayment(false);
     peerRef.current?.close();
     peerRef.current = null;
   }, [roomId, sendSignal]);
@@ -811,9 +836,15 @@ function FrameCastHomeScreen() {
           photoSelectionUnlockRoomRef.current = '';
           videoSelectionUnlockRoomRef.current = '';
           screenMirrorUnlockRoomRef.current = '';
+          screenMirrorFreeUsedRoomRef.current = '';
+          screenMirrorRewardCreditRoomRef.current = '';
+          screenMirrorSegmentKindRef.current = null;
           setPhotoSelectionUnlocked(false);
           setVideoSelectionUnlocked(false);
-          setScreenMirrorUnlocked(false);
+          photoSelectionCountRef.current = 0;
+          videoSelectionCountRef.current = 0;
+          setPhotoSelectionCount(0);
+          setVideoSelectionCount(0);
           setSelectedMedia(null);
           setMediaQueue([]);
           mediaQueueRef.current = [];
@@ -858,9 +889,15 @@ function FrameCastHomeScreen() {
     photoSelectionUnlockRoomRef.current = '';
     videoSelectionUnlockRoomRef.current = '';
     screenMirrorUnlockRoomRef.current = '';
+    screenMirrorFreeUsedRoomRef.current = '';
+    screenMirrorRewardCreditRoomRef.current = '';
+    screenMirrorSegmentKindRef.current = null;
     setPhotoSelectionUnlocked(false);
     setVideoSelectionUnlocked(false);
-    setScreenMirrorUnlocked(false);
+    photoSelectionCountRef.current = 0;
+    videoSelectionCountRef.current = 0;
+    setPhotoSelectionCount(0);
+    setVideoSelectionCount(0);
     setCastTab('url');
     setSelectedMedia(null);
     setMediaQueue([]);
@@ -1029,17 +1066,33 @@ function FrameCastHomeScreen() {
     }
   };
 
+  const showPremiumRequiredForMedia = (kind: 'image' | 'video') => {
+    const label = kind === 'image' ? 'photos' : 'videos';
+    Alert.alert(
+      'Get FrameCast Premium',
+      `You have used the free and ad-unlocked ${kind === 'image' ? 'photo' : 'video'}. Buy Premium to choose more ${label}.`,
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Buy Premium', onPress: () => openPaywall() },
+      ],
+    );
+  };
+
   const pickPhotos = async (append = false) => {
     setError('');
     const unlocked = photoSelectionUnlockRoomRef.current === currentRoomRef.current;
     const existingPhotos = append ? mediaQueueRef.current.filter((media) => media.kind === 'image') : [];
     const canAppend = append && existingPhotos.length === mediaQueueRef.current.length;
     const existingCount = canAppend ? existingPhotos.length : 0;
-    const selectionLimit = getRemainingMediaSelectionSlots(unlocked, existingCount);
+    const selectedThisSession = photoSelectionCountRef.current;
+    const remainingSessionSlots = isPremium
+      ? getRemainingPremiumMediaSelectionSlots(selectedThisSession)
+      : getRemainingMediaSelectionSlots(unlocked, selectedThisSession);
+    const selectionLimit = Math.min(remainingSessionSlots, MAX_MEDIA_SELECTION_ITEMS - existingCount);
     if (selectionLimit < 1) {
-      setError(unlocked
-        ? `You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} photos in this TV session.`
-          : 'One photo is free. Tap Add in the playlist to choose more.');
+      if (isPremium) setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} photos in this TV session.`);
+      else if (unlocked) showPremiumRequiredForMedia('image');
+      else void requestMoreMedia('image');
       return;
     }
     try {
@@ -1051,8 +1104,8 @@ function FrameCastHomeScreen() {
         quality: 0.85,
       });
       if (result.canceled || !result.assets?.length) return;
-      if (existingCount + result.assets.length > (unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1)) {
-        setError(`Choose up to ${unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1} photos in this TV session.`);
+      if (result.assets.length > selectionLimit) {
+        setError(`Choose up to ${selectionLimit} more photo${selectionLimit === 1 ? '' : 's'}.`);
         return;
       }
       setPreparingMedia(true);
@@ -1070,6 +1123,8 @@ function FrameCastHomeScreen() {
           temporaryCopy: cached.temporaryCopy,
         });
       }
+      photoSelectionCountRef.current += pickedPhotos.length;
+      setPhotoSelectionCount(photoSelectionCountRef.current);
       if (canAppend && existingPhotos.length) {
         const queue = [...existingPhotos, ...pickedPhotos];
         mediaQueueRef.current = queue;
@@ -1091,11 +1146,15 @@ function FrameCastHomeScreen() {
     const existingVideos = append ? mediaQueueRef.current.filter((media) => media.kind === 'video') : [];
     const canAppend = append && existingVideos.length === mediaQueueRef.current.length;
     const existingCount = canAppend ? existingVideos.length : 0;
-    const remainingSlots = getRemainingMediaSelectionSlots(unlocked, existingCount);
+    const selectedThisSession = videoSelectionCountRef.current;
+    const remainingSessionSlots = isPremium
+      ? getRemainingPremiumMediaSelectionSlots(selectedThisSession)
+      : getRemainingMediaSelectionSlots(unlocked, selectedThisSession);
+    const remainingSlots = Math.min(remainingSessionSlots, MAX_MEDIA_SELECTION_ITEMS - existingCount);
     if (remainingSlots < 1) {
-      setError(unlocked
-        ? `You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} videos in this TV session.`
-        : 'One video is free. Tap Add in the playlist to choose more.');
+      if (isPremium) setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} videos in this TV session.`);
+      else if (unlocked) showPremiumRequiredForMedia('video');
+      else void requestMoreMedia('video');
       return;
     }
     try {
@@ -1107,8 +1166,8 @@ function FrameCastHomeScreen() {
         quality: 1,
       });
       if (result.canceled || !result.assets?.length) return;
-      if (existingCount + result.assets.length > (unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1)) {
-        setError(`Choose up to ${unlocked ? MAX_MEDIA_SELECTION_ITEMS : 1} videos in this TV session.`);
+      if (result.assets.length > remainingSlots) {
+        setError(`Choose up to ${remainingSlots} more video${remainingSlots === 1 ? '' : 's'}.`);
         return;
       }
       setPreparingMedia(true);
@@ -1127,6 +1186,8 @@ function FrameCastHomeScreen() {
           temporaryCopy: cached.temporaryCopy,
         });
       }
+      videoSelectionCountRef.current += pickedVideos.length;
+      setVideoSelectionCount(videoSelectionCountRef.current);
       const queue = [...existingVideos, ...pickedVideos];
       if (canAppend && existingVideos.length) {
         mediaQueueRef.current = queue;
@@ -1155,32 +1216,42 @@ function FrameCastHomeScreen() {
     const unlockedRoom = kind === 'image'
       ? photoSelectionUnlockRoomRef.current
       : videoSelectionUnlockRoomRef.current;
-    if (unlockedRoom === roomAtPrompt) {
+    const selectedThisSession = kind === 'image' ? photoSelectionCountRef.current : videoSelectionCountRef.current;
+    if (isPremium) {
+      if (getRemainingPremiumMediaSelectionSlots(selectedThisSession) < 1) {
+        setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${kind === 'image' ? 'photos' : 'videos'} in this TV session.`);
+        return;
+      }
       if (kind === 'image') void pickPhotos(true);
       else void pickVideo(true);
       return;
     }
-    if (mediaQueueRef.current.length >= MAX_MEDIA_SELECTION_ITEMS) {
-      setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${kind === 'image' ? 'photos' : 'videos'} in this TV session.`);
-      return;
-    }
-
-    const mediaLabel = kind === 'image' ? 'photos' : 'videos';
-    if (isPremium) {
-      if (kind === 'image') {
-        photoSelectionUnlockRoomRef.current = roomAtPrompt;
-        setPhotoSelectionUnlocked(true);
+    if (unlockedRoom === roomAtPrompt) {
+      if (getRemainingMediaSelectionSlots(true, selectedThisSession) < 1) {
+        showPremiumRequiredForMedia(kind);
+      } else if (kind === 'image') {
         void pickPhotos(true);
       } else {
-        videoSelectionUnlockRoomRef.current = roomAtPrompt;
-        setVideoSelectionUnlocked(true);
         void pickVideo(true);
       }
       return;
     }
+
+    if (getRemainingMediaSelectionSlots(false, selectedThisSession) > 0) {
+      if (kind === 'image') void pickPhotos(true);
+      else void pickVideo(true);
+      return;
+    }
+    if (selectedThisSession >= REWARDED_MEDIA_SELECTION_LIMIT) {
+      showPremiumRequiredForMedia(kind);
+      return;
+    }
+
+    const singular = kind === 'image' ? 'photo' : 'video';
+    const mediaLabel = kind === 'image' ? 'photos' : 'videos';
     Alert.alert(
-      `Unlock up to 20 ${mediaLabel}`,
-      `One ${kind === 'image' ? 'photo' : 'video'} is free. Watch a rewarded ad to choose up to 20 ${mediaLabel} for this TV session. This reward applies only to ${mediaLabel}.`,
+      `Add one more ${singular}`,
+      `One ${singular} is free. Watch a rewarded ad to choose one more ${singular}. After that, Premium is needed for more ${mediaLabel}. This reward applies only to ${mediaLabel}.`,
       [
         { text: 'Not now', style: 'cancel' },
         {
@@ -1204,11 +1275,12 @@ function FrameCastHomeScreen() {
                   await pickVideo(true);
                 }
               } else if (result === 'cancelled' && currentRoomRef.current) {
-                setError('The ad was not completed. Your one-item selection is still available.');
+                setError(`The ad was not completed. Your selected ${singular} is still available.`);
               }
             })();
           },
         },
+        { text: 'Buy Premium', onPress: () => openPaywall() },
       ],
     );
   };
@@ -1751,7 +1823,17 @@ function FrameCastHomeScreen() {
           connectedOnce = true;
           if (screenMirrorStreamRef.current === screenStream) {
             setStage('sent');
-            setTransferNotice('Your phone screen is mirrored to the TV. Use Stop mirroring when finished.');
+            setTransferNotice(screenMirrorPausedForPayment
+              ? 'Screen mirroring is paused. Choose an ad or Premium to continue.'
+              : 'Your phone screen is mirrored to the TV. Use Stop mirroring when finished.');
+            const activeRoom = currentRoomRef.current;
+            if (screenMirrorSegmentKindRef.current === 'free') {
+              screenMirrorFreeUsedRoomRef.current = activeRoom;
+            }
+            if (screenMirrorSegmentKindRef.current === 'reward') {
+              screenMirrorRewardCreditRoomRef.current = '';
+            }
+            startScreenMirrorMinuteTimer(activeRoom);
           }
           if (peerRecoveryTimerRef.current) setError('');
           if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
@@ -1946,9 +2028,15 @@ function FrameCastHomeScreen() {
     photoSelectionUnlockRoomRef.current = '';
     videoSelectionUnlockRoomRef.current = '';
     screenMirrorUnlockRoomRef.current = '';
+    screenMirrorFreeUsedRoomRef.current = '';
+    screenMirrorRewardCreditRoomRef.current = '';
+    screenMirrorSegmentKindRef.current = null;
     setPhotoSelectionUnlocked(false);
     setVideoSelectionUnlocked(false);
-    setScreenMirrorUnlocked(false);
+    photoSelectionCountRef.current = 0;
+    videoSelectionCountRef.current = 0;
+    setPhotoSelectionCount(0);
+    setVideoSelectionCount(0);
     setSelectedMedia(null);
     setMediaQueue([]);
     mediaQueueRef.current = [];
@@ -2145,6 +2233,90 @@ function FrameCastHomeScreen() {
     }
   };
 
+  const startScreenMirrorMinuteTimer = (roomAtStart: string) => {
+    if (screenMirrorTimerRef.current || premiumStateRef.current || screenMirrorUnlockRoomRef.current === roomAtStart) return;
+
+    screenMirrorTimerRef.current = setTimeout(() => {
+      screenMirrorTimerRef.current = null;
+      if (currentRoomRef.current !== roomAtStart) return;
+      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
+      if (!track) return;
+      track.enabled = false;
+      setScreenMirrorPausedForPayment(true);
+      screenMirrorPromptPendingRef.current = true;
+      setTransferNotice('Screen mirroring paused after one minute.');
+      if (AppState.currentState === 'active') showScreenMirrorLimitPrompt(roomAtStart);
+    }, MIRROR_MINUTE_MS);
+  };
+
+  const continueScreenMirrorWithReward = async (roomAtPrompt: string) => {
+    const result = await showRewardedAdForRoom(roomAtPrompt);
+    if (currentRoomRef.current !== roomAtPrompt) {
+      setError('The TV connection ended before screen mirroring could continue.');
+      return;
+    }
+    if (result === 'earned') {
+      setError('');
+      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
+      if (track) {
+        screenMirrorSegmentKindRef.current = 'reward';
+        track.enabled = true;
+        setScreenMirrorPausedForPayment(false);
+        setTransferNotice('One more minute of screen mirroring is active.');
+        startScreenMirrorMinuteTimer(roomAtPrompt);
+      } else {
+        screenMirrorRewardCreditRoomRef.current = roomAtPrompt;
+        screenMirrorSegmentKindRef.current = 'reward';
+        await startScreenMirror();
+      }
+      return;
+    }
+    if (result === 'no-fill') {
+      screenMirrorUnlockRoomRef.current = roomAtPrompt;
+      setError('');
+      if (screenMirrorTimerRef.current) clearTimeout(screenMirrorTimerRef.current);
+      screenMirrorTimerRef.current = null;
+      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
+      if (track) {
+        track.enabled = true;
+        setScreenMirrorPausedForPayment(false);
+        setTransferNotice('No ad was available, so mirroring is unlocked for this TV session.');
+      } else {
+        screenMirrorSegmentKindRef.current = 'unlimited';
+        await startScreenMirror();
+      }
+      return;
+    }
+    if (result === 'cancelled') {
+      setError('The ad was not completed. Screen mirroring is paused.');
+    }
+  };
+
+  const showScreenMirrorLimitPrompt = (roomAtPrompt: string) => {
+    if (screenMirrorPromptShowingRef.current || currentRoomRef.current !== roomAtPrompt) return;
+    if (AppState.currentState !== 'active') {
+      screenMirrorPromptPendingRef.current = true;
+      return;
+    }
+    screenMirrorPromptPendingRef.current = false;
+    screenMirrorPromptShowingRef.current = true;
+    Alert.alert(
+      'Screen mirroring is paused',
+      'Your one-minute period has ended. Watch an ad for one more minute, or buy Premium to mirror without a time limit.',
+      [
+        { text: 'Stop mirroring', style: 'cancel', onPress: () => stopScreenMirror() },
+        { text: 'Watch ad · +1 minute', onPress: () => { void continueScreenMirrorWithReward(roomAtPrompt); } },
+        { text: 'Buy Premium', onPress: () => openPaywall() },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => {
+          screenMirrorPromptShowingRef.current = false;
+        },
+      },
+    );
+  };
+
   const requestScreenMirror = () => {
     if (Platform.OS !== 'android') {
       void startScreenMirror();
@@ -2156,55 +2328,31 @@ function FrameCastHomeScreen() {
       return;
     }
     if (screenMirrorStarting || screenMirrorActive || rewardedAdLoading) return;
-    if (screenMirrorUnlockRoomRef.current === roomAtPrompt) {
-      void startScreenMirror();
-      return;
-    }
     if (isPremium) {
-      screenMirrorUnlockRoomRef.current = roomAtPrompt;
-      setScreenMirrorUnlocked(true);
+      screenMirrorSegmentKindRef.current = 'premium';
       void startScreenMirror();
       return;
     }
-
-    Alert.alert(
-      'Unlock screen mirroring',
-      'Watch a rewarded ad to unlock screen mirroring for this TV connection. This reward is separate from photo and video selections, and it lasts until you disconnect.',
-      [
-        { text: 'Not now', style: 'cancel' },
-        {
-          text: 'Watch ad',
-          onPress: () => {
-            void (async () => {
-              const result = await showRewardedAdForRoom(roomAtPrompt);
-              if (result === 'earned') {
-                const activeRoom = currentRoomRef.current;
-                if (!activeRoom) {
-                  setError('The TV connection ended before screen mirroring could be unlocked.');
-                  return;
-                }
-                screenMirrorUnlockRoomRef.current = activeRoom;
-                setScreenMirrorUnlocked(true);
-                if (activeRoom !== roomAtPrompt) {
-                  setError('The TV connection changed while the ad was playing. Screen mirroring is unlocked; tap Start again.');
-                  return;
-                }
-                await startScreenMirror();
-              } else if (result === 'no-fill' && currentRoomRef.current === roomAtPrompt) {
-                screenMirrorUnlockRoomRef.current = roomAtPrompt;
-                setScreenMirrorUnlocked(true);
-                await startScreenMirror();
-              } else if (result === 'cancelled' && currentRoomRef.current) {
-                setError('The ad was not completed. Screen mirroring has not started.');
-              }
-            })();
-          },
-        },
-      ],
-    );
+    if (screenMirrorUnlockRoomRef.current === roomAtPrompt) {
+      screenMirrorSegmentKindRef.current = 'unlimited';
+      void startScreenMirror();
+      return;
+    }
+    if (screenMirrorRewardCreditRoomRef.current === roomAtPrompt) {
+      screenMirrorSegmentKindRef.current = 'reward';
+      void startScreenMirror();
+      return;
+    }
+    if (screenMirrorFreeUsedRoomRef.current !== roomAtPrompt) {
+      screenMirrorSegmentKindRef.current = 'free';
+      void startScreenMirror();
+      return;
+    }
+    showScreenMirrorLimitPrompt(roomAtPrompt);
   };
 
   const stopScreenMirror = () => {
+    screenMirrorSegmentKindRef.current = null;
     screenAudioAllowedRef.current = false;
     closePeer(true);
     setStage(roomId ? 'paired' : 'join');
@@ -2212,8 +2360,71 @@ function FrameCastHomeScreen() {
     setError('');
   };
 
+  useEffect(() => {
+    if (!screenMirrorPausedForPayment) return;
+    const promptIfReady = (state: string) => {
+      if (state === 'active' && screenMirrorPromptPendingRef.current) {
+        showScreenMirrorLimitPrompt(currentRoomRef.current);
+      }
+    };
+    promptIfReady(AppState.currentState);
+    const subscription = AppState.addEventListener('change', promptIfReady);
+    return () => subscription.remove();
+  }, [screenMirrorPausedForPayment]);
+
+  useEffect(() => {
+    const previouslyPremium = previousPremiumStateRef.current;
+    previousPremiumStateRef.current = isPremium;
+    if (isPremium) {
+      if (screenMirrorTimerRef.current) clearTimeout(screenMirrorTimerRef.current);
+      screenMirrorTimerRef.current = null;
+      if (!screenMirrorPausedForPayment) return;
+      const track = screenMirrorStreamRef.current?.getVideoTracks()[0];
+      if (!track) return;
+      track.enabled = true;
+      setScreenMirrorPausedForPayment(false);
+      screenMirrorPromptPendingRef.current = false;
+      setError('');
+      setTransferNotice('Screen mirroring continues with Premium.');
+      return;
+    }
+    if (
+      previouslyPremium
+      && screenMirrorActive
+      && !screenMirrorPausedForPayment
+      && screenMirrorStreamRef.current
+      && screenMirrorUnlockRoomRef.current !== currentRoomRef.current
+    ) {
+      setTransferNotice('Premium has ended. One minute of screen mirroring remains.');
+      startScreenMirrorMinuteTimer(currentRoomRef.current);
+    }
+  }, [isPremium, screenMirrorActive, screenMirrorPausedForPayment]);
+
   const progress = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
   const activeColors = colors;
+  const mediaSelectionTitle = (kind: 'image' | 'video') => {
+    const noun = kind === 'image' ? 'photo' : 'video';
+    const plural = kind === 'image' ? 'photos' : 'videos';
+    const count = kind === 'image' ? photoSelectionCount : videoSelectionCount;
+    const rewardAvailable = kind === 'image' ? photoSelectionUnlocked : videoSelectionUnlocked;
+    if (preparingMedia) return 'Preparing media on this phone…';
+    if (rewardedAdLoading) return 'Loading rewarded ad…';
+    if (isPremium) return `Choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${plural}`;
+    if (count >= REWARDED_MEDIA_SELECTION_LIMIT) return `Get Premium for more ${plural}`;
+    if (count === 1 && rewardAvailable) return `Choose one more ${noun}`;
+    if (count === 1) return `Add one more ${noun}`;
+    return `Choose one ${noun} free`;
+  };
+  const mediaSelectionSubtitle = (kind: 'image' | 'video') => {
+    const plural = kind === 'image' ? 'photos' : 'videos';
+    const count = kind === 'image' ? photoSelectionCount : videoSelectionCount;
+    const rewardAvailable = kind === 'image' ? photoSelectionUnlocked : videoSelectionUnlocked;
+    if (preparingMedia) return 'Keeping temporary access so the transfer can finish';
+    if (isPremium) return `Premium lets you choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${plural} per TV session`;
+    if (count >= REWARDED_MEDIA_SELECTION_LIMIT) return 'Buy Premium to choose more';
+    if (count === 1 && rewardAvailable) return 'Your one ad-unlocked selection is ready';
+    return 'One is free; watch an ad for one more. Premium unlocks more.';
+  };
 
   if (videoBrowserOpen && Platform.OS === 'android') {
     return (
@@ -2412,17 +2623,38 @@ function FrameCastHomeScreen() {
                 <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
                   Android asks you to approve screen sharing and playback-audio capture. Everything visible on your phone, including notifications, can appear on the TV. Supported app audio goes directly to the TV; protected apps may block video or sound. FrameCast does not record microphone audio.
                 </Text>
+                <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
+                  One minute is free. After that, watch an ad for one more minute or buy Premium for unlimited mirroring.
+                </Text>
                 {screenMirrorActive ? (
-                  <Pressable
-                    onPress={stopScreenMirror}
-                    style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.destructive, opacity: pressed ? 0.86 : 1 }]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Stop screen mirroring"
-                    testID="button-stop-screen-mirroring"
-                  >
-                    <Ionicons name="stop-circle-outline" size={20} color={activeColors.destructiveForeground} />
-                    <Text style={[styles.primaryButtonText, { color: activeColors.destructiveForeground }]}>Stop mirroring</Text>
-                  </Pressable>
+                  <>
+                    {screenMirrorPausedForPayment ? (
+                      <>
+                        <Text style={[styles.urlHelp, { color: activeColors.accent }]} accessibilityLiveRegion="polite">
+                          Screen sharing is paused. Watch an ad for one more minute or buy Premium to continue.
+                        </Text>
+                        <Pressable
+                          onPress={() => showScreenMirrorLimitPrompt(currentRoomRef.current)}
+                          style={({ pressed }) => [styles.secondaryButton, { backgroundColor: activeColors.secondary, opacity: pressed ? 0.82 : 1 }]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Choose an ad or Premium to continue screen mirroring"
+                          testID="button-mirror-limit-options"
+                        >
+                          <Text style={[styles.secondaryButtonText, { color: activeColors.foreground }]}>Continue screen mirroring</Text>
+                        </Pressable>
+                      </>
+                    ) : null}
+                    <Pressable
+                      onPress={stopScreenMirror}
+                      style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.destructive, opacity: pressed ? 0.86 : 1 }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Stop screen mirroring"
+                      testID="button-stop-screen-mirroring"
+                    >
+                      <Ionicons name="stop-circle-outline" size={20} color={activeColors.destructiveForeground} />
+                      <Text style={[styles.primaryButtonText, { color: activeColors.destructiveForeground }]}>Stop mirroring</Text>
+                    </Pressable>
+                  </>
                 ) : (
                   <Pressable
                     onPress={() => requestScreenMirror()}
@@ -2434,7 +2666,7 @@ function FrameCastHomeScreen() {
                   >
                     <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
                     <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Preparing…' : !roomId ? 'Connect to the TV first' : 'Start screen mirroring'}
+                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Preparing…' : !roomId ? 'Connect to the TV first' : !isPremium && screenMirrorUnlockRoomRef.current !== roomId && screenMirrorFreeUsedRoomRef.current !== roomId ? 'Start screen mirroring · 1 minute free' : 'Start screen mirroring'}
                     </Text>
                   </Pressable>
                 )}
@@ -2450,7 +2682,7 @@ function FrameCastHomeScreen() {
                   ? videoStreaming && !paused && !videoEnded ? 'Playing' : stage === 'sending' ? 'Starting' : 'Ready'
                   : stage === 'sending' ? 'Sending' : 'Ready'}
                 canAdd={stage !== 'sending' && stage !== 'connecting' && mediaQueue.length < MAX_MEDIA_SELECTION_ITEMS}
-                bulkSelectionUnlocked={isPremium || (selectedMedia.kind === 'video' ? videoSelectionUnlocked : photoSelectionUnlocked)}
+                bulkSelectionUnlocked={isPremium}
                 adsEnabled={!isPremium}
                 addBusy={rewardedAdLoading || preparingMedia}
                 canControlVideo={stage === 'sent' || videoStreaming || localPlayback}
@@ -2483,8 +2715,8 @@ function FrameCastHomeScreen() {
                     <Ionicons name="images-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : isPremium || photoSelectionUnlocked ? 'Choose up to 20 photos' : 'Choose one photo free'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : 'Choose one photo now; add more from the playlist'}</Text>
+                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{mediaSelectionTitle('image')}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{mediaSelectionSubtitle('image')}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -2499,8 +2731,8 @@ function FrameCastHomeScreen() {
                     <Ionicons name="videocam-outline" size={23} color={activeColors.primary} />
                   </View>
                   <View style={styles.scanButtonCopy}>
-                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing videos on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : isPremium || videoSelectionUnlocked ? 'Choose up to 20 videos' : 'Choose one video free'}</Text>
-                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : 'Choose one video now; add more from the playlist'}</Text>
+                      <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{mediaSelectionTitle('video')}</Text>
+                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{mediaSelectionSubtitle('video')}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
