@@ -35,6 +35,7 @@ import {
 } from '@/lib/local-playback-fallback';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { getYouTubeVideoId } from '@/lib/youtube';
+import { findAdjacentVideoIndex } from '@/lib/video-playlist-controls';
 import {
   backgroundCastingAvailable,
   onBackgroundControl,
@@ -2072,7 +2073,13 @@ function FrameCastHomeScreen() {
   const backgroundControlRef = useRef<(action: string) => void>(() => undefined);
   backgroundControlRef.current = action => {
     if (action === 'disconnect') leaveRoom();
-    else sendPlaybackControl(action);
+    else if (action === 'playlist:previous' || action === 'playlist:next') {
+      const direction = action === 'playlist:next' ? 1 : -1;
+      const index = findAdjacentVideoIndex(mediaQueueRef.current, queueIndexRef.current, direction);
+      if (index !== null) playQueuedItemRef.current(index);
+    } else {
+      sendPlaybackControl(action);
+    }
   };
 
   useEffect(() => onBackgroundControl(action => backgroundControlRef.current(action)), []);

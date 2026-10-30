@@ -8,7 +8,6 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.Bundle
 import com.facebook.react.HeadlessJsTaskService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.jstasks.HeadlessJsTaskConfig
@@ -33,14 +32,8 @@ class BackgroundCastingService : HeadlessJsTaskService() {
         override fun onPlay() = control("play")
         override fun onPause() = control("pause")
         override fun onStop() = control("disconnect")
-        override fun onFastForward() = control("video:seek-by:10")
-        override fun onRewind() = control("video:seek-by:-10")
-        override fun onSkipToNext() = control("video:seek-by:10")
-        override fun onSkipToPrevious() = control("video:seek-by:-10")
-        override fun onSeekTo(pos: Long) = control("video:seek:${pos / 1000}")
-        override fun onCustomAction(action: String, extras: Bundle?) {
-          if (action == "video:seek-by:-10" || action == "video:seek-by:10" || action == "disconnect") control(action)
-        }
+        override fun onSkipToNext() = control("playlist:next")
+        override fun onSkipToPrevious() = control("playlist:previous")
       })
       isActive = true
     }
@@ -90,11 +83,8 @@ class BackgroundCastingService : HeadlessJsTaskService() {
 
   private fun notification(): Notification {
     val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
-      PlaybackState.ACTION_STOP or PlaybackState.ACTION_SEEK_TO or PlaybackState.ACTION_FAST_FORWARD or PlaybackState.ACTION_REWIND
+      PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SKIP_TO_NEXT
     session.setPlaybackState(PlaybackState.Builder().setActions(actions)
-      .addCustomAction("video:seek-by:-10", "Back 10 seconds", android.R.drawable.ic_media_rew)
-      .addCustomAction("video:seek-by:10", "Forward 10 seconds", android.R.drawable.ic_media_ff)
-      .addCustomAction("disconnect", "Disconnect", android.R.drawable.ic_menu_close_clear_cancel)
       .setState(if (paused) PlaybackState.STATE_PAUSED else PlaybackState.STATE_PLAYING,
         (position * 1000).toLong(), if (paused) 0f else 1f).build())
     session.setMetadata(MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE, title)
@@ -107,11 +97,10 @@ class BackgroundCastingService : HeadlessJsTaskService() {
     return builder.setSmallIcon(android.R.drawable.ic_media_play).setContentTitle(title)
       .setContentText("Casting to TV • Tap to open FrameCast").setContentIntent(launch)
       .setOngoing(true).setOnlyAlertOnce(true).setVisibility(Notification.VISIBILITY_PRIVATE)
-      .addAction(android.R.drawable.ic_media_rew, "Back 10 seconds", command("video:seek-by:-10", 1))
+      .addAction(android.R.drawable.ic_media_previous, "Previous video", command("playlist:previous", 1))
       .addAction(if (paused) android.R.drawable.ic_media_play else android.R.drawable.ic_media_pause,
         if (paused) "Play" else "Pause", command(if (paused) "play" else "pause", 2))
-      .addAction(android.R.drawable.ic_media_ff, "Forward 10 seconds", command("video:seek-by:10", 3))
-      .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", command("disconnect", 4))
+      .addAction(android.R.drawable.ic_media_next, "Next video", command("playlist:next", 3))
       .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
       .build()
   }
