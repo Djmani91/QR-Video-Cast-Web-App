@@ -22,15 +22,15 @@ export const objectStorageClient = new Storage({
 
 const FRAMECAST_RELEASE_OBJECT =
   "framecast-releases/FrameCast-Android-1.1.10.aab";
-const FRAMECAST_TV_DISCOVERY_OBJECT =
-  "framecast-releases/FrameCast-Android-1.1.11.aab";
 
 export function getFrameCastReleaseAabFile() {
   return getFrameCastAabFile(FRAMECAST_RELEASE_OBJECT);
 }
 
-export function getFrameCastTvDiscoveryAabFile() {
-  return getFrameCastAabFile(FRAMECAST_TV_DISCOVERY_OBJECT);
+export function getFrameCastTvDiscoveryAabFile(
+  version: "1.1.11" | "1.1.12" = "1.1.11",
+) {
+  return getFrameCastAabFile(`framecast-releases/FrameCast-Android-${version}.aab`);
 }
 
 function getFrameCastAabFile(objectName: string) {

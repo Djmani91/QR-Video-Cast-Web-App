@@ -68,3 +68,9 @@ Do not diagnose Samsung's “This function is not supported” dialog as a fulls
 **Why:** The user's supplied phone footage includes HEVC/H.265 inside MP4. Repeated fullscreen changes did not resolve the reported playback failure. Repackaging that video does not turn it into H.264.
 
 **How to apply:** Inspect the actual source codec and distinguish decoding, transport, and fullscreen failures. A compatible H.264 rendition of the same content is a useful hardware control before another speculative APK; do not claim HEVC incompatibility on this TV is conclusively proven without that comparison.
+
+Samsung TV discovery only confirms that the device is present; it does not confirm that the browser opened. The TV can silently ignore an incorrectly formatted URL-input command even when remote control connected successfully.
+
+**Why:** FrameCast listed the Samsung TV and established its remote-control connection, but the browser did not navigate until the URL was sent using the TV's dedicated text-input command.
+
+**How to apply:** Treat discovery, remote-control connection, and browser navigation as separate success steps. Do not report a successful connection based only on SSDP discovery or a successful WebSocket handshake; verify browser opening on the actual TV.
