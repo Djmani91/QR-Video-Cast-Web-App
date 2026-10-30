@@ -14,9 +14,11 @@ function setup() {
   let loads = 0;
   let plays = 0;
   const context = {
+    config: { resumeAt: 0 },
     video: {
       currentTime: 23, error: { code: 2 },
       load() { loads++; this.currentTime = 0; },
+      pause() { this.paused = true; },
       addEventListener(name, fn) { listeners.set(name, fn); },
     },
     Date: { now: () => now },
@@ -39,22 +41,24 @@ test('temporary phone network failure keeps the room alive and retries playback'
   f.context.video.onerror();
   assert.equal(f.context.playback, 'opening');
   assert.equal(f.context.problem, '');
-  assert.match(f.context.notice.textContent, /one minute/);
+  assert.match(f.context.notice.textContent, /Trying the phone connection again/);
   f.tick(2000);
   assert.equal(f.loads, 1);
   assert.equal(f.plays, 1);
   f.listeners.get('loadedmetadata')();
   assert.equal(f.context.video.currentTime, 23);
 });
-test('native playback failure is not reported until the full grace period has elapsed', () => {
+test('an active phone-server failure is reported after the bounded retry window', () => {
   const f = setup();
+  f.context.video.onplaying();
   f.context.video.onerror();
-  f.tick(59_999);
+  f.tick(14_999);
   f.context.video.onerror();
   assert.equal(f.context.playback, 'opening');
   f.tick(1);
   f.context.video.onerror();
   assert.equal(f.context.playback, 'error');
+  assert.equal(f.context.problem, 'TV_LOCAL_SERVER_UNREACHABLE');
 });
 test('a recovered phone cancels retries and keeps normal playback', () => {
   const f = setup();

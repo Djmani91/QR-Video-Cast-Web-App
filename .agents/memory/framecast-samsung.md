@@ -57,6 +57,12 @@ After a phone pairs, the user wants the TV to switch to a full-viewport cinema s
 
 **How to apply:** Make the page fill the TV viewport whether or not browser fullscreen is granted. Try document fullscreen once per paired room, but keep a clearly visible remote-selectable Full screen button because Samsung may block automatic fullscreen. Do not replace or disrupt the existing active-media fullscreen path.
 
+When a playlist video ends, keep the TV on its full-screen player while the next video loads; do not flash the pairing QR or return to the main page between tracks.
+
+**Why:** The user explicitly requested a steady full-screen handoff with a brief loading state instead of the player shrinking and the TV showing its pairing screen.
+
+**How to apply:** Notify the TV before switching the phone connection, preserve the immersive TV layout through the next-video transfer, and clear the loading state when playback starts. Validate on the real Samsung TV.
+
 Do not diagnose Samsung's “This function is not supported” dialog as a fullscreen failure from the wording alone. Fullscreen capability does not establish video-decoder compatibility, and MP4 is a container, not a codec.
 
 **Why:** The user's supplied phone footage includes HEVC/H.265 inside MP4. Repeated fullscreen changes did not resolve the reported playback failure. Repackaging that video does not turn it into H.264.

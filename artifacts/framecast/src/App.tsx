@@ -898,6 +898,14 @@ function TvPage() {
         correctNativeFullscreen();
         return;
       }
+      if (playlistTransitioningRef.current) {
+        setBrowserFullscreen(fullscreen);
+        autoFullscreen.observe(fullscreen);
+        setVideoReturnedInline(false);
+        setNeedsVideoFullscreen(false);
+        revealTvControls();
+        return;
+      }
       setBrowserFullscreen(fullscreen);
       autoFullscreen.observe(fullscreen);
       setVideoReturnedInline(!fullscreen);
