@@ -2,7 +2,10 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { logger } from "../lib/logger";
-import { getFrameCastReleaseAabFile } from "../lib/object-storage";
+import {
+  getFrameCastReleaseAabFile,
+  getFrameCastTvDiscoveryAabFile,
+} from "../lib/object-storage";
 
 const router: IRouter = Router();
 const apkPath = resolve(
@@ -49,15 +52,27 @@ router.get("/download/framecast-diagnostic.apk", (_req, res): void => {
   });
 });
 
-router.get("/download/framecast-release.aab", sendFrameCastReleaseAab);
-router.head("/download/framecast-release.aab", sendFrameCastReleaseAab);
+router.get("/download/framecast-release.aab", (req, res) =>
+  sendFrameCastAab(req, res, getFrameCastReleaseAabFile, "1.1.10"),
+);
+router.head("/download/framecast-release.aab", (req, res) =>
+  sendFrameCastAab(req, res, getFrameCastReleaseAabFile, "1.1.10"),
+);
+router.get("/download/framecast-release-1.1.11.aab", (req, res) =>
+  sendFrameCastAab(req, res, getFrameCastTvDiscoveryAabFile, "1.1.11"),
+);
+router.head("/download/framecast-release-1.1.11.aab", (req, res) =>
+  sendFrameCastAab(req, res, getFrameCastTvDiscoveryAabFile, "1.1.11"),
+);
 
-async function sendFrameCastReleaseAab(
+async function sendFrameCastAab(
   req: Request,
   res: Response,
+  getFile: typeof getFrameCastReleaseAabFile,
+  version: string,
 ): Promise<void> {
   try {
-    const file = getFrameCastReleaseAabFile();
+    const file = getFile();
     const [exists] = await file.exists();
     if (!exists) {
       res.status(404).send("The FrameCast Android App Bundle is not available.");
@@ -73,7 +88,7 @@ async function sendFrameCastReleaseAab(
     res.setHeader("Content-Type", "application/vnd.android.package-archive");
     res.setHeader(
       "Content-Disposition",
-      'attachment; filename="FrameCast-Android-1.1.10.aab"',
+      `attachment; filename="FrameCast-Android-${version}.aab"`,
     );
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Accept-Ranges", "bytes");

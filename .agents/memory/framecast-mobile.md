@@ -183,7 +183,9 @@ For Android test builds, provide a direct download URL rather than only a Replit
 
 **Why:** The user has repeatedly asked for a clickable direct APK download after card-based downloads failed.
 
-**How to apply:** When the workspace is unstable, use a temporary App Storage GET URL so the download does not depend on a running development server. Present the exact URL returned by the storage signer, and verify an actual ranged GET plus the total file size before sharing it. Do not reconstruct the URL or use HEAD to validate a GET-signed URL. The FrameCast API download route is a fallback only while its server is online.
+**Why:** Replit-sidecar external-account credentials can upload and stream App Storage objects but do not provide the service-account email required by the GCS SDK signer; a development API link also depends on its workflow staying online.
+
+**How to apply:** Prefer a platform-generated temporary App Storage GET URL when a signer is available. Share the exact returned URL and verify it with a ranged GET and total size; never reconstruct it or use HEAD for a GET-signed URL. If signing is unavailable, use a versioned API download link only while its server is running, keep earlier release objects untouched, and publish the route before treating the link as permanent.
 
 Keep upload signing strict: a configured upload password without its keystore must fail rather than silently produce a debug-signed release. For a test APK intended to update the existing debug-signed app, remove both upload-signing variables only from that build process and verify the resulting certificate matches the installed test build.
 
