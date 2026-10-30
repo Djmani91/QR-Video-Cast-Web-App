@@ -27,3 +27,14 @@ test('cinema standby never unmounts the TV video receiver', () => {
     ts.isJsxAttribute(prop) && prop.name.getText(source) === 'playsInline' && !prop.initializer),
   'keep the receiver inline until explicitly entering safe fullscreen');
 });
+
+test('TV stays immersive and reports video end while the next playlist item loads', () => {
+  const sourceText = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+
+  assert.match(sourceText, /ended:\s*video\.ended/);
+  assert.match(sourceText, /const events = \[[^\]]*'ended'[^\]]*\]/);
+  assert.match(sourceText, /packet\.framecast === 'playlist-next-loading'/);
+  assert.match(sourceText, /status !== 'connected' && !playlistTransitioning/);
+  assert.match(sourceText, /data-testid="status-tv-next-video"/);
+  assert.match(sourceText, /playlistTransitioning\s*\|\|\s*\(status === 'connected'/);
+});

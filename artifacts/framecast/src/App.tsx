@@ -501,6 +501,9 @@ function TvPage() {
   const autoCinemaFullscreenRoomRef = useRef<string | null>(null);
   const [needsVideoFullscreen, setNeedsVideoFullscreen] = useState(false);
   const [videoReturnedInline, setVideoReturnedInline] = useState(false);
+  const [playlistTransitioning, setPlaylistTransitioning] = useState(false);
+  const playlistTransitioningRef = useRef(false);
+  const playlistTransitionTimerRef = useRef<number | null>(null);
   const [photoReturnedInline, setPhotoReturnedInline] = useState(false);
   const [needsPhotoFullscreen, setNeedsPhotoFullscreen] = useState(false);
   const photoFullscreenAttemptedRef = useRef(false);
@@ -518,6 +521,37 @@ function TvPage() {
   const videoMediaChannelRef = useRef<RTCDataChannel | null>(null);
   const phoneRenderedVideoRef = useRef(false);
   const phoneVideoStateRef = useRef<PhoneVideoState | null>(null);
+  const finishPlaylistTransition = useCallback(() => {
+    playlistTransitioningRef.current = false;
+    setPlaylistTransitioning(false);
+    if (playlistTransitionTimerRef.current !== null) {
+      window.clearTimeout(playlistTransitionTimerRef.current);
+      playlistTransitionTimerRef.current = null;
+    }
+  }, []);
+  const beginPlaylistTransition = useCallback((channel: RTCDataChannel) => {
+    playlistTransitioningRef.current = true;
+    setPlaylistTransitioning(true);
+    setVideoReturnedInline(false);
+    setError('');
+    if (playlistTransitionTimerRef.current !== null) window.clearTimeout(playlistTransitionTimerRef.current);
+    playlistTransitionTimerRef.current = window.setTimeout(() => {
+      if (!playlistTransitioningRef.current) return;
+      finishPlaylistTransition();
+      setVideoReturnedInline(true);
+      setError('The next video did not start. Reconnect from the phone and try again.');
+    }, 90_000);
+    try {
+      if (channel.readyState === 'open') {
+        channel.send(JSON.stringify({ framecast: 'playlist-next-loading-ack' }));
+      }
+    } catch {
+      // Keep the transition screen until playback starts or the timeout expires.
+    }
+  }, [finishPlaylistTransition]);
+  useEffect(() => () => {
+    if (playlistTransitionTimerRef.current !== null) window.clearTimeout(playlistTransitionTimerRef.current);
+  }, []);
   const relayPhoneVideoCommand = useCallback((action: string) => {
     const channel = controlChannelRef.current;
     if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'live-command', action }));
@@ -737,6 +771,7 @@ function TvPage() {
       currentTime: phoneVideoStateRef.current?.currentTime ?? video.currentTime,
       duration: phoneVideoStateRef.current?.duration ?? (Number.isFinite(video.duration) ? video.duration : 0),
       paused: phoneVideoStateRef.current?.paused ?? video.paused,
+      ended: video.ended,
       volume: video.muted ? 0 : video.volume,
       fitMode: videoFitModeRef.current,
     }));
@@ -812,7 +847,7 @@ function TvPage() {
     const video = videoRef.current;
     if (!video) return;
     const update = () => sendVideoState();
-    const events = ['timeupdate', 'play', 'pause', 'durationchange', 'volumechange', 'seeked', 'loadedmetadata'];
+    const events = ['timeupdate', 'play', 'pause', 'ended', 'durationchange', 'volumechange', 'seeked', 'loadedmetadata'];
     for (const eventName of events) video.addEventListener(eventName, update);
     return () => {
       for (const eventName of events) video.removeEventListener(eventName, update);
@@ -823,6 +858,10 @@ function TvPage() {
     if (!video) return;
     const onPlaying = () => {
       if (video.readyState < 2 || !video.videoWidth || !video.videoHeight || video.paused) return;
+      if (playlistTransitioningRef.current) {
+        setVideoReturnedInline(false);
+        finishPlaylistTransition();
+      }
       if (phoneRenderedVideoRef.current && phoneVideoStateRef.current?.paused) relayPhoneVideoCommand('play');
       const channel = videoMediaChannelRef.current;
       if (channel?.readyState === 'open') channel.send(JSON.stringify({ framecast: 'streaming' }));
@@ -889,7 +928,7 @@ function TvPage() {
       document.removeEventListener('fullscreenchange', onExit);
       document.removeEventListener('webkitfullscreenchange', onExit);
     };
-  }, [revealTvControls, mediaKind, applyVideoOrientation, requestPlaybackFullscreen, autoFullscreen, sendVideoState]);
+  }, [revealTvControls, mediaKind, applyVideoOrientation, requestPlaybackFullscreen, autoFullscreen, sendVideoState, finishPlaylistTransition]);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -1082,12 +1121,13 @@ function TvPage() {
   };
   useEffect(() => {
     if (!createdRoom) return;
+    finishPlaylistTransition();
     resumeAfterRef.current = 0;
     setRoom(createdRoom);
     setStatus('idle');
     seenRef.current.clear();
     queuedCandidates.current = [];
-  }, [createdRoom]);
+  }, [createdRoom, finishPlaylistTransition]);
   useEffect(() => {
     if (!room && !creatingRoom && !createdRoom && !createRoomError) {
       createRoomRef.current();
@@ -1136,6 +1176,7 @@ function TvPage() {
           setError('The phone supplied an invalid local playback address. Reconnect it to your home Wi-Fi and try again.');
         }
       } else if (signal.type === 'ready') {
+        finishPlaylistTransition();
         const connectionState = peerRef.current?.connectionState;
         if (!peerRef.current || connectionState === 'failed' || connectionState === 'disconnected' || connectionState === 'closed') {
           if (peerRef.current) {
@@ -1636,6 +1677,10 @@ function TvPage() {
                   if (command.startsWith('{')) {
                     try {
                       const packet = JSON.parse(command) as { framecast?: string; nonce?: string };
+                      if (packet.framecast === 'playlist-next-loading') {
+                        beginPlaylistTransition(channel);
+                        return;
+                      }
                       if (packet.framecast === 'session-probe') {
                         if (channel.readyState === 'open') channel.send(JSON.stringify({ framecast: 'session-alive', nonce: packet.nonce }));
                         connectionGrace.cancel();
@@ -1826,6 +1871,7 @@ function TvPage() {
                   return;
                 }
                 if (connectionGrace.pending) return;
+                finishPlaylistTransition();
                 setStatus('failed');
                 setError('The direct connection was interrupted. Ask the guest to reconnect.');
               } else if (peer.connectionState === 'connecting') setStatus('connecting');
@@ -1845,6 +1891,7 @@ function TvPage() {
           } catch (negotiationError) {
             if (offerPeer && peerRef.current !== offerPeer) return;
             console.error('FrameCast TV could not negotiate the direct connection:', negotiationError);
+            finishPlaylistTransition();
             stopPeer();
             queuedCandidates.current = [];
             setStatus('failed');
@@ -1861,6 +1908,7 @@ function TvPage() {
         }
       } else if (signal.type === 'close') {
         if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
+        finishPlaylistTransition();
         const fullscreenDocument = document as Document & {
           webkitFullscreenElement?: Element | null;
           webkitCurrentFullScreenElement?: Element | null;
@@ -1884,7 +1932,7 @@ function TvPage() {
         setStatus('idle');
       }
     }
-  }, [messages, roomId, send, stopPeer]);
+  }, [messages, roomId, send, stopPeer, beginPlaylistTransition, finishPlaylistTransition]);
 
   const startRoom = () => {
     sessionStorage.removeItem('framecast-tv-resume');
@@ -1965,7 +2013,7 @@ function TvPage() {
   }, [room?.id, showCinemaStandby]);
 
   return (
-    <div className={`app-shell${showCinemaStandby ? ' tv-cinema-standby' : status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) && !(mediaKind === 'image' && photoReturnedInline) ? ' tv-immersive-playback' : ''}`}>
+    <div className={`app-shell${showCinemaStandby ? ' tv-cinema-standby' : playlistTransitioning || (status === 'connected' && !(mediaKind === 'video' && videoReturnedInline) && !(mediaKind === 'image' && photoReturnedInline)) ? ' tv-immersive-playback' : ''}`}>
       {showCinemaStandby && (
         <div className="tv-cinema-overlay">
         <TvCinemaWaitingScreen
@@ -2004,7 +2052,7 @@ function TvPage() {
                 </button>
               </div>
             </div>
-            <div className={!youtubeVideoId && status === 'connected' && mediaKind === 'video' ? 'tv-video-stage' : 'sr-only'}>
+            <div className={!youtubeVideoId && (status === 'connected' || playlistTransitioning) && mediaKind === 'video' ? 'tv-video-stage' : 'sr-only'}>
             <video
               ref={videoRef}
               className="video-preview"
@@ -2066,14 +2114,21 @@ function TvPage() {
                 )}
               </>
             )}
-            {status === 'connected' && transferProgress !== null && transferProgress < 100 && (mediaKind !== 'image' || receivedImages.length === 0) && (
+            {status === 'connected' && !playlistTransitioning && !videoStreamActive && transferProgress !== null && transferProgress < 100 && (mediaKind !== 'image' || receivedImages.length === 0) && (
               <div className="tv-transfer-status" role="status" data-testid="status-tv-transfer">
                 <span className="tv-transfer-spinner" />
                 <strong>Receiving {mediaKind === 'image' ? 'photo' : 'video'}</strong>
                 <span>{videoStreamActive ? `Playing while transfer continues · ${transferProgress}%` : `${transferProgress}% · keep your devices awake`}</span>
               </div>
             )}
-            {status !== 'connected' && (
+            {playlistTransitioning && (
+              <div className="tv-transfer-status" role="status" aria-live="polite" data-testid="status-tv-next-video">
+                <span className="tv-transfer-spinner" />
+                <strong>Loading next video</strong>
+                <span>Stay on this screen while playback switches.</span>
+              </div>
+            )}
+            {status !== 'connected' && !playlistTransitioning && (
               <div className="qr-frame" data-testid="status-pairing-code" aria-label={room ? 'Scan the QR code to pair your phone' : 'Pairing code not created'}>
                 {room && !roomExpired
                   ? <QRCodeSVG value={phoneUrl} size={184} level="M" marginSize={1} />

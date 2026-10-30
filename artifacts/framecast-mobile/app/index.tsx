@@ -423,6 +423,7 @@ function FrameCastHomeScreen() {
   const peerRef = useRef<PeerLike | null>(null);
   const mediaChannelRef = useRef<DataChannelLike | null>(null);
   const controlChannelRef = useRef<DataChannelLike | null>(null);
+  const playlistTransitionAckRef = useRef<(() => void) | null>(null);
   const localSessionRef = useRef<string | null>(null);
   const localOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localFallbackRef = useRef<(() => void) | null>(null);
@@ -592,6 +593,8 @@ function FrameCastHomeScreen() {
     urlCastActiveRef.current = false;
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
+    playlistTransitionAckRef.current?.();
+    playlistTransitionAckRef.current = null;
     videoStreamingRef.current = false;
     setVideoStreaming(false);
     setRemoteVideoPosition({ currentTime: 0, duration: 0, volume: 0 });
@@ -1529,6 +1532,10 @@ function FrameCastHomeScreen() {
               fullscreen?: boolean;
               needsGesture?: boolean;
             };
+            if (packet.framecast === 'playlist-next-loading-ack') {
+              playlistTransitionAckRef.current?.();
+              return;
+            }
             if (packet.framecast === 'fullscreen-state') {
               if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
               fullscreenAckTimerRef.current = null;
@@ -1853,6 +1860,30 @@ function FrameCastHomeScreen() {
   };
   playQueuedItemRef.current = playQueuedItem;
 
+  const requestTvPlaylistTransition = async () => {
+    const channel = controlChannelRef.current;
+    if (channel?.readyState !== 'open') return;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        if (playlistTransitionAckRef.current === finish) playlistTransitionAckRef.current = null;
+        resolve();
+      };
+      playlistTransitionAckRef.current = finish;
+      timeout = setTimeout(finish, 1200);
+      try {
+        channel.send(JSON.stringify({ framecast: 'playlist-next-loading' }));
+      } catch {
+        finish();
+      }
+    });
+  };
+
   const continueVideoQueue = async (completedIndex: number) => {
     const completedItem = mediaQueueRef.current[completedIndex];
     const nextItem = mediaQueueRef.current[completedIndex + 1];
@@ -1860,6 +1891,9 @@ function FrameCastHomeScreen() {
 
     completedVideosSinceInterstitialRef.current += 1;
     const roomAtVideoEnd = currentRoomRef.current;
+    await requestTvPlaylistTransition();
+    if (currentRoomRef.current !== roomAtVideoEnd || queueIndexRef.current !== completedIndex) return;
+
     const now = Date.now();
     const shouldShowBreakAd = !isPremium
       && Platform.OS === 'android'
