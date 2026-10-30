@@ -90,7 +90,7 @@ export function MediaPlaylist({
   ].filter(Boolean).join(' · ');
   const itemCountLabel = items.length === 1 ? '1 item' : `${items.length} items`;
   const galleryCountLabel = !bulkSelectionUnlocked && items.length < 20
-    ? `${itemCountLabel} · watch an ad to choose up to 20 ${selected.kind === 'video' ? 'videos' : 'photos'}`
+    ? `${itemCountLabel} · tap Add to choose more`
     : items.length === 1 ? '1 item · tap one to play' : `${itemCountLabel} · tap one to play`;
 
   const previewContent = (
@@ -173,16 +173,12 @@ export function MediaPlaylist({
               style={[styles.galleryAction, { backgroundColor: colors.secondary, opacity: addBusy ? 0.55 : 1 }]}
               onPress={onAdd}
               accessibilityRole="button"
-              accessibilityLabel={addBusy
-                ? 'Loading rewarded ad'
-                : bulkSelectionUnlocked
-                  ? `Add more ${selected.kind === 'video' ? 'videos' : 'photos'}`
-                  : `Watch a rewarded ad to choose up to 20 ${selected.kind === 'video' ? 'videos' : 'photos'}`}
+              accessibilityLabel={addBusy ? 'Preparing to add more media' : `Add more ${selected.kind === 'video' ? 'videos' : 'photos'}`}
               testID={`button-add-more-${selected.kind === 'video' ? 'videos' : 'photos'}`}
             >
-              <Ionicons name={bulkSelectionUnlocked ? 'add' : 'play-circle-outline'} size={17} color={colors.primary} />
+              <Ionicons name="add-outline" size={17} color={colors.primary} />
               <Text style={[styles.galleryActionText, { color: colors.primary }]}>
-                {addBusy ? 'Loading' : bulkSelectionUnlocked ? 'Add' : 'Watch ad'}
+                {addBusy ? 'Loading' : 'Add'}
               </Text>
             </Pressable>
           ) : null}

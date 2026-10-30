@@ -235,7 +235,7 @@ export function AppSettings({
                     <Ionicons name="shield-checkmark-outline" size={20} color={colors.primary} />
                     <View style={styles.tutorialCopy}>
                       <Text style={[styles.subhead, { color: colors.foreground }]}>Advertising privacy choices</Text>
-                      <Text style={[styles.small, { color: colors.mutedForeground }]}>Review or change advertising consent</Text>
+                      <Text style={[styles.small, { color: colors.mutedForeground }]}>Review or change Google ad consent</Text>
                     </View>
                     <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />
                   </Pressable>

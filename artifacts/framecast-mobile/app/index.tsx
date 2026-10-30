@@ -1030,7 +1030,7 @@ function FrameCastHomeScreen() {
     if (selectionLimit < 1) {
       setError(unlocked
         ? `You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} photos in this TV session.`
-        : 'One photo is free. Watch a rewarded ad to choose up to 20 photos.');
+          : 'One photo is free. Tap Add in the playlist to choose more.');
       return;
     }
     try {
@@ -1086,7 +1086,7 @@ function FrameCastHomeScreen() {
     if (remainingSlots < 1) {
       setError(unlocked
         ? `You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} videos in this TV session.`
-        : 'One video is free. Watch a rewarded ad to choose up to 20 videos.');
+        : 'One video is free. Tap Add in the playlist to choose more.');
       return;
     }
     try {
@@ -1894,7 +1894,7 @@ function FrameCastHomeScreen() {
       Alert.alert(
         'Advertising privacy',
         opened
-          ? 'Your advertising privacy choices have been updated.'
+          ? 'Your Google advertising privacy choices have been updated.'
           : 'No additional advertising privacy choices are currently required for your region.',
       );
     } catch {
@@ -2114,6 +2114,10 @@ function FrameCastHomeScreen() {
                   setError('The TV connection changed while the ad was playing. Screen mirroring is unlocked; tap Start again.');
                   return;
                 }
+                await startScreenMirror();
+              } else if (result === 'no-fill' && currentRoomRef.current === roomAtPrompt) {
+                screenMirrorUnlockRoomRef.current = roomAtPrompt;
+                setScreenMirrorUnlocked(true);
                 await startScreenMirror();
               } else if (result === 'cancelled' && currentRoomRef.current) {
                 setError('The ad was not completed. Screen mirroring has not started.');
@@ -2350,12 +2354,12 @@ function FrameCastHomeScreen() {
                     disabled={!roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending'}
                     style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !roomId || screenMirrorStarting || rewardedAdLoading || stage === 'connecting' || stage === 'sending' ? 0.55 : pressed ? 0.86 : 1 }]}
                     accessibilityRole="button"
-                    accessibilityLabel={isPremium || screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch a rewarded ad to unlock screen mirroring'}
+                    accessibilityLabel="Start screen mirroring"
                     testID="button-start-screen-mirroring"
                   >
                     <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
                     <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Loading rewarded ad…' : !roomId ? 'Connect to the TV first' : isPremium || screenMirrorUnlocked ? 'Start screen mirroring' : 'Watch ad to unlock mirroring'}
+                      {screenMirrorStarting ? 'Waiting for permission…' : rewardedAdLoading ? 'Preparing…' : !roomId ? 'Connect to the TV first' : 'Start screen mirroring'}
                     </Text>
                   </Pressable>
                 )}
@@ -2405,7 +2409,7 @@ function FrameCastHomeScreen() {
                   </View>
                   <View style={styles.scanButtonCopy}>
                     <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing media on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : isPremium || photoSelectionUnlocked ? 'Choose up to 20 photos' : 'Choose one photo free'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : isPremium || photoSelectionUnlocked ? 'Select photos and they appear on the TV automatically' : 'Watch a rewarded ad to choose up to 20 photos'}</Text>
+                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the transfer can finish' : 'Choose one photo now; add more from the playlist'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
@@ -2421,7 +2425,7 @@ function FrameCastHomeScreen() {
                   </View>
                   <View style={styles.scanButtonCopy}>
                       <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{preparingMedia ? 'Preparing videos on this phone…' : rewardedAdLoading ? 'Loading rewarded ad…' : isPremium || videoSelectionUnlocked ? 'Choose up to 20 videos' : 'Choose one video free'}</Text>
-                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : videoSelectionUnlocked || isPremium ? 'First video starts now; the next plays when it ends' : 'Watch a rewarded ad to choose up to 20 videos'}</Text>
+                      <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{preparingMedia ? 'Keeping temporary access so the playlist can play' : 'Choose one video now; add more from the playlist'}</Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
                 </Pressable>
