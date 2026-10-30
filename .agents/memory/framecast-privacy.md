@@ -10,3 +10,9 @@ Selected media may use direct WebRTC media tracks/data channels or the native co
 **Why:** The user requires non-persistent media transfer for privacy in the UK and other countries, confirmed both devices should use the same Wi-Fi, approved STUN-only discovery while keeping local media direct, and requested video-link playback.
 
 **How to apply:** Keep media out of the API and persistent storage. Use STUN for candidate discovery only; never add TURN implicitly. For linked media, explain that the source serves the TV directly and may apply its own access controls. Treat the 4-hour limit as inactivity expiry, not a guarantee against Wi-Fi loss, browser suspension, or server restarts. Release TV-side in-memory chunks/object URLs on disconnect, new room, or page close; explain same-Wi-Fi requirements, and do not present the design as a legal-compliance certification.
+
+Google Analytics is optional and must remain off until each customer explicitly opts in. An app owner's request to enable analytics by default is not customer consent.
+
+**Why:** The app's analytics setting collects usage and device information, so silently enabling it would remove the customer's choice.
+
+**How to apply:** Keep analytics collection disabled unless the individual user enables it in the app. Do not infer consent from Premium status, purchase, or app installation.

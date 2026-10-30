@@ -131,11 +131,11 @@ The user wants returning to the same phone browser to reconnect to the same TV a
 
 **How to apply:** Separate pairing intent from an individual WebRTC peer. Probe the existing transport on return and recreate it automatically in the same room when stale. Preserve selected files and playback state in the live page; suppress overlapping repairs and ignore replies/candidates/closes from replaced sessions. An explicit Disconnect or TV room replacement must cancel recovery. Be clear that the OS can suspend playback/networking, closing the tab loses in-memory files, and server restarts or a genuinely expired room cannot be repaired from browser state alone.
 
-Keep the phone's first screen connection-first: a concise TV browser instruction, QR scan, and code entry instead of a large marketing hero. Background casting is a saved one-time Android preference: ask once, then start automatically on later pairings while enabled; Disconnect stops only the current session.
+Keep the phone's first screen connection-first: a concise TV browser instruction, QR scan, and code entry instead of a large marketing hero. Android background casting is Premium-only and starts automatically for every paired room while Premium is active; free casting stops when FrameCast is backgrounded.
 
-**Why:** The user clarified that customers should opt in once rather than enable background casting on every session, while keeping the TV connected when switching apps.
+**Why:** The user clarified that a Premium customer should not have to enable a separate background-casting switch; an unchecked preference made the paid feature appear broken.
 
-**How to apply:** Persist the preference on the phone and expose it in Settings. On the first pairing show Enable/Not now once; if enabled, auto-start the Android foreground service for each room. Disconnect stops the service but preserves the preference. Keep the OS permission prompt and notification visible; do not promise casting after force-stop, network loss, or OS termination.
+**How to apply:** Start the Android foreground service automatically when a paired room has an active Premium entitlement, and stop it for free users or on disconnect. Keep the Android casting notification visible and respect Android notification and MediaProjection consent; never promise recovery after force-stop, network loss, or OS termination.
 
 Use neutral video-link wording, not YouTube-specific branding, in the mobile app's URL section.
 

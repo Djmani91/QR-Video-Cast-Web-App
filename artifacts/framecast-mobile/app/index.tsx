@@ -75,7 +75,6 @@ import {
 
 const TV_BROWSER_ADDRESS = '2tx1.com';
 const CLOUDCONVERT_VIDEO_URL = 'https://cloudconvert.com/video-converter';
-const BACKGROUND_CASTING_PREFERENCE_KEY = 'framecast.backgroundCastingEnabled.v1';
 
 import {
   getGetCastRoomMessagesQueryKey,
@@ -376,11 +375,8 @@ function FrameCastHomeScreen() {
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
   const [backgroundEnabled, setBackgroundEnabled] = useState(false);
-  const [backgroundPreference, setBackgroundPreference] = useState<boolean | null>(null);
-  const [backgroundPreferenceLoaded, setBackgroundPreferenceLoaded] = useState(false);
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
   const backgroundStartedRoomRef = useRef('');
-  const backgroundPromptedRoomRef = useRef('');
   const backgroundBlockedByPremiumRef = useRef(false);
   const adOverlayActiveRef = useRef(false);
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
@@ -505,19 +501,6 @@ function FrameCastHomeScreen() {
     }
   }, []);
 
-  const saveBackgroundPreference = useCallback(async (enabled: boolean) => {
-    if (enabled && !premiumStateRef.current) {
-      openPaywall();
-      return;
-    }
-    setBackgroundPreference(enabled);
-    try {
-      await AsyncStorage.setItem(BACKGROUND_CASTING_PREFERENCE_KEY, enabled ? '1' : '0');
-    } catch {
-      setError('FrameCast could not save this background casting choice. Please check the app storage and try again.');
-    }
-  }, [openPaywall]);
-
   const saveAnalyticsConsent = useCallback(async (enabled: boolean) => {
     await setAppAnalyticsConsent(enabled);
     setAnalyticsEnabled(enabled);
@@ -530,30 +513,6 @@ function FrameCastHomeScreen() {
     });
     return () => {
       mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!backgroundCastingAvailable) {
-      setBackgroundPreference(false);
-      setBackgroundPreferenceLoaded(true);
-      return;
-    }
-
-    let active = true;
-    void AsyncStorage.getItem(BACKGROUND_CASTING_PREFERENCE_KEY).then((saved) => {
-      if (!active) return;
-      setBackgroundPreference(saved === '1' ? true : saved === '0' ? false : null);
-      setBackgroundPreferenceLoaded(true);
-    }).catch(() => {
-      if (!active) return;
-      setBackgroundPreference(false);
-      setBackgroundPreferenceLoaded(true);
-      setError('FrameCast could not read the saved background casting setting. You can still cast while the app is open.');
-    });
-
-    return () => {
-      active = false;
     };
   }, []);
 
@@ -2121,42 +2080,18 @@ function FrameCastHomeScreen() {
   useEffect(() => {
     if (!roomId) {
       backgroundStartedRoomRef.current = '';
-      backgroundPromptedRoomRef.current = '';
       setBackgroundEnabled(false);
       void stopBackgroundCasting().catch(() => undefined);
       return;
     }
 
-    if (!backgroundCastingAvailable || !backgroundPreferenceLoaded) return;
+    if (!backgroundCastingAvailable) return;
     if (subscriptionLoading) return;
 
     if (!isPremium) {
       backgroundStartedRoomRef.current = '';
       setBackgroundEnabled(false);
       void stopBackgroundCasting().catch(() => undefined);
-      if (backgroundPreference === true) void saveBackgroundPreference(false);
-      return;
-    }
-
-    if (backgroundPreference === null) {
-      if (backgroundPromptedRoomRef.current === roomId) return;
-      backgroundPromptedRoomRef.current = roomId;
-      Alert.alert(
-        'Enable background casting?',
-        'Choose once. If enabled, FrameCast will stay active in the background on future TV sessions. Android shows a casting notification. Not now still lets you cast while FrameCast is open.',
-        [
-          { text: 'Not now', style: 'cancel', onPress: () => { void saveBackgroundPreference(false); } },
-          { text: 'Enable', onPress: () => { void saveBackgroundPreference(true); } },
-        ],
-        { cancelable: false },
-      );
-      return;
-    }
-
-    if (!backgroundPreference) {
-      backgroundStartedRoomRef.current = '';
-      setBackgroundEnabled(false);
-      void stopBackgroundCasting().catch(() => setError('Background casting could not stop. Tap Disconnect and try again.'));
       return;
     }
 
@@ -2164,6 +2099,7 @@ function FrameCastHomeScreen() {
 
     const startingRoom = roomId;
     backgroundStartedRoomRef.current = startingRoom;
+    setBackgroundEnabled(false);
     void startBackgroundCasting({
       title: 'Connected to your TV',
       paused: false,
@@ -2181,7 +2117,7 @@ function FrameCastHomeScreen() {
         setError(reason instanceof Error ? reason.message : 'Background casting could not start. Allow notifications to keep the TV connected.');
       }
     });
-  }, [roomId, backgroundPreference, backgroundPreferenceLoaded, saveBackgroundPreference, isPremium, subscriptionLoading]);
+  }, [roomId, isPremium, subscriptionLoading]);
   useEffect(() => {
     if (backgroundEnabled && roomId) {
       updateBackgroundCasting({
@@ -2386,8 +2322,6 @@ function FrameCastHomeScreen() {
             onAnalyticsChange={saveAnalyticsConsent}
             clearDisabled={preparingMedia || checkingVideoLink}
             showBackgroundCasting={backgroundCastingAvailable}
-            backgroundCastingEnabled={backgroundPreference === true}
-            onBackgroundCastingChange={saveBackgroundPreference}
             premiumActive={isPremium}
             onOpenPremium={openPaywall}
             onManagePremium={() => {

@@ -12,8 +12,6 @@ type Props = {
   onAnalyticsChange: (enabled: boolean) => Promise<void>;
   clearDisabled?: boolean;
   showBackgroundCasting: boolean;
-  backgroundCastingEnabled: boolean;
-  onBackgroundCastingChange: (enabled: boolean) => void;
   premiumActive: boolean;
   onOpenPremium: () => void;
   onManagePremium: () => void;
@@ -36,8 +34,6 @@ export function AppSettings({
   onAnalyticsChange,
   clearDisabled = false,
   showBackgroundCasting,
-  backgroundCastingEnabled,
-  onBackgroundCastingChange,
   premiumActive,
   onOpenPremium,
   onManagePremium,
@@ -165,19 +161,15 @@ export function AppSettings({
                         <Text style={[styles.subhead, { color: colors.foreground }]}>Keep the TV connected in the background</Text>
                         <Text style={[styles.small, { color: colors.mutedForeground }]}>
                           {premiumActive
-                            ? 'Keep casting while you use other apps. Android keeps a casting notification visible.'
+                            ? 'Turns on automatically when you connect to a TV. Android keeps a casting notification visible.'
                             : 'Background casting is included with Premium. Keep FrameCast open to cast with ads.'}
                         </Text>
                       </View>
                       {premiumActive ? (
-                        <Switch
-                          value={backgroundCastingEnabled}
-                          onValueChange={onBackgroundCastingChange}
-                          trackColor={{ false: colors.border, true: colors.primary }}
-                          thumbColor={colors.card}
-                          accessibilityLabel="Keep the TV connected in the background"
-                          testID="switch-background-casting"
-                        />
+                        <View style={styles.backgroundStatus} testID="background-casting-automatic">
+                          <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                          <Text style={[styles.subhead, { color: colors.primary }]}>Automatic</Text>
+                        </View>
                       ) : (
                         <Pressable
                           onPress={onOpenPremium}
@@ -331,6 +323,7 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 16, padding: 14, gap: 10 },
   row: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  backgroundStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   analyticsSetting: { gap: 8, paddingVertical: 4 },
   settingCopy: { flex: 1, gap: 5 },
   tutorialButton: { minHeight: 64, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 12, marginTop: 4 },
