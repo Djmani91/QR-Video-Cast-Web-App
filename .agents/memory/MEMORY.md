@@ -14,3 +14,4 @@
 - [FrameCast App Store packaging](framecast-appstore-packaging.md) — App Store uploads may include generated artifacts despite ignore files; preserve Android signing material before cleanup.
 - [FrameCast ad placement](framecast-ad-placement.md) — keep pairing ads, add an Android casting banner, and cap interstitials to video breaks only.
 - [FrameCast subscriptions](framecast-subscriptions.md) — show offers after first pairing; refresh RevenueCat on return from Play before deciding whether ads can run.
+- [FrameCast color palette](framecast-brand-colors.md) — preserve the user's approved purple, yellow, orange, blue, and red palette.

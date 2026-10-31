@@ -1,0 +1,92 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import 'tailwindcss';
+
+:root {
+  --color-primary: #073d2d;
+  --color-secondary: #7352a3;
+  --color-accent: #f68b36;
+  --color-bg-light: #f7f0dc;
+  --color-bg-dark: #062f25;
+  --color-bg-muted: #e8dfc7;
+  --color-text-primary: #073d2d;
+  --color-text-secondary: #5d6254;
+  --color-text-muted: #8c8e7e;
+  --color-text-inverse: #fff6e1;
+  --color-success: #72c34c;
+  --color-warning: #f3c74d;
+  --color-error: #e74f45;
+  --color-purple: #7352a3;
+  --color-yellow: #f3c74d;
+  --color-orange: #f68b36;
+  --color-blue: #53a8d6;
+  --color-red: #e74f45;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-primary: var(--color-primary);
+  --color-secondary: var(--color-secondary);
+  --color-accent: var(--color-accent);
+  --color-bg-light: var(--color-bg-light);
+  --color-bg-dark: var(--color-bg-dark);
+  --color-bg-muted: var(--color-bg-muted);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-inverse: var(--color-text-inverse);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-error: var(--color-error);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { font-family: var(--font-body); -webkit-font-smoothing: antialiased; }
+button { font: inherit; }
+
+.video-media-frame { box-sizing: border-box; height: 100%; min-height: 0; min-width: 0; overflow: hidden; width: 100%; }
+.video-media-frame > :is(img, video) { display: block; height: 100%; object-fit: cover; object-position: center; width: 100%; }
+.video-media-frame[data-media-fit='contain'] > :is(img, video) { object-fit: contain; }
+.video-media-frame[data-media-position='top'] > :is(img, video) { object-position: top; }
+.video-media-frame[data-media-position='right'] > :is(img, video) { object-position: right; }
+.video-media-frame[data-media-position='bottom'] > :is(img, video) { object-position: bottom; }
+.video-media-frame[data-media-position='left'] > :is(img, video) { object-position: left; }
+
+.fc-scene { position: absolute; inset: 0; overflow: hidden; padding: 7.5vh 6vw 8vh; }
+.fc-eyebrow { font: 600 2.7vmin/1 var(--font-mono); letter-spacing: .13em; text-transform: uppercase; }
+.fc-head { font: 700 10vmin/.88 var(--font-display); letter-spacing: -.065em; margin: 0; }
+.fc-sub { font: 500 3.6vmin/1.2 var(--font-body); letter-spacing: -.025em; }
+.fc-micro { font: 500 2.15vmin/1.35 var(--font-mono); letter-spacing: .04em; }
+.fc-device-shadow { filter: drop-shadow(0 1.7vmin 1.5vmin rgba(2,25,17,.24)); }
+.fc-grain {
+  position: absolute; inset: 0; pointer-events: none; opacity: .09; z-index: 20;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.84' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.3'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+.fc-phone { position: relative; width: 38vw; height: 67vw; max-height: 34vh; border: .85vmin solid #f7f0dc; border-radius: 6vmin; background: #092f25; padding: 1.4vmin; box-shadow: inset 0 0 0 .35vmin rgba(255,255,255,.12); }
+.fc-phone-screen { width: 100%; height: 100%; border-radius: 4.7vmin; overflow: hidden; background: var(--color-bg-light); position: relative; }
+.fc-phone-notch { position: absolute; z-index: 2; top: .7vmin; left: 50%; width: 11vw; height: 2vmin; border-radius: 2vmin; background: #092f25; transform: translateX(-50%); }
+.fc-tv { position: relative; width: 76vw; border-radius: 5.2vmin; padding: 1.4vmin; background: #f7f0dc; box-shadow: inset 0 0 0 .32vmin rgba(255,255,255,.5); }
+.fc-tv-glass { position: relative; height: 43vw; max-height: 22vh; width: 100%; overflow: hidden; border-radius: 3.9vmin; background: #0c3c2c; }
+.fc-tv-stand { width: 21vw; height: 3.5vh; margin: -0.3vmin auto 0; position: relative; }
+.fc-tv-stand:before { content: ''; position: absolute; left: 50%; top: 0; width: 1.5vmin; height: 2.4vh; background: #f7f0dc; transform: translateX(-50%); }
+.fc-tv-stand:after { content: ''; position: absolute; bottom: 0; left: 15%; width: 70%; height: .8vmin; border-radius: 2vmin; background: #f7f0dc; }
+.fc-still { position: absolute; inset: 0; overflow: hidden; background: linear-gradient(150deg,#69b9c5 0 46%,#e8b950 46.3% 47%,#53794c 47.2% 100%); }
+.fc-still:before { content:''; position:absolute; width:55%; aspect-ratio:1; left:-3%; top:12%; border-radius:50%; background:#f5c95b; }
+.fc-still:after { content:''; position:absolute; inset:auto -8% -19% -8%; height:65%; background:#244d3d; clip-path:polygon(0 100%,35% 0,61% 62%,76% 24%,100% 100%); }
+.fc-play { position:absolute; left:50%; top:50%; transform:translate(-43%,-50%); width:9vmin; height:9vmin; display:grid; place-items:center; border-radius:50%; background:#f7f0dc; color:#073d2d; z-index:2; }
+.fc-play:after { content:''; margin-left:.8vmin; border-top:2vmin solid transparent; border-bottom:2vmin solid transparent; border-left:2.8vmin solid #073d2d; }
+.fc-pill { border-radius: 99px; padding: 1.2vmin 2.5vmin; font: 600 2.4vmin/1 var(--font-mono); letter-spacing:.05em; }
+.fc-media-card { position:absolute; width:34vw; height:23vw; border:.55vmin solid #fff6e1; border-radius:3vmin; background:#fff6e1; padding:1vmin; box-shadow:0 2vmin 4vmin rgba(13,34,25,.22); }
+.fc-queue-card { display:flex; align-items:center; gap:2.5vw; border-radius:2.7vmin; background:#fff6e1; padding:1.8vmin 2.3vmin; box-shadow:0 1.2vmin 2.5vmin rgba(0,0,0,.15); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}

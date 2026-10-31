@@ -1,0 +1,29 @@
+kind = "video"
+videoAspectRatio = "9:16"
+previewPath = "/framecast-android-explainer/"
+title = "FrameCast Android Explainer"
+description = "A short animated explainer showing Android users how FrameCast pairs with a TV, casts personal media directly, and what Premium includes."
+version = "1.0.0"
+id = "artifacts/framecast-android-explainer"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/framecast-android-explainer/" ]
+localPort = 25003
+
+[services.development]
+run = "pnpm --filter @workspace/framecast-android-explainer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/framecast-android-explainer", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/framecast-android-explainer/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25003"
+BASE_PATH = "/framecast-android-explainer/"
