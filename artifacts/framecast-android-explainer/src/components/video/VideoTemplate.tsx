@@ -13,14 +13,18 @@ import { Scene3 } from './video_scenes/Scene3';
 import { Scene4 } from './video_scenes/Scene4';
 import { Scene5 } from './video_scenes/Scene5';
 import { Scene6 } from './video_scenes/Scene6';
+import { Scene7 } from './video_scenes/Scene7';
+import { Scene8 } from './video_scenes/Scene8';
 
 export const SCENE_DURATIONS = {
-  Scene1: 4286,
-  Scene2: 3750,
-  Scene3: 5357,
-  Scene4: 4821,
-  Scene5: 4286,
-  Scene6: 4500,
+  Scene1: 6500,
+  Scene2: 7500,
+  Scene3: 8000,
+  Scene4: 9000,
+  Scene5: 8000,
+  Scene6: 8000,
+  Scene7: 8000,
+  Scene8: 7000,
 };
 
 export const VIDEO_ASPECT_RATIO: VideoAspectRatio = '9:16';
@@ -42,6 +46,8 @@ const SCENES: Record<string, ComponentType> = {
   Scene4,
   Scene5,
   Scene6,
+  Scene7,
+  Scene8,
 };
 
 export default function VideoTemplate({
@@ -82,7 +88,7 @@ export default function VideoTemplate({
     }
     if (lastSceneRef.current !== currentSceneKey) {
       lastSceneRef.current = currentSceneKey;
-      const target = SCENE_START_SEC[baseSceneKey] ?? 0;
+      const target = (SCENE_START_SEC[baseSceneKey] ?? 0) % 27.036735;
       if (Math.abs(audio.currentTime - target) > 0.18) audio.currentTime = target;
     }
     void audio.play().catch(() => {});
@@ -110,6 +116,7 @@ export default function VideoTemplate({
           src={`${import.meta.env.BASE_URL}audio/bg_music.mp3`}
           preload="auto"
           autoPlay
+          loop
           muted={muted}
         />
       </VideoCanvas>

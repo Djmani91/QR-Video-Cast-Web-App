@@ -3,7 +3,7 @@ import { Volume2, VolumeX, Pause, Play, Repeat, ChevronDown, ChevronUp } from 'l
 import VideoTemplate, { SCENE_DURATIONS } from './VideoTemplate';
 import { useSceneControls } from './useSceneControls';
 
-const SCENE_TITLES = ['Big screen', 'Pair', 'Choose media', 'Direct transfer', 'Watch', 'Privacy'];
+const SCENE_TITLES = ['Big screen', 'Pair', 'Photos', 'Video playback', 'Premium mirror', 'Screen permission', 'Background casting', 'Disconnect'];
 
 export default function VideoWithControls() {
   const browser = globalThis as unknown as {
@@ -87,7 +87,7 @@ export default function VideoWithControls() {
                 </button>
               ))}
             </div>
-            <div className="fc-count">{control.activeIndex + 1}/6</div>
+            <div className="fc-count">{control.activeIndex + 1}/{control.keys.length}</div>
             <div className="fc-clock">{displayTime(totalElapsed)} / {displayTime(control.totalDuration)}</div>
             <button aria-label={collapsed ? 'Show controls' : 'Hide controls'} onClick={() => setCollapsed((value) => !value)}>{collapsed ? <ChevronUp /> : <ChevronDown />}</button>
           </div>
