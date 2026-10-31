@@ -2077,9 +2077,14 @@ function TvPage() {
         <div className="hero-grid">
           <section className="hero-copy">
             <span className="eyebrow">A better way to share the big screen</span>
-            <h1 className="hero-title">Your photos &amp; videos.<br /><em>The big screen.</em></h1>
+            <h1 className="hero-title">Your photos<br />&amp; videos.<br /><em>The big screen.</em></h1>
             <p className="hero-intro">Send a photo or video from your phone, or open a video link on this TV browser. No account or media upload needed.</p>
             <div className="trust-line"><ShieldCheck size={17} /> Phone files go directly to this screen. Video links are fetched by the TV from their source.</div>
+            <div className="hero-orbit" aria-hidden="true">
+              <span className="hero-orbit-ring" />
+              <span className="hero-orbit-sun" />
+              <span className="hero-orbit-label">BIG SCREEN<br />ENERGY</span>
+            </div>
           </section>
 
           <section ref={playbackStageRef} className="pair-card" aria-label="TV pairing and playback">
@@ -2172,7 +2177,7 @@ function TvPage() {
             {status !== 'connected' && !playlistTransitioning && (
               <div className="qr-frame" data-testid="status-pairing-code" aria-label={room ? 'Scan the QR code to pair your phone' : 'Pairing code not created'}>
                 {room && !roomExpired
-                  ? <QRCodeSVG value={phoneUrl} size={184} level="M" marginSize={1} />
+                  ? <QRCodeSVG value={phoneUrl} size={184} level="M" marginSize={1} fgColor="#54248f" bgColor="#ffffff" />
                   : <div className="qr-empty"><Smartphone size={28} /><span>{roomExpired ? 'This pairing code has expired' : 'Your pairing code will appear here'}</span></div>}
               </div>
             )}
