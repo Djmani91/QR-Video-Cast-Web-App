@@ -7,7 +7,7 @@ export type CastTab = 'url' | 'videos' | 'images' | 'screen';
 const TABS: { key: CastTab; label: string; icon: keyof typeof Ionicons.glyphMap; activeIcon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'images', label: 'Images', icon: 'images-outline', activeIcon: 'images' },
   { key: 'videos', label: 'Videos', icon: 'videocam-outline', activeIcon: 'videocam' },
-  { key: 'url', label: 'URL', icon: 'link-outline', activeIcon: 'link' },
+  { key: 'url', label: 'Link', icon: 'link-outline', activeIcon: 'link' },
   { key: 'screen', label: 'Mirror', icon: 'phone-portrait-outline', activeIcon: 'phone-portrait' },
 ];
 
@@ -21,7 +21,7 @@ export function CastTabs({ value, onChange, showScreen = Platform.OS === 'androi
       case 'videos':
         return { foreground: colors.tabVideo, surface: colors.tabVideosSurface };
       case 'url':
-        return { foreground: colors.accent, surface: colors.tabUrlSurface };
+        return { foreground: colors.primary, surface: colors.tabUrlSurface };
       case 'screen':
         return { foreground: colors.primary, surface: colors.secondary };
     }

@@ -9,6 +9,12 @@ For Samsung TVs, target the built-in TV browser using the existing web app; do n
 
 **How to apply:** Keep the Samsung browser receiver and native phone companion. Prioritize playback that starts before a full video transfer; verify the real TV before claiming compatibility.
 
+For phone-to-TV pairing, show the short TV browser address, QR scanner, and five-digit code. Do not show Wi-Fi TV discovery or a Samsung “Connect” button in the phone UI.
+
+**Why:** The user reports that tapping the discovered Samsung TV and continuing did not open the TV browser, and explicitly asked to keep QR scanning and code entry instead.
+
+**How to apply:** Keep pairing manual and clear: the user opens 2tx1.com on the TV, then scans its QR code or enters the displayed code on the phone. Only reconsider discovery if the user asks to restore it.
+
 The desired fullscreen behavior is video-only fullscreen: the browser starts in its normal view, playing a video fills the TV screen, and Back returns to the normal browser view.
 
 The user previously confirmed video fullscreen on their Samsung TV; the model was not supplied. Only use a native-video fullscreen path when source support is explicitly confirmed. Otherwise use container fullscreen for videos and photos.
@@ -73,4 +79,4 @@ Samsung TV discovery only confirms that the device is present. Open its built-in
 
 **Why:** FrameCast 1.1.14 found the TV and established a WebSocket connection but its `KEY_BROWSER`/Ctrl+L sequence and plain-text input command did not open the browser. The maintained Samsung WebSocket implementation launches the browser through `ed.apps.launch`; its text-input command uses Base64 encoding.
 
-**How to apply:** Treat discovery, remote-control connection, and browser navigation as separate success steps. Use the browser-app launch event with the room URL, and do not report success based only on SSDP discovery, a WebSocket handshake, or sending the request; verify browser opening on the actual TV.
+**How to apply:** This launch sequence is relevant only if the user explicitly asks to restore Samsung discovery. Keep it out of the normal pairing UI, and never report success based only on SSDP discovery, a WebSocket handshake, or sending the request; verify browser opening on the actual TV.
