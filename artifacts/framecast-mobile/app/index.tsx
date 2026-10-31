@@ -966,20 +966,49 @@ function FrameCastHomeScreen() {
   const connectToNearbyTv = async (tv: NearbySamsungTv) => {
     if (connectingTvIp) return;
     setError('');
-    setNearbyTvMessage(`Connecting to ${tv.name}. Approve FrameCast on the TV if it asks.`);
+    setNearbyTvMessage(`Trying to open FrameCast on ${tv.name}. Approve FrameCast on the TV if it asks.`);
     setConnectingTvIp(tv.ip);
     try {
       const room = await createTvRoom.mutateAsync();
-      await launchSamsungTvBrowser(tv.ip, buildTvRoomUrl(room));
-      joinRoom(room.id);
-      setNearbyTvMessage(`FrameCast is opening on ${tv.name}. If the TV does not open it, use the QR pairing option below.`);
-    } catch (launchError) {
-      setNearbyTvMessage('');
-      setError(
-        launchError instanceof Error
-          ? `${tv.name} was found, but its browser could not be opened automatically. Open ${TV_BROWSER_ADDRESS} on the TV and pair using its QR code.`
-          : `Could not open ${tv.name}. Open ${TV_BROWSER_ADDRESS} on the TV and pair using its QR code.`,
+      let browserLaunchFailed = false;
+      try {
+        await launchSamsungTvBrowser(tv.ip, buildTvRoomUrl(room));
+      } catch {
+        browserLaunchFailed = true;
+      }
+
+      const manualPairingInstructions =
+        `On the TV, open its Internet browser and type ${TV_BROWSER_ADDRESS}. When FrameCast appears, scan the TV's QR code or enter its five-digit code on this phone.`;
+
+      if (browserLaunchFailed) {
+        setNearbyTvMessage(`${tv.name} was found. Use the TV browser address and QR/code instructions.`);
+        Alert.alert(
+          'TV browser did not open automatically',
+          `${tv.name} was found, but FrameCast could not open its browser. ${manualPairingInstructions}`,
+          [{ text: 'Use QR or code' }],
+        );
+        return;
+      }
+
+      setNearbyTvMessage(`Opening request sent to ${tv.name}. Check the TV, then choose how to continue.`);
+      Alert.alert(
+        `Finish connecting to ${tv.name}`,
+        `I asked the TV to open FrameCast. If it did not open, ${manualPairingInstructions}`,
+        [
+          {
+            text: 'Use QR or code instead',
+            style: 'cancel',
+            onPress: () => setNearbyTvMessage(manualPairingInstructions),
+          },
+          {
+            text: 'Continue',
+            onPress: () => joinRoom(room.id),
+          },
+        ],
       );
+    } catch {
+      setNearbyTvMessage('');
+      setError(`Could not start pairing with ${tv.name}. Check your internet connection and try again.`);
     } finally {
       setConnectingTvIp('');
     }
