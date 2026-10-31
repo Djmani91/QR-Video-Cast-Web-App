@@ -1,0 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+
+:root {
+  --background: 42 42% 95%;
+  --foreground: 215 26% 17%;
+  --border: 39 19% 84%;
+  --input: 39 19% 84%;
+  --card: 42 38% 98%;
+  --card-foreground: 215 26% 17%;
+  --card-border: 39 19% 84%;
+  --popover: 42 38% 98%;
+  --popover-foreground: 215 26% 17%;
+  --primary: 158 40% 28%;
+  --primary-foreground: 42 38% 98%;
+  --secondary: 42 27% 90%;
+  --secondary-foreground: 215 26% 17%;
+  --muted: 42 25% 91%;
+  --muted-foreground: 215 10% 47%;
+  --accent: 18 78% 60%;
+  --accent-foreground: 215 26% 17%;
+  --destructive: 4 67% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 158 40% 28%;
+  --app-font-sans: 'DM Sans', sans-serif;
+  --app-font-serif: 'Manrope', sans-serif;
+  --app-font-mono: 'DM Mono', monospace;
+}
+
+.dark {
+  --background: 215 25% 12%;
+  --foreground: 42 35% 93%;
+  --border: 215 15% 25%;
+  --input: 215 15% 25%;
+  --card: 215 22% 16%;
+  --card-foreground: 42 35% 93%;
+  --card-border: 215 15% 25%;
+  --popover: 215 22% 16%;
+  --popover-foreground: 42 35% 93%;
+  --primary: 154 42% 54%;
+  --primary-foreground: 215 25% 12%;
+  --secondary: 215 17% 22%;
+  --secondary-foreground: 42 35% 93%;
+  --muted: 215 17% 22%;
+  --muted-foreground: 215 10% 66%;
+  --accent: 18 78% 64%;
+  --accent-foreground: 215 25% 12%;
+  --destructive: 4 67% 56%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 154 42% 54%;
+}

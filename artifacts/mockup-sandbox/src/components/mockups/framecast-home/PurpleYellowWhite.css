@@ -1,0 +1,159 @@
+.fc-pyw {
+  --pyw-purple: #54248f;
+  --pyw-yellow: #ffdf4f;
+  --pyw-white: #ffffff;
+  min-height: 100%;
+  color: var(--pyw-purple);
+  background: var(--pyw-white);
+  font-family: "DM Sans", "Trebuchet MS", sans-serif;
+  overflow: hidden;
+}
+.fc-pyw *, .fc-pyw *::before, .fc-pyw *::after { box-sizing: border-box; }
+.fc-pyw a { color: inherit; text-decoration: none; }
+.pyw-header {
+  width: min(1240px, calc(100% - 64px));
+  min-height: 84px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(84, 36, 143, .23);
+}
+.pyw-brand { display: inline-flex; align-items: center; gap: 12px; }
+.pyw-mark {
+  width: 40px; height: 40px; display: grid; place-items: center;
+  color: var(--pyw-yellow); background: var(--pyw-purple); border-radius: 13px;
+}
+.pyw-brand-name { font-size: 20px; font-weight: 800; letter-spacing: -.055em; }
+.pyw-header-right { display: flex; align-items: center; gap: 15px; font-size: 12px; font-weight: 650; }
+.pyw-browser { display: inline-flex; align-items: center; gap: 8px; }
+.pyw-domain { padding-left: 14px; border-left: 1px solid rgba(84, 36, 143, .35); font: 600 11px/1 ui-monospace, monospace; }
+.pyw-main { width: min(1240px, calc(100% - 64px)); margin: 0 auto; padding: 54px 0 30px; }
+.pyw-hero { display: grid; grid-template-columns: minmax(0, 1fr) 430px; gap: clamp(40px, 7vw, 104px); align-items: center; }
+.pyw-copy { position: relative; min-height: 450px; padding: 25px 0 20px; }
+.pyw-kicker, .pyw-card-eyebrow, .pyw-section-label {
+  font: 700 11px/1.2 ui-monospace, monospace; letter-spacing: .13em;
+}
+.pyw-kicker { display: flex; align-items: center; gap: 9px; }
+.pyw-kicker-mark { width: 9px; height: 9px; display: inline-block; background: var(--pyw-purple); transform: rotate(45deg); }
+.pyw-copy h1 {
+  position: relative; z-index: 1; margin: 22px 0 19px;
+  font-size: clamp(50px, 6.2vw, 82px); line-height: .99; letter-spacing: -.075em; font-weight: 850;
+}
+.pyw-copy h1 em {
+  display: inline;
+  padding: 0 .08em;
+  color: var(--pyw-purple);
+  background: var(--pyw-yellow);
+  font-style: normal;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.pyw-intro { position: relative; z-index: 1; max-width: 520px; margin: 0; font-size: 17px; line-height: 1.65; font-weight: 520; }
+.pyw-trust {
+  position: relative; z-index: 1; display: flex; align-items: flex-start; gap: 11px;
+  max-width: 520px; margin-top: 23px; font-size: 12px; line-height: 1.55; font-weight: 650;
+}
+.pyw-trust svg { flex: none; margin-top: 1px; }
+.pyw-orbit { position: absolute; width: 172px; height: 172px; right: 7px; bottom: 18px; display: grid; place-items: center; transform: rotate(-13deg); }
+.pyw-orbit-ring { position: absolute; inset: 7px; border: 2px solid var(--pyw-purple); border-radius: 50%; }
+.pyw-orbit-sun { width: 98px; height: 98px; border-radius: 50%; background: var(--pyw-yellow); }
+.pyw-orbit-label { position: absolute; text-align: center; font: 800 10px/1.35 ui-monospace, monospace; letter-spacing: .1em; }
+.pyw-pair-card {
+  position: relative; padding: 27px; color: var(--pyw-white); background: var(--pyw-purple);
+  border: 2px solid var(--pyw-purple); border-radius: 27px;
+  box-shadow: 12px 12px 0 rgba(84, 36, 143, .2);
+}
+.pyw-card-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pyw-card-eyebrow { color: var(--pyw-yellow); font-size: 10px; }
+.pyw-card-topline h2 { margin: 7px 0 0; font-size: 23px; letter-spacing: -.045em; line-height: 1.1; }
+.pyw-screen-chip {
+  display: inline-flex; align-items: center; gap: 7px; padding: 8px 10px; border-radius: 99px;
+  color: var(--pyw-purple); background: var(--pyw-yellow); font: 700 9px/1 ui-monospace, monospace;
+  text-transform: uppercase; white-space: nowrap;
+}
+.pyw-code-shell {
+  width: 226px; height: 226px; margin: 24px auto 18px; padding: 10px;
+  display: grid; place-items: center; border-radius: 19px; background: var(--pyw-white);
+}
+.pyw-code-inner {
+  width: 100%; height: 100%; border: 2px dashed var(--pyw-purple); border-radius: 13px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
+  color: var(--pyw-purple); text-align: center; font-size: 12px; line-height: 1.45; font-weight: 650;
+}
+.pyw-placeholder-tag { font: 700 9px/1 ui-monospace, monospace; letter-spacing: .15em; }
+.pyw-placeholder-note { font-size: 9px; font-weight: 600; }
+.pyw-pair-prompt { max-width: 280px; margin: 0 auto 17px; color: var(--pyw-white); text-align: center; font-size: 12px; line-height: 1.5; }
+.pyw-primary-button {
+  width: 100%; min-height: 49px; padding: 0 17px; display: flex; align-items: center; justify-content: center; gap: 9px;
+  border: 0; border-radius: 13px; color: var(--pyw-purple); background: var(--pyw-yellow); font-size: 13px; font-weight: 800;
+}
+.pyw-primary-button:disabled { opacity: .88; }
+.pyw-primary-button svg { transition: transform .2s ease; }
+.pyw-primary-button:hover svg { transform: translateX(3px); }
+.pyw-status {
+  min-height: 53px; margin-top: 19px; padding: 13px 14px; display: flex; align-items: center; gap: 11px;
+  border: 1px solid rgba(255, 253, 247, .62); border-radius: 13px;
+  color: var(--pyw-white); font-size: 12px; line-height: 1.45;
+}
+.pyw-status-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--pyw-yellow); }
+.pyw-details { margin-top: 66px; padding-top: 27px; display: grid; grid-template-columns: 1fr 1fr; gap: 58px; border-top: 1px solid rgba(84, 36, 143, .28); }
+.pyw-section-label { display: inline-block; font-size: 10px; }
+.pyw-steps-section h3 { margin: 9px 0 21px; font-size: 22px; letter-spacing: -.045em; }
+.pyw-steps { display: flex; gap: 13px; }
+.pyw-step { flex: 1; min-width: 0; }
+.pyw-step span {
+  width: 27px; height: 27px; margin-bottom: 8px; display: grid; place-items: center;
+  border-radius: 50%; color: var(--pyw-purple); background: var(--pyw-yellow);
+  font: 700 11px/1 ui-monospace, monospace;
+}
+.pyw-step strong { display: block; font-size: 12px; line-height: 1.4; }
+.pyw-privacy {
+  display: flex; align-items: flex-start; gap: 13px; padding: 18px 20px; color: var(--pyw-purple);
+  background: var(--pyw-white); border: 1px solid var(--pyw-purple); border-radius: 17px;
+}
+.pyw-lock { width: 35px; height: 35px; flex: none; display: grid; place-items: center; color: var(--pyw-yellow); background: var(--pyw-purple); border-radius: 11px; }
+.pyw-privacy strong { display: block; margin: 2px 0 5px; font-size: 13px; }
+.pyw-privacy p { margin: 0; font-size: 11px; line-height: 1.65; }
+.pyw-footer { display: flex; justify-content: space-between; margin-top: 45px; padding-top: 15px; border-top: 1px solid rgba(84, 36, 143, .28); font: 700 9px/1.4 ui-monospace, monospace; letter-spacing: .1em; }
+.pyw-footer span:last-child { letter-spacing: 0; font: 600 11px/1.4 "DM Sans", "Trebuchet MS", sans-serif; }
+@media (max-width: 900px) {
+  .pyw-hero { grid-template-columns: minmax(0, 1fr) minmax(340px, 410px); gap: 32px; }
+  .pyw-orbit { width: 120px; height: 120px; right: 0; bottom: 0; }
+  .pyw-orbit-sun { width: 70px; height: 70px; }
+}
+@media (max-width: 760px) {
+  .pyw-header, .pyw-main { width: calc(100% - 38px); }
+  .pyw-header { min-height: 72px; }
+  .pyw-header-right { gap: 9px; font-size: 10px; }
+  .pyw-domain { padding-left: 9px; }
+  .pyw-hero { grid-template-columns: 1fr; gap: 22px; }
+  .pyw-copy { min-height: 0; padding: 17px 0 4px; }
+  .pyw-copy h1 { font-size: clamp(52px, 12vw, 78px); }
+  .pyw-orbit { position: relative; width: 92px; height: 92px; right: auto; bottom: auto; margin: 14px 0 0 auto; }
+  .pyw-orbit-sun { width: 55px; height: 55px; }
+  .pyw-orbit-label { font-size: 7px; }
+  .pyw-pair-card { width: min(100%, 460px); margin: 0 auto; }
+  .pyw-details { margin-top: 43px; grid-template-columns: 1fr; gap: 26px; }
+}
+@media (max-width: 430px) {
+  .pyw-header, .pyw-main { width: calc(100% - 30px); }
+  .pyw-brand { gap: 8px; }
+  .pyw-mark { width: 35px; height: 35px; }
+  .pyw-brand-name { font-size: 18px; }
+  .pyw-browser { font-size: 0; gap: 0; }
+  .pyw-browser svg { width: 17px; height: 17px; }
+  .pyw-main { padding-top: 36px; }
+  .pyw-copy h1 { font-size: clamp(47px, 13vw, 62px); }
+  .pyw-intro { max-width: 86%; font-size: 15px; }
+  .pyw-orbit { width: 80px; height: 80px; right: auto; bottom: auto; margin-top: 12px; }
+  .pyw-orbit-sun { width: 48px; height: 48px; }
+  .pyw-pair-card { padding: 21px 17px; border-radius: 22px; }
+  .pyw-code-shell { width: 210px; height: 210px; }
+  .pyw-steps { gap: 8px; }
+  .pyw-step strong { font-size: 10px; }
+  .pyw-privacy { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fc-pyw *, .fc-pyw *::before, .fc-pyw *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}

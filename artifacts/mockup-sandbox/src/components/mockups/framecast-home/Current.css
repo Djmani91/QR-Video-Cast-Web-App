@@ -1,0 +1,84 @@
+.fc-current {
+  --fc-bg: #f6f4ee;
+  --fc-ink: #202c37;
+  --fc-muted: #69727a;
+  --fc-border: #d9d4c8;
+  --fc-card: #fbfaf6;
+  --fc-primary: #2b6b53;
+  --fc-primary-text: #fbfaf6;
+  --fc-secondary: #ebe7dc;
+  --fc-accent: #dc754c;
+  min-height: 100%;
+  color: var(--fc-ink);
+  background:
+    radial-gradient(ellipse at 85% 4%, rgba(211, 126, 79, .12), transparent 33rem),
+    radial-gradient(ellipse at 8% 90%, rgba(68, 115, 91, .09), transparent 30rem),
+    var(--fc-bg);
+  font-family: var(--app-font-sans);
+}
+
+.fc-current *, .fc-current *::before, .fc-current *::after { box-sizing: border-box; }
+.fc-current .fc-topbar {
+  width: min(1180px, calc(100% - 56px));
+  min-height: 92px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(217, 212, 200, .8);
+}
+.fc-current .fc-brand { display: inline-flex; align-items: center; gap: 11px; color: inherit; text-decoration: none; }
+.fc-current .fc-mark { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: var(--fc-primary-text); background: var(--fc-primary); }
+.fc-current .fc-brand-name { font: 800 19px/1 var(--app-font-serif); letter-spacing: -.045em; }
+.fc-current .fc-topnote { display: inline-flex; align-items: center; gap: 8px; color: var(--fc-muted); font-size: 13px; }
+.fc-current .fc-domain { padding-left: 9px; border-left: 1px solid var(--fc-border); color: var(--fc-ink); font: 500 11px/1 var(--app-font-mono); }
+.fc-current .fc-page { width: min(1180px, calc(100% - 56px)); margin: 0 auto; padding: 62px 0 72px; }
+.fc-current .fc-hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 410px; gap: 76px; align-items: center; }
+.fc-current .fc-hero-copy { max-width: 640px; }
+.fc-current .fc-eyebrow { color: var(--fc-primary); font: 500 11px/1.2 var(--app-font-mono); text-transform: uppercase; letter-spacing: .14em; }
+.fc-current .fc-title { margin: 20px 0; font: 800 clamp(44px, 6vw, 76px)/.99 var(--app-font-serif); letter-spacing: -.065em; }
+.fc-current .fc-title em { color: var(--fc-primary); font-style: normal; }
+.fc-current .fc-intro { max-width: 530px; color: var(--fc-muted); font-size: 18px; line-height: 1.65; }
+.fc-current .fc-trust { display: flex; gap: 9px; align-items: center; margin-top: 25px; color: var(--fc-muted); font-size: 13px; line-height: 1.5; }
+.fc-current .fc-trust svg { flex: none; color: var(--fc-primary); }
+.fc-current .fc-pair-card { padding: 28px; background: rgba(251, 250, 246, .92); border: 1px solid var(--fc-border); border-radius: 24px; box-shadow: 0 24px 64px rgba(48, 61, 51, .12); }
+.fc-current .fc-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.fc-current .fc-card-heading h2 { margin: 7px 0 0; font: 700 21px/1.2 var(--app-font-serif); letter-spacing: -.04em; }
+.fc-current .fc-screen-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border-radius: 99px; background: var(--fc-secondary); color: var(--fc-ink); font: 500 10px/1 var(--app-font-mono); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+.fc-current .fc-screen-chip svg { color: var(--fc-primary); }
+.fc-current .fc-qr-frame { width: 224px; height: 224px; margin: 25px auto 18px; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--fc-border); border-radius: 18px; background: #fbfaf5; }
+.fc-current .fc-qr-empty { width: 180px; height: 180px; padding: 18px; display: grid; place-items: center; align-content: center; gap: 10px; border: 1px dashed var(--fc-border); border-radius: 12px; color: var(--fc-muted); text-align: center; font-size: 12px; line-height: 1.5; }
+.fc-current .fc-qr-empty svg { color: var(--fc-primary); }
+.fc-current .fc-pair-prompt { max-width: 270px; margin: 0 auto 19px; color: var(--fc-muted); text-align: center; font-size: 13px; line-height: 1.5; }
+.fc-current .fc-primary-button { min-height: 48px; width: 100%; padding: 0 17px; display: inline-flex; justify-content: center; align-items: center; gap: 9px; border: 0; border-radius: 12px; color: var(--fc-primary-text); background: var(--fc-primary); font-size: 14px; font-weight: 700; }
+.fc-current .fc-primary-button:disabled { opacity: .58; }
+.fc-current .fc-status-row { min-height: 57px; margin-top: 24px; padding: 15px 16px; display: flex; align-items: center; gap: 12px; border-radius: 14px; background: rgba(235, 231, 220, .7); }
+.fc-current .fc-status-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--fc-accent); box-shadow: 0 0 0 4px rgba(220, 117, 76, .14); }
+.fc-current .fc-status { color: var(--fc-ink); font-size: 13px; line-height: 1.45; }
+.fc-current .fc-below-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 62px; margin-top: 82px; padding-top: 32px; border-top: 1px solid var(--fc-border); }
+.fc-current .fc-below-grid h3 { margin: 9px 0; font: 700 19px var(--app-font-serif); letter-spacing: -.03em; }
+.fc-current .fc-steps { display: flex; gap: 12px; margin-top: 20px; }
+.fc-current .fc-step { flex: 1; min-width: 0; }
+.fc-current .fc-step-number { display: block; margin-bottom: 7px; color: var(--fc-accent); font: 500 11px var(--app-font-mono); }
+.fc-current .fc-step strong { font-size: 12px; line-height: 1.4; }
+.fc-current .fc-privacy { padding: 18px 20px; display: flex; align-items: flex-start; gap: 13px; border-radius: 16px; color: var(--fc-primary); background: rgba(43, 107, 83, .08); }
+.fc-current .fc-privacy > svg { flex: none; }
+.fc-current .fc-privacy strong { display: block; margin-bottom: 3px; color: var(--fc-ink); font-size: 13px; }
+.fc-current .fc-privacy p { margin: 0; color: var(--fc-muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 850px) {
+  .fc-current .fc-hero-grid { grid-template-columns: 1fr; gap: 37px; }
+  .fc-current .fc-hero-copy { max-width: 700px; }
+  .fc-current .fc-pair-card { width: min(100%, 480px); margin: 0 auto; }
+  .fc-current .fc-below-grid { margin-top: 52px; gap: 28px; }
+}
+@media (max-width: 600px) {
+  .fc-current .fc-topbar { width: calc(100% - 36px); min-height: 72px; }
+  .fc-current .fc-topnote { font-size: 11px; }
+  .fc-current .fc-page { width: calc(100% - 36px); padding: 42px 0 48px; }
+  .fc-current .fc-title { font-size: clamp(43px, 13vw, 62px); }
+  .fc-current .fc-intro { font-size: 16px; }
+  .fc-current .fc-pair-card { padding: 22px 18px; }
+  .fc-current .fc-below-grid { grid-template-columns: 1fr; gap: 28px; }
+  .fc-current .fc-steps { gap: 9px; }
+  .fc-current .fc-step strong { font-size: 11px; }
+}
