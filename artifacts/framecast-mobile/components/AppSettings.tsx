@@ -113,7 +113,7 @@ export function AppSettings({
       </Pressable>
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={close}>
-        <View style={[styles.backdrop, { backgroundColor: 'rgba(10,14,12,0.45)' }]}>
+        <View style={[styles.backdrop, { backgroundColor: 'rgba(84,36,143,0.45)' }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={close} accessibilityLabel="Dismiss settings" />
           <View style={[styles.sheet, { backgroundColor: colors.background, borderColor: colors.border, paddingBottom: Math.max(insets.bottom, Platform.OS === 'web' ? 34 : 16) }]}>
             <View style={[styles.grabber, { backgroundColor: colors.border }]} />

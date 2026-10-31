@@ -15,70 +15,70 @@
 const colors = {
   light: {
     // Legacy aliases (kept for backward compatibility)
-    text: '#202A37',
-    tint: '#2B644D',
+    text: '#54248F',
+    tint: '#54248F',
 
     // Core surfaces
-    background: '#F7F5EF',
-    foreground: '#202A37',
+    background: '#FFFFFF',
+    foreground: '#54248F',
 
     // Cards / elevated surfaces
-    card: '#FCFAF5',
-    cardForeground: '#202A37',
+    card: '#FFFFFF',
+    cardForeground: '#54248F',
 
     // Primary action color (buttons, links, active states)
-    primary: '#2B644D',
-    primaryForeground: '#FCFAF5',
+    primary: '#54248F',
+    primaryForeground: '#FFFFFF',
 
     // Secondary / less-emphasis interactive surfaces
-    secondary: '#ECE9DF',
-    secondaryForeground: '#202A37',
+    secondary: '#FFDF4F',
+    secondaryForeground: '#54248F',
 
     // Muted / subdued elements (dividers, timestamps, placeholders)
-    muted: '#ECE9E1',
-    mutedForeground: '#6B716F',
+    muted: '#FFF7CC',
+    mutedForeground: '#54248F',
 
     // Accent highlights (badges, selected items, focus rings)
-    accent: '#E87854',
-    accentForeground: '#202A37',
-    // Distinct, reusable accents for the three casting tabs
-    tabVideo: '#536FA8',
-    tabImagesSurface: '#E7F0E8',
-    tabVideosSurface: '#E9EDF6',
-    tabUrlSurface: '#F8E9E2',
+    accent: '#FFDF4F',
+    accentForeground: '#54248F',
+    // Category surfaces use tints of the shared purple/yellow palette.
+    tabVideo: '#54248F',
+    tabImagesSurface: '#FFF7CC',
+    tabVideosSurface: '#EEE8F5',
+    tabUrlSurface: '#FFFFFF',
 
     // Destructive actions (delete, error states)
-    destructive: '#CA3F2C',
-    destructiveForeground: '#ffffff',
+    destructive: '#54248F',
+    destructiveForeground: '#FFDF4F',
 
     // Borders and input outlines
-    border: '#DFDAD0',
-    input: '#DFDAD0',
+    border: '#DDD3E9',
+    input: '#DDD3E9',
   },
 
   dark: {
-    text: '#F0EDE4',
-    tint: '#79C49F',
-    background: '#171E25',
-    foreground: '#F0EDE4',
-    card: '#202A33',
-    cardForeground: '#F0EDE4',
-    primary: '#79C49F',
-    primaryForeground: '#171E25',
-    secondary: '#29343D',
-    secondaryForeground: '#F0EDE4',
-    muted: '#29343D',
-    mutedForeground: '#AAB1B2',
-    accent: '#EE9778',
-    accentForeground: '#171E25',
-    tabVideo: '#9BB3E5',
-    tabImagesSurface: '#26382F',
-    tabVideosSurface: '#293449',
-    tabUrlSurface: '#3D2D2A',
-    destructive: '#E05D4A',
-    destructiveForeground: '#FFFFFF',
-    border: '#34414B',
-    input: '#34414B',
+    text: '#54248F',
+    tint: '#54248F',
+    background: '#FFFFFF',
+    foreground: '#54248F',
+    card: '#FFFFFF',
+    cardForeground: '#54248F',
+    primary: '#54248F',
+    primaryForeground: '#FFFFFF',
+    secondary: '#FFDF4F',
+    secondaryForeground: '#54248F',
+    muted: '#FFF7CC',
+    mutedForeground: '#54248F',
+    accent: '#FFDF4F',
+    accentForeground: '#54248F',
+    tabVideo: '#54248F',
+    tabImagesSurface: '#FFF7CC',
+    tabVideosSurface: '#EEE8F5',
+    tabUrlSurface: '#FFFFFF',
+    destructive: '#54248F',
+    destructiveForeground: '#FFDF4F',
+    border: '#DDD3E9',
+    input: '#DDD3E9',
   },
 
   // Border radius (in px). Sync from the sibling web artifact's --radius

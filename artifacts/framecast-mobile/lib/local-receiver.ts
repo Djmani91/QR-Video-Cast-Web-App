@@ -5,8 +5,8 @@ export const LOCAL_RECEIVER_HTML = `<!doctype html>
 <title>FrameCast TV</title><style>
 html,body{margin:0;width:100%;height:100%;background:#000;color:#fff;font:20px sans-serif;overflow:hidden}
 #video{position:absolute;left:50%;top:50%;width:100vw;height:100vh;max-width:100vw;max-height:100vh;transform:translate(-50%,-50%);transform-origin:center center;object-fit:contain!important;background:#000}
-#bar{position:absolute;bottom:0;left:0;right:0;padding:24px;background:linear-gradient(transparent,rgba(0,0,0,.9));display:flex;gap:20px;align-items:center}
-button{font:inherit;padding:12px;border:1px solid #aaa;background:#203b32;color:white;border-radius:8px}
+#bar{position:absolute;bottom:0;left:0;right:0;padding:24px;background:linear-gradient(transparent,rgba(84,36,143,.92));display:flex;gap:20px;align-items:center}
+button{font:inherit;padding:12px;border:1px solid #ffdf4f;background:#ffdf4f;color:#54248f;border-radius:8px}
 #notice{position:absolute;top:12%;left:10%;right:10%;text-align:center;pointer-events:none}
 </style></head><body>
 <video id="video" autoplay controls playsinline webkit-playsinline preload="auto"></video>

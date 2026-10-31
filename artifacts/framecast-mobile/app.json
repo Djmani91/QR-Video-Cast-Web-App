@@ -4,7 +4,10 @@
     "slug": "framecast-mobile",
     "version": "1.1.15",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/icon-purple-yellow-white.png",
+    "splash": {
+      "backgroundColor": "#FFFFFF"
+    },
     "scheme": "framecast-mobile",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -38,7 +41,7 @@
       ]
     },
     "web": {
-      "favicon": "./assets/images/icon.png"
+      "favicon": "./assets/images/icon-purple-yellow-white.png"
     },
     "plugins": [
       "./plugins/with-firebase-android-only.cjs",

@@ -2405,7 +2405,7 @@ function FrameCastHomeScreen() {
             <Ionicons name="tv-outline" size={20} color={activeColors.primaryForeground} />
           </View>
           <Text style={[styles.brand, { color: activeColors.foreground }]}>framecast</Text>
-          <View style={styles.privacyChip}>
+          <View style={[styles.privacyChip, { backgroundColor: activeColors.secondary }]}>
             <Ionicons name="lock-closed-outline" size={13} color={activeColors.primary} />
             <Text style={[styles.privacyChipText, { color: activeColors.primary }]}>PRIVATE</Text>
           </View>
@@ -2502,7 +2502,7 @@ function FrameCastHomeScreen() {
               )}
 
               {scanning ? (
-                <View style={[styles.cameraFrame, { backgroundColor: '#101713' }]}>
+                <View style={[styles.cameraFrame, { backgroundColor: activeColors.primary }]}>
                   <CameraView
                     style={StyleSheet.absoluteFill}
                     facing="back"
@@ -2523,7 +2523,7 @@ function FrameCastHomeScreen() {
                     <View style={styles.scanCornerBottomRight} />
                   </View>
                   <Pressable style={styles.cameraClose} onPress={() => setScanning(false)} testID="button-close-scanner">
-                    <Ionicons name="close" size={22} color="#FFFFFF" />
+                    <Ionicons name="close" size={22} color={activeColors.primaryForeground} />
                   </Pressable>
                   <View style={styles.cameraCaption}>
                     <Text style={styles.cameraCaptionText}>Point your camera at the TV QR code</Text>
@@ -2998,7 +2998,7 @@ function FrameCastHomeScreen() {
 
         {transferNotice ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
         {error ? (
-          <View style={[styles.errorBox, { backgroundColor: '#FCEBE6' }]} testID="text-error">
+          <View style={[styles.errorBox, { backgroundColor: activeColors.secondary }]} testID="text-error">
             <Ionicons name="alert-circle-outline" size={18} color={activeColors.destructive} />
             <Text style={[styles.errorText, { color: activeColors.destructive }]}>{error}</Text>
           </View>
@@ -3053,7 +3053,7 @@ const styles = StyleSheet.create({
   header: { height: 54, flexDirection: 'row', alignItems: 'center', gap: 10 },
   brandMark: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   brand: { fontFamily: 'Inter_700Bold', fontSize: 20, letterSpacing: -0.7 },
-  privacyChip: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: '#E9F0E8' },
+  privacyChip: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
   privacyChipText: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 0.9 },
   main: { paddingTop: 24, flexGrow: 1 },
   kicker: { fontFamily: 'Inter_700Bold', fontSize: 11, letterSpacing: 1.4, marginBottom: 10 },
@@ -3084,8 +3084,8 @@ const styles = StyleSheet.create({
   scanCornerTopRight: { position: 'absolute', right: 0, top: 0, width: 30, height: 30, borderRightWidth: 3, borderTopWidth: 3, borderColor: '#FFFFFF', borderTopRightRadius: 10 },
   scanCornerBottomLeft: { position: 'absolute', left: 0, bottom: 0, width: 30, height: 30, borderLeftWidth: 3, borderBottomWidth: 3, borderColor: '#FFFFFF', borderBottomLeftRadius: 10 },
   scanCornerBottomRight: { position: 'absolute', right: 0, bottom: 0, width: 30, height: 30, borderRightWidth: 3, borderBottomWidth: 3, borderColor: '#FFFFFF', borderBottomRightRadius: 10 },
-  cameraClose: { position: 'absolute', right: 12, top: 12, width: 38, height: 38, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
-  cameraCaption: { position: 'absolute', left: 14, right: 14, bottom: 14, padding: 11, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.58)' },
+  cameraClose: { position: 'absolute', right: 12, top: 12, width: 38, height: 38, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(84,36,143,0.78)' },
+  cameraCaption: { position: 'absolute', left: 14, right: 14, bottom: 14, padding: 11, borderRadius: 12, backgroundColor: 'rgba(84,36,143,0.88)' },
   cameraCaptionText: { color: '#FFFFFF', textAlign: 'center', fontFamily: 'Inter_500Medium', fontSize: 12 },
   connectedBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 19 },
   connectedDot: { width: 8, height: 8, borderRadius: 4 },

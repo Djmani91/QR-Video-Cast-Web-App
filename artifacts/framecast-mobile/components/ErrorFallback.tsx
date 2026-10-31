@@ -210,7 +210,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 24,
     minWidth: 200,
-    shadowColor: '#000',
+    shadowColor: '#54248F',
     shadowOffset: {
       width: 0,
       height: 2,
@@ -226,7 +226,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(84, 36, 143, 0.5)',
     justifyContent: 'flex-end',
   },
   modalContainer: {
