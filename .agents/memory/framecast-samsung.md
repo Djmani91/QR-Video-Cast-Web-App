@@ -69,8 +69,8 @@ Do not diagnose Samsung's “This function is not supported” dialog as a fulls
 
 **How to apply:** Inspect the actual source codec and distinguish decoding, transport, and fullscreen failures. A compatible H.264 rendition of the same content is a useful hardware control before another speculative APK; do not claim HEVC incompatibility on this TV is conclusively proven without that comparison.
 
-Samsung TV discovery only confirms that the device is present; it does not confirm that the browser opened. The TV can silently ignore an incorrectly formatted URL-input command even when remote control connected successfully.
+Samsung TV discovery only confirms that the device is present. Open its built-in browser by sending `ms.channel.emit` with `event: ed.apps.launch`, `to: host`, and `data` containing `appId: org.tizen.browser`, `action_type: NATIVE_LAUNCH`, and the target URL in `metaTag`. If remote text entry is needed, Samsung expects `SendInputString` with the text Base64-encoded in `Cmd` and `DataOfCmd: base64`; ordinary key presses do not substitute for that payload.
 
-**Why:** FrameCast listed the Samsung TV and established its remote-control connection, but the browser did not navigate until the URL was sent using the TV's dedicated text-input command.
+**Why:** FrameCast 1.1.14 found the TV and established a WebSocket connection but its `KEY_BROWSER`/Ctrl+L sequence and plain-text input command did not open the browser. The maintained Samsung WebSocket implementation launches the browser through `ed.apps.launch`; its text-input command uses Base64 encoding.
 
-**How to apply:** Treat discovery, remote-control connection, and browser navigation as separate success steps. Do not report a successful connection based only on SSDP discovery or a successful WebSocket handshake; verify browser opening on the actual TV.
+**How to apply:** Treat discovery, remote-control connection, and browser navigation as separate success steps. Use the browser-app launch event with the room URL, and do not report success based only on SSDP discovery, a WebSocket handshake, or sending the request; verify browser opening on the actual TV.

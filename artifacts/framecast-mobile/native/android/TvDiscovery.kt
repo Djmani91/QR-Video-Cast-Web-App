@@ -147,29 +147,22 @@ internal object TvDiscovery {
       }
 
       val output = socket.getOutputStream()
-      sendRemoteMessage(output, remoteKey("Click", "KEY_BROWSER"))
-       Thread.sleep(4_500)
-      sendRemoteMessage(output, remoteKey("Press", "KEY_CTRL"))
-      sendRemoteMessage(output, remoteKey("Click", "KEY_L"))
-      sendRemoteMessage(output, remoteKey("Release", "KEY_CTRL"))
-      Thread.sleep(450)
-        // Samsung's remote-control API expects a Press command for text input.
-        // Using "SendInputString" as Cmd is silently ignored by many TV models.
-        sendRemoteMessage(output, remoteKey("Press", target.toString(), "SendInputString"))
-      Thread.sleep(400)
-      sendRemoteMessage(output, remoteKey("Click", "KEY_ENTER"))
+      sendRemoteMessage(output, browserLaunchMessage(target.toString()))
       Thread.sleep(1_200)
     }
   }
 
-  private fun remoteKey(command: String, data: String, remoteType: String = "SendRemoteKey"): String {
+  private fun browserLaunchMessage(targetUrl: String): String {
+    val appData = JSONObject()
+      .put("action_type", "NATIVE_LAUNCH")
+      .put("appId", "org.tizen.browser")
+      .put("metaTag", targetUrl)
     val params = JSONObject()
-      .put("Cmd", command)
-      .put("DataOfCmd", data)
-      .put("Option", "false")
-      .put("TypeOfRemote", remoteType)
+      .put("event", "ed.apps.launch")
+      .put("to", "host")
+      .put("data", appData)
     return JSONObject()
-      .put("method", "ms.remote.control")
+      .put("method", "ms.channel.emit")
       .put("params", params)
       .toString()
   }

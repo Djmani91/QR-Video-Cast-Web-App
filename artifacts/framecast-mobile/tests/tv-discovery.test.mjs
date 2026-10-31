@@ -15,7 +15,7 @@ test('nearby TV launch URL joins the room created by the phone', () => {
   assert.equal(url.searchParams.get('expiresAt'), '2026-10-30T21:00:00.000Z');
 });
 
-test('Samsung URL entry uses the TV remote text-input Press command', () => {
+test('Samsung browser launch uses the native Tizen app launch event', () => {
   const sourcePath = new URL('../native/android/TvDiscovery.kt', import.meta.url);
   const nativeSource = fs.readFileSync(
     sourcePath,
@@ -25,11 +25,12 @@ test('Samsung URL entry uses the TV remote text-input Press command', () => {
     new URL('../android/app/src/main/java/com/tvcast/com/casting/TvDiscovery.kt', import.meta.url),
     'utf8',
   );
-  assert.match(
-    nativeSource,
-    /remoteKey\("Press",\s*target\.toString\(\),\s*"SendInputString"\)/,
-  );
-  assert.match(nativeSource, /JSONObject\(\)[\s\S]*?put\("DataOfCmd", data\)/);
-  assert.match(generatedSource, /remoteKey\("Press",\s*target\.toString\(\),\s*"SendInputString"\)/);
-  assert.match(generatedSource, /JSONObject\(\)[\s\S]*?put\("DataOfCmd", data\)/);
+  for (const source of [nativeSource, generatedSource]) {
+    assert.match(source, /\.put\("method",\s*"ms\.channel\.emit"\)/);
+    assert.match(source, /\.put\("event",\s*"ed\.apps\.launch"\)/);
+    assert.match(source, /\.put\("appId",\s*"org\.tizen\.browser"\)/);
+    assert.match(source, /\.put\("action_type",\s*"NATIVE_LAUNCH"\)/);
+    assert.match(source, /\.put\("metaTag",\s*targetUrl\)/);
+    assert.doesNotMatch(source, /KEY_BROWSER/);
+  }
 });
