@@ -3,6 +3,7 @@ package __PACKAGE__
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Base64
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.InetAddress
@@ -152,15 +153,26 @@ internal object TvDiscovery {
       sendRemoteMessage(output, remoteKey("Click", "KEY_L"))
       sendRemoteMessage(output, remoteKey("Release", "KEY_CTRL"))
       Thread.sleep(450)
-       sendRemoteMessage(output, remoteKey("SendInputString", target.toString(), "SendInputString"))
+        // Samsung's remote-control API expects a Press command for text input.
+        // Using "SendInputString" as Cmd is silently ignored by many TV models.
+        sendRemoteMessage(output, remoteKey("Press", target.toString(), "SendInputString"))
       Thread.sleep(400)
       sendRemoteMessage(output, remoteKey("Click", "KEY_ENTER"))
       Thread.sleep(1_200)
     }
   }
 
-  private fun remoteKey(command: String, data: String, remoteType: String = "SendRemoteKey") =
-    """{"method":"ms.remote.control","params":{"Cmd":"$command","DataOfCmd":"$data","Option":"false","TypeOfRemote":"$remoteType"}}"""
+  private fun remoteKey(command: String, data: String, remoteType: String = "SendRemoteKey"): String {
+    val params = JSONObject()
+      .put("Cmd", command)
+      .put("DataOfCmd", data)
+      .put("Option", "false")
+      .put("TypeOfRemote", remoteType)
+    return JSONObject()
+      .put("method", "ms.remote.control")
+      .put("params", params)
+      .toString()
+  }
 
   private fun sendRemoteMessage(output: java.io.OutputStream, message: String) {
     val payload = message.toByteArray(Charsets.UTF_8)

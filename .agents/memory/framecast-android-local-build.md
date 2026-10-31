@@ -15,6 +15,12 @@ For Android 36 release builds in this workspace, use the existing Java 17 toolch
 
 **How to apply:** Set `JAVA_HOME` to the cached Android build toolchain before invoking Gradle; use a Java 17 runtime for SDK 36 release bundles.
 
+Run full Android release-bundle builds as background shell jobs with Gradle workers capped at two.
+
+**Why:** A foreground release build was cut off during the long native CMake compilation, while the background build completed successfully.
+
+**How to apply:** Use a monitored background shell for full AAB builds and retain its log; do not interpret a foreground command ending mid-CMake as a source failure.
+
 Verify permissions in the generated and merged Android manifests, not just Expo's configuration.
 
 **Why:** Setting `cameraPermission: false` on Expo's image-picker plugin removes CAMERA from the shared Android manifest, including for a separate QR scanner. Listing CAMERA in the app's permissions array is not enough to counter that removal.
