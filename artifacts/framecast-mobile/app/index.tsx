@@ -2814,6 +2814,12 @@ function FrameCastHomeScreen() {
               </>
             )}
 
+            {error && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (
+              <View style={[styles.errorBox, { backgroundColor: activeColors.secondary }]} testID="text-error">
+                <Ionicons name="alert-circle-outline" size={18} color={activeColors.destructive} />
+                <Text style={[styles.errorText, { color: activeColors.destructive }]}>{error}</Text>
+              </View>
+            )}
             {stage !== 'sending' && stage !== 'connecting' && !unsupportedVideoHelpVisible && selectedMedia && !isUrlPlayback && castTab === (selectedMedia.kind === 'video' ? 'videos' : 'images') && (Boolean(error) || (stage === 'sent' && mediaQueue.length > 1)) && (
               <Pressable
                 onPress={() => void startTransfer()}
@@ -2854,7 +2860,7 @@ function FrameCastHomeScreen() {
         </View>
 
         {transferNotice ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
-        {error ? (
+        {error && (!selectedMedia || isUrlPlayback || castTab !== (selectedMedia.kind === 'video' ? 'videos' : 'images')) ? (
           <View style={[styles.errorBox, { backgroundColor: activeColors.secondary }]} testID="text-error">
             <Ionicons name="alert-circle-outline" size={18} color={activeColors.destructive} />
             <Text style={[styles.errorText, { color: activeColors.destructive }]}>{error}</Text>

@@ -278,7 +278,7 @@ video.onerror=function(){
    clearTimeout(networkRetryTimer);networkRetryTimer=setTimeout(function(){if(!exiting){video.load();play();}},2000);return;
   }
  }
-  if(errorCode===2&&playedAtLeastOnce&&!exiting){
+  if(errorCode===2&&!exiting){
    playback='error';problem='TV_LOCAL_SERVER_UNREACHABLE';
    notice.textContent='The phone video link stopped responding. Reconnecting through FrameCast…';
    video.pause();state();reveal();return;

@@ -60,6 +60,17 @@ test('an active phone-server failure is reported after the bounded retry window'
   assert.equal(f.context.playback, 'error');
   assert.equal(f.context.problem, 'TV_LOCAL_SERVER_UNREACHABLE');
 });
+test('a phone-server read failure before first playback also triggers recovery', () => {
+  const f = setup();
+  f.context.video.onerror();
+  f.tick(14_999);
+  f.context.video.onerror();
+  assert.equal(f.context.playback, 'opening');
+  f.tick(1);
+  f.context.video.onerror();
+  assert.equal(f.context.playback, 'error');
+  assert.equal(f.context.problem, 'TV_LOCAL_SERVER_UNREACHABLE');
+});
 test('a recovered phone cancels retries and keeps normal playback', () => {
   const f = setup();
   f.context.video.onerror();

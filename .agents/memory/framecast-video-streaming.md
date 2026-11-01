@@ -50,3 +50,9 @@ When a TV reports that it cannot decode a selected video, do not convert it on t
 **Why:** The user changed the compatibility fallback from on-device conversion to a visible explanation and a third-party converter link, and selected CloudConvert.
 
 **How to apply:** Offer the link only for explicit TV codec/decoder errors, not network or autoplay failures. Open CloudConvert without attaching media; the user must choose and upload the video there, then return and select the result. Do not claim the TV's exact codec unless it is actually known. Preserve direct phone-to-TV transfer for the selected converted file.
+
+For phone-selected native files, a TV media-network/read error after bounded local retries must enter the existing local-server recovery and eligible WebRTC compatibility fallback, including before the first frame. Keep explicit codec/decode errors separate; never send a network failure to the converter guidance.
+
+**Why:** Samsung can open the phone-hosted receiver successfully yet fail its initial media read. A generic retry-only state leaves the user stuck even though the existing peer-to-peer recovery path can still work.
+
+**How to apply:** On exhausted local read retries, report the server-unreachable state to the phone so it can restart the local transport and use the existing size-bounded compatibility fallback if needed. Keep the media peer-to-peer, preserve codec-specific guidance for actual decode/unsupported-format errors, and show the actionable error near the retry control.
