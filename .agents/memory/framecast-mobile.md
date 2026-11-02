@@ -137,7 +137,13 @@ Keep the phone's first screen connection-first: concise TV browser instructions,
 
 **How to apply:** Start the Android foreground service automatically when a paired room has an active Premium entitlement, and stop it for free users or on disconnect. Keep the Android casting notification visible and respect Android notification and MediaProjection consent; never promise recovery after force-stop, network loss, or OS termination.
 
-Free users must retain TV pairing when background playback is stopped. Returning to FrameCast should not require another QR scan merely because the app was backgrounded.
+Reopening the native app should attempt to restore its previous still-live TV pairing, without automatically restarting media or screen capture. A saved pairing is not proof that either device is online.
+
+**Why:** The owner reported that after closing the app for about thirty minutes, the TV still claimed to be connected while the reopened phone required pairing again, and explicitly requested fixing both sides.
+
+**How to apply:** Retain only a short-lived on-device room pointer, never media, purchases, or a permanent device identity. Verify the TV with a fresh challenge before enabling casting. Show an honest phone-away state while keeping the TV room for recovery; reserve new-room creation for explicit disconnect. Background suspension must not silently become an explicit disconnect. Coordinate the TV website and Android rollout.
+
+Free users must retain TV pairing when background playback is stopped. Returning to FrameCast should not require another code entry merely because the app was backgrounded.
 
 **Why:** The user explicitly distinguishes stopping free background media from disconnecting the TV; repeated code changes make the app appear broken.
 

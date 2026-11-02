@@ -27,6 +27,7 @@ import { Directory, File as ExpoFile, FileMode, Paths } from 'expo-file-system';
 import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createPairingResume } from '@/lib/pairing-resume';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { createTvPresence, TV_CONNECTION_CHECK } from '@/lib/tv-presence';
 import { shouldUnlockExtraMedia } from '@/lib/rewarded-media-policy';
@@ -338,6 +339,8 @@ function FrameCastHomeScreen() {
   const [code, setCode] = useState('');
   const [nearbyScanRequest, setNearbyScanRequest] = useState(0);
   const [roomId, setRoomId] = useState('');
+  const pairingResumeRef = useRef(createPairingResume(AsyncStorage));
+  const lastPairingSaveRef = useRef(0);
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
   const presenceRef = useRef<ReturnType<typeof createTvPresence> | null>(null);
@@ -667,9 +670,19 @@ function FrameCastHomeScreen() {
     for (const signal of messages) {
       if (signal.from !== 'tv' || seenMessages.current.has(signal.sequence)) continue;
       seenMessages.current.add(signal.sequence);
+      if (signal.type === 'ready' && signal.payload.action === 'phone-presence-ping') {
+        sendSignal('ready', { action: 'phone-presence-pong', sessionId: signal.payload.sessionId });
+        continue;
+      }
       if (signal.type === 'ready' && signal.payload.action === 'connection-pong') {
         if (presenceRef.current?.acknowledge(signal.payload.sessionId)) {
           setTvPresence('online');
+          if (Date.now() - lastPairingSaveRef.current > 60_000) {
+            lastPairingSaveRef.current = Date.now();
+            void pairingResumeRef.current.save(roomId).catch(() => {
+              setError('Casting works, but this phone could not save the pairing for reopening the app.');
+            });
+          }
           setError(current => current === TV_CONNECTION_CHECK ? '' : current);
         }
         continue;
@@ -838,12 +851,18 @@ function FrameCastHomeScreen() {
       setError('That connection does not contain a FrameCast room. Enter the code shown on the TV.');
       return;
     }
+    void pairingResumeRef.current.clear().catch(() => {
+      setError('The previous saved pairing could not be cleared.');
+    });
     closePeer(Boolean(peerRef.current));
     cleanupTemporaryCopies();
     clearVideoThumbnailData();
     setVideoEnded(false);
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
+    currentRoomRef.current = id;
+    lastPairingSaveRef.current = 0;
+    setTvPresence('checking');
     setRoomId(id);
     photoSelectionUnlockRoomRef.current = '';
     videoSelectionUnlockRoomRef.current = '';
@@ -867,6 +886,26 @@ function FrameCastHomeScreen() {
     setError('');
     openFirstPairChoice();
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    void pairingResumeRef.current.read().then(savedRoom => {
+      if (cancelled || currentRoomRef.current || !savedRoom) return;
+      currentRoomRef.current = savedRoom;
+      setTvPresence('checking');
+      setRoomId(savedRoom);
+    }).catch(() => {
+      if (!cancelled) setError('The previous TV pairing could not be read. Enter the TV code to connect.');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const error = messagesQuery.error;
+    if (roomId && error && typeof error === 'object' && 'status' in error && error.status === 404) {
+      onTvLostRef.current();
+    }
+  }, [roomId, messagesQuery.error]);
 
   const submitCode = () => {
     Keyboard.dismiss();
@@ -1921,7 +1960,12 @@ function FrameCastHomeScreen() {
   };
   continueVideoQueueRef.current = (completedIndex) => { void continueVideoQueue(completedIndex); };
 
-  const leaveRoom = () => {
+  const leaveRoom = (notifyDisconnect = true) => {
+    currentRoomRef.current = '';
+    lastPairingSaveRef.current = 0;
+    void pairingResumeRef.current.clear().catch(() => {
+      setError('The saved pairing could not be cleared. Clear local data in Settings before sharing this phone.');
+    });
     if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
     fullscreenAckTimerRef.current = null;
     setFullscreenNotice('');
@@ -1929,7 +1973,7 @@ function FrameCastHomeScreen() {
     currentRoomRef.current = '';
     setBackgroundEnabled(false);
     void stopBackgroundCasting().catch(() => setError('Android could not stop background casting. Close FrameCast to end its service.'));
-    closePeer(true, true);
+    closePeer(notifyDisconnect, notifyDisconnect);
     cleanupTemporaryCopies();
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
@@ -1956,7 +2000,7 @@ function FrameCastHomeScreen() {
     setError('');
   };
   onTvLostRef.current = () => {
-    leaveRoom();
+    leaveRoom(false);
     setError('The TV is no longer responding. Open FrameCast on the TV and enter its current code to reconnect.');
   };
 
@@ -2785,7 +2829,7 @@ function FrameCastHomeScreen() {
               </View>
             )}
             <Pressable
-              onPress={leaveRoom}
+              onPress={() => leaveRoom()}
               style={({ pressed }) => [styles.leaveButton, { backgroundColor: activeColors.destructive, opacity: pressed ? 0.85 : 1 }]}
               accessibilityRole="button"
               accessibilityLabel="Disconnect from this TV"

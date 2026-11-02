@@ -225,13 +225,29 @@ function command(action){
   }
   probe();
  }
+var phoneChallenge='local-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+var phoneReplyAt=Date.now(),phoneProbeAt=0;
 function poll(){
  if(exiting||polling)return;polling=true;
+ if(Date.now()-phoneReplyAt>=45000){
+  // Leave a dead phone-hosted receiver without creating a different TV room.
+  // The online receiver can answer the reopened phone's restoration challenge.
+  cinemaWaiting(true,'Phone away','Reopen FrameCast on your phone to reconnect.');
+  leave(cursor,false);return;
+ }
+ if(Date.now()-phoneProbeAt>=5000){
+  phoneProbeAt=Date.now();
+  post('ready',{action:'phone-presence-ping',sessionId:phoneChallenge}).catch(function(){});
+ }
  fetch(endpoint.href,{cache:'no-store'}).then(function(r){if(!r.ok)throw Error('Room unavailable');return r.json();}).then(function(data){
   var messages=data.messages||[];
   for(var i=0;i<messages.length;i++){
    var m=messages[i];if(m.sequence<=cursor)continue;cursor=m.sequence;
    if(m.from!=='phone')continue;
+    if(m.type==='ready'&&m.payload&&m.payload.action==='phone-presence-pong'){
+     if(m.payload.sessionId===phoneChallenge)phoneReplyAt=Date.now();
+     continue;
+    }
     if(m.type==='ready'&&m.payload&&m.payload.action==='connection-ping'){
      post('ready',{action:'connection-pong',sessionId:m.payload.sessionId}).catch(function(){});
      continue;

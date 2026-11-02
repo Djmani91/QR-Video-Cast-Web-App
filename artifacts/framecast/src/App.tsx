@@ -35,6 +35,7 @@ import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/v
 import { VideoPlaylist } from './components/VideoPlaylist';
 import { TvCinemaWaitingScreen } from './components/TvCinemaWaitingScreen';
 import { parseSavedTvRoom } from './lib/tv-room-resume';
+import { createPhonePresence } from './lib/phone-presence';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import {
@@ -450,6 +451,8 @@ function TvPage() {
     } catch { return false; }
   });
   const persistedRoomRef = useRef({ id: '', paired: false, at: 0 });
+  const phonePresenceRef = useRef<ReturnType<typeof createPhonePresence> | null>(null);
+  const [phonePresence, setPhonePresence] = useState('checking');
   useEffect(() => {
     if (!room) return;
     const previous = persistedRoomRef.current;
@@ -655,6 +658,22 @@ function TvPage() {
     }, 1000);
   }, [status]);
   const send = useSignalSender(roomId);
+  useEffect(() => {
+    if (!roomId) return;
+    const presence = createPhonePresence();
+    phonePresenceRef.current = presence;
+    setPhonePresence('checking');
+    const probe = () => {
+      setPhonePresence(presence.status());
+      send('tv', 'ready', { action: 'phone-presence-ping', sessionId: presence.challenge });
+    };
+    probe();
+    const timer = window.setInterval(probe, 5_000);
+    return () => {
+      window.clearInterval(timer);
+      if (phonePresenceRef.current === presence) phonePresenceRef.current = null;
+    };
+  }, [roomId, send]);
   const screenMirrorAudioRef = useRef<ScreenMirrorAudioPlayer | null>(null);
   const messagesQuery = useGetCastRoomMessages(roomId, {
     query: {
@@ -1171,6 +1190,13 @@ function TvPage() {
     for (const signal of messages) {
       if (signal.from !== 'phone' || signal.sequence <= resumeAfterRef.current || seenRef.current.has(signal.sequence)) continue;
       seenRef.current.add(signal.sequence);
+      if (signal.type === 'ready' && signal.payload.action === 'phone-presence-pong') {
+        if (phonePresenceRef.current?.acknowledge(signal.payload.sessionId)) {
+          setPhonePresence('online');
+          setPhonePaired(true);
+        }
+        continue;
+      }
       if (signal.type === 'ready' && signal.payload.action === 'connection-ping') {
         send('tv', 'ready', { action: 'connection-pong', sessionId: signal.payload.sessionId });
         setPhonePaired(true);
@@ -2006,7 +2032,11 @@ function TvPage() {
     startRoom();
   }, [roomId, messagesQuery.error]);
   const roomExpired = Boolean(room && new Date(room.expiresAt).getTime() <= clock);
-  const statusCopy = status === 'connected'
+  const statusCopy = phonePaired && phonePresence !== 'online'
+    ? phonePresence === 'checking'
+      ? 'Checking whether your phone is still connected…'
+      : 'Phone away. Reopen FrameCast on your phone; this TV pairing is kept.'
+    : status === 'connected'
     ? screenMirroring
       ? 'Phone screen mirrored live. Stop sharing from your phone when finished.'
       : transferProgress !== null && transferProgress < 100
@@ -2036,12 +2066,16 @@ function TvPage() {
     status, hasActiveMedia: hasActiveTvMedia && !(mediaKind === 'video' && !screenMirroring && !youtubeVideoId && videoRef.current?.ended),
     waitingForPlayback, switchingVideo: playlistTransitioning,
   });
-  const cinemaConnectionLabel = status === 'disconnected' || status === 'failed'
+  const cinemaConnectionLabel = phonePresence !== 'online'
+    ? phonePresence === 'checking' ? 'Checking phone connection' : 'Phone away · pairing kept'
+    : status === 'disconnected' || status === 'failed'
     ? 'Phone reconnecting'
     : status === 'connecting' && !phonePaired
       ? 'Connecting to phone'
       : phonePaired ? 'Phone connected' : 'Waiting for phone';
-  const cinemaReadyMessage = status === 'disconnected' || status === 'failed'
+  const cinemaReadyMessage = phonePresence !== 'online'
+    ? 'Reopen FrameCast on your phone to reconnect. Keep this TV screen open.'
+    : status === 'disconnected' || status === 'failed'
     ? 'Keep this room open; the same phone can reconnect.'
     : 'Ready for your next photo or video';
   const cinemaErrorMessage = error || (messagesQuery.isError
@@ -2465,6 +2499,10 @@ function PhonePage({ roomId }: { roomId?: string }) {
     for (const signal of messages) {
       if (signal.from !== 'tv' || seenRef.current.has(signal.sequence)) continue;
       seenRef.current.add(signal.sequence);
+      if (signal.type === 'ready' && signal.payload.action === 'phone-presence-ping') {
+        send('phone', 'ready', { action: 'phone-presence-pong', sessionId: signal.payload.sessionId });
+        continue;
+      }
       if (signal.type === 'answer') {
         if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
         const peer = peerRef.current;
