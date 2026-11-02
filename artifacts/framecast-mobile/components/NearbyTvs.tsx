@@ -20,7 +20,14 @@ export interface NearbyTvsProps {
 
 type ScanState = 'idle' | 'scanning' | 'done' | 'error';
 
-const FALLBACK = 'You can always open 2tx1.com in the TV browser and enter its code here instead.';
+const FALLBACK = 'For browser pairing, open 2tx1.com on the TV and enter the code shown there in this app.';
+
+const BROWSER_GUIDANCE: Partial<Record<NearbyTv['type'], string>> = {
+  samsung: 'Tap “Open browser on TV” to try the Samsung browser handoff. If it does not open, open Internet Browser on the TV, enter 2tx1.com, and type the TV code here.',
+  firetv: 'On the Fire TV, open Silk Browser and enter 2tx1.com. The TV will show a short code; enter it here. FrameCast plays media in the browser and does not control the Fire TV home screen.',
+  webos: 'On the LG TV, open its Internet Browser and enter 2tx1.com. Then type the code shown on the TV here.',
+  dlna: 'If this TV has an Internet browser, open 2tx1.com and enter the code shown there. Otherwise, use the media-only option below if available.',
+};
 
 const TYPE_LABEL: Record<NearbyTv['type'], string> = {
   samsung: 'Samsung TV',
@@ -34,17 +41,17 @@ const TYPE_LABEL: Record<NearbyTv['type'], string> = {
 
 const LIMITATION: Record<Exclude<NearbyTv['type'], 'samsung'>, string> = {
   chromecast:
-    'Detected only. FrameCast cannot connect to this TV yet. Chromecast needs a registered Cast receiver app and cannot open the normal 2tx1.com website. Use the code on another screen with a browser instead.',
+    'This Chromecast has no general TV browser. If media-only playback is offered below, use that. Otherwise, pair with a browser-equipped TV at 2tx1.com.',
   firetv:
-    'Detected only. FrameCast cannot connect to this TV automatically. Open the Silk browser on the Fire TV, go to 2tx1.com, then enter its code here. Automatic connection would need a Matter receiver, which is not supported yet.',
+    'Open Silk Browser on the Fire TV and type 2tx1.com. Pairing uses the code shown on the TV; scanning does not connect or control the Fire TV dashboard.',
   webos:
-    'Found your LG TV. Open its Web Browser, type 2tx1.com, then enter its code here. Automatic browser control for LG needs a separate approved webOS pairing connection; it is not enabled yet.',
+    'Open the LG TV’s Internet Browser, type 2tx1.com, then enter its code here. FrameCast does not control the TV home screen.',
   roku:
-    'Found your Roku TV or player. Roku does not provide a general TV web browser. Connecting from FrameCast would require a Roku receiver channel, which is not included yet. Use a different screen with a browser for code pairing.',
+    'Roku does not provide a general TV web browser, and FrameCast does not include a Roku receiver channel. Use another browser-equipped TV for code pairing.',
   dlna:
-    'Found a smart TV using its media-discovery service. If it has an Internet browser, open 2tx1.com there and enter its code here. Finding the TV alone does not enable direct DLNA playback or automatic browser control.',
+    'Finding a DLNA device does not mean it is connected. If it has a browser, open 2tx1.com and enter the TV code here. Media-only playback is offered separately when supported.',
   appletv:
-    'Found your Apple TV through its AirPlay advertisement. FrameCast Android does not include an AirPlay sender or Apple TV receiver app, and Apple TV has no built-in general web browser. Use another screen with a browser for code pairing.',
+    'Apple TV has no general web browser, and FrameCast does not include an AirPlay receiver. Use another browser-equipped TV for code pairing.',
 };
 
 const tvKey = (tv: NearbyTv) => `${tv.type}-${tv.ip}`;
@@ -161,6 +168,10 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
 
   const busy = connecting !== null || settling;
   const selectedTv = tvs.find((t) => tvKey(t) === selected) ?? null;
+  const selectedDirectTarget = selectedTv ? getDirectTarget(selectedTv) : null;
+  const selectedAction = selectedTv
+    ? getNearbyTvAction(selectedTv, Boolean(selectedDirectTarget && onDirectTarget))
+    : null;
 
   return (
     <View
@@ -223,16 +234,12 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
                 testID={`nearby-tv-${key}`}
                 accessibilityRole="button"
                 accessibilityLabel={`${tv.name}, ${TYPE_LABEL[tv.type]}${tv.model ? `, ${tv.model}` : ''}`}
-                accessibilityHint={tv.type === 'samsung' ? 'Tries to open FrameCast in the Samsung TV browser' : getDirectTarget(tv) ? 'Opens direct media controls; the TV browser does not open' : 'Shows why this TV cannot be connected automatically'}
+                accessibilityHint="Selects this TV and shows browser pairing or media-only options; scanning itself does not connect"
                 accessibilityState={{ selected: isSel, disabled: busy, busy: isConn }}
                 disabled={busy}
                 onPress={() => {
                   setSelected(key);
                   setConnectError(null);
-                  const direct = getDirectTarget(tv);
-                  const action = getNearbyTvAction(tv, Boolean(direct && onDirectTarget));
-                  if (action === 'samsung-browser') startSamsung(tv);
-                  else if (action === 'direct-media' && direct && onDirectTarget) onDirectTarget(direct);
                 }}
                 style={({ pressed }) => [
                   styles.row,
@@ -252,10 +259,10 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
                   <Text numberOfLines={1} style={[styles.meta, { color: colors.mutedForeground }]}>
                     {TYPE_LABEL[tv.type]}{tv.model ? ` · ${tv.model}` : ''}
                     {tv.type === 'samsung'
-                      ? ' · open TV browser'
+                      ? ' · browser pairing'
                       : getDirectTarget(tv)
-                        ? ' · direct media'
-                        : ' · detected only'}
+                        ? ' · media-only available'
+                        : ' · found, not connected'}
                   </Text>
                 </View>
                 {isConn ? <ActivityIndicator color={colors.primary} /> : <Feather name="chevron-right" size={18} color={colors.mutedForeground} />}
@@ -299,10 +306,64 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
             {connectError} Tap the TV to try again, or {FALLBACK.charAt(0).toLowerCase() + FALLBACK.slice(1)}
           </Text>
         </View>
-      ) : selectedTv && selectedTv.type !== 'samsung' && !getDirectTarget(selectedTv) ? (
-        <View style={[styles.panel, { backgroundColor: colors.muted, borderRadius: colors.radius }]} accessibilityLiveRegion="polite">
-          <Text style={[styles.panelTitle, { color: colors.foreground }]}>{TYPE_LABEL[selectedTv.type]} found</Text>
-          <Text style={[styles.panelText, { color: colors.mutedForeground }]}>{LIMITATION[selectedTv.type]}</Text>
+      ) : selectedTv ? (
+        <View
+          style={[styles.panel, { backgroundColor: colors.muted, borderRadius: colors.radius }]}
+          accessibilityLiveRegion="polite"
+          testID="nearby-tv-selected"
+        >
+          <Text style={[styles.panelTitle, { color: colors.foreground }]}>{selectedTv.name}</Text>
+          <Text style={[styles.panelText, { color: colors.mutedForeground }]}>
+            {TYPE_LABEL[selectedTv.type]} found on Wi-Fi · not connected
+          </Text>
+          <Text style={[styles.panelText, { color: colors.mutedForeground }]}>
+            {BROWSER_GUIDANCE[selectedTv.type] ?? LIMITATION[selectedTv.type as Exclude<NearbyTv['type'], 'samsung'>]}
+          </Text>
+          {BROWSER_GUIDANCE[selectedTv.type] ? (
+            <View style={[styles.address, { backgroundColor: colors.secondary, borderRadius: colors.radius }]}>
+              <Feather name="globe" size={16} color={colors.primary} />
+              <View style={styles.addressText}>
+                <Text style={[styles.addressLabel, { color: colors.primary }]}>TV browser address</Text>
+                <Text selectable style={[styles.addressValue, { color: colors.primary }]}>2tx1.com</Text>
+              </View>
+            </View>
+          ) : null}
+          {selectedAction === 'samsung-browser' ? (
+            <Pressable
+              testID="nearby-tvs-open-samsung"
+              accessibilityRole="button"
+              accessibilityLabel="Open FrameCast in Samsung TV browser"
+              disabled={busy}
+              onPress={() => void startSamsung(selectedTv)}
+              style={({ pressed }) => [
+                styles.actionButton,
+                { backgroundColor: colors.primary, borderRadius: colors.radius, opacity: busy ? 0.5 : pressed ? 0.75 : 1 },
+              ]}
+            >
+              <Feather name="globe" size={17} color={colors.primaryForeground} />
+              <Text style={[styles.actionButtonText, { color: colors.primaryForeground }]}>Open browser on TV</Text>
+            </Pressable>
+          ) : null}
+          {selectedAction === 'direct-media' && selectedDirectTarget && onDirectTarget ? (
+            <>
+              <Text style={[styles.panelText, { color: colors.primary }]}>
+                Media-only playback: FrameCast sends photos and videos to the receiver. It does not control the TV home screen.
+              </Text>
+              <Pressable
+                testID="nearby-tvs-play-media"
+                accessibilityRole="button"
+                accessibilityLabel="Play media only on this TV"
+                onPress={() => onDirectTarget(selectedDirectTarget)}
+                style={({ pressed }) => [
+                  styles.actionButton,
+                  { backgroundColor: colors.primary, borderRadius: colors.radius, opacity: pressed ? 0.75 : 1 },
+                ]}
+              >
+                <Feather name="play" size={17} color={colors.primaryForeground} />
+                <Text style={[styles.actionButtonText, { color: colors.primaryForeground }]}>Play media only</Text>
+              </Pressable>
+            </>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -326,6 +387,12 @@ const styles = StyleSheet.create({
   panel: { padding: 12, gap: 6 },
   panelTitle: { fontFamily: 'Inter_700Bold', fontSize: 14 },
   panelText: { fontFamily: 'Inter_500Medium', fontSize: 13, lineHeight: 19 },
+  address: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12, marginTop: 4 },
+  addressText: { flex: 1 },
+  addressLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6 },
+  addressValue: { fontFamily: 'Inter_700Bold', fontSize: 18, marginTop: 2 },
+  actionButton: { minHeight: 46, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 6 },
+  actionButtonText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
   cancel: { marginTop: 6, minHeight: 44, borderWidth: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   cancelText: { fontFamily: 'Inter_700Bold', fontSize: 14 },
 });

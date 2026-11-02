@@ -8,6 +8,8 @@ const require = createRequire(new URL('../package.json', import.meta.url));
 const ts = require('typescript');
 const source = readFileSync(new URL('../lib/tv-discovery.ts', import.meta.url), 'utf8');
 const roomSource = readFileSync(new URL('../lib/tv-room-url.ts', import.meta.url), 'utf8');
+const nearbyComponent = readFileSync(new URL('../components/NearbyTvs.tsx', import.meta.url), 'utf8');
+const directCastComponent = readFileSync(new URL('../components/DirectCastPanel.tsx', import.meta.url), 'utf8');
 const room = { id: 'private-room-created-by-api', code: '12', expiresAt: '2099-01-01T00:00:00Z' };
 const samsung = { ip: '192.168.1.208', name: 'Living room', model: 'Samsung', type: 'samsung' };
 const acknowledgement = { from: 'tv', type: 'ready', payload: { action: 'tv-browser-ready', sessionId: room.id } };
@@ -64,6 +66,22 @@ test('Samsung browser launch takes priority over an advertised DLNA renderer', (
   assert.equal(discovery.getNearbyTvAction({ ...samsung, rendererId: 'dlna-renderer' }, true), 'samsung-browser');
   assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv' }, true), 'direct-media');
   assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv' }, false), 'instructions');
+});
+
+test('selecting a discovered TV shows choices but does not connect automatically', () => {
+  const rowHandler = nearbyComponent.match(/onPress=\{\(\) => \{\s*setSelected\(key\);[\s\S]*?\}\}/)?.[0];
+  assert.ok(rowHandler, 'TV row should have a selection handler');
+  assert.match(rowHandler, /setSelected\(key\)/);
+  assert.doesNotMatch(rowHandler, /startSamsung|onDirectTarget/);
+  assert.match(nearbyComponent, /testID="nearby-tvs-open-samsung"/);
+  assert.match(nearbyComponent, /testID="nearby-tvs-play-media"/);
+  assert.match(nearbyComponent, /TV browser address/);
+  assert.match(nearbyComponent, /2tx1\.com/);
+});
+
+test('direct Cast and DLNA panel promises media-only playback, not TV dashboard control', () => {
+  assert.match(directCastComponent, /Media-only ready/);
+  assert.match(directCastComponent, /does not control the TV home screen/);
 });
 
 test('discovery rejects malformed/public entries and deduplicates by protocol and IP', async () => {

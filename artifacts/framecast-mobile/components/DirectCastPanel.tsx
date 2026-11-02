@@ -117,8 +117,8 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         connectedRef.current = true;
         setConnected(true);
         setMessage(target.protocol === 'dlna'
-          ? 'DLNA media receiver ready. The TV browser will not open; start media below to show it on the TV.'
-          : 'Receiver connected. Choose a photo or video to play.');
+          ? 'DLNA media-only receiver ready. Choose a photo or video to play.'
+          : 'Media-only receiver ready. Choose a photo or video to play.');
         openFirstPairChoice();
       } catch (e) {
         if (live.current) { setError(detail(e)); setMessage('Could not connect to the receiver.'); }
@@ -400,7 +400,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         </View>
         <Text style={[styles.title, { color: colors.foreground }]}>{target.name}</Text>
         <Text style={[styles.text, { color: colors.mutedForeground }]}>
-          {target.protocol === 'googlecast' ? 'Google Cast' : 'DLNA media receiver'} · {connected ? 'Receiver connected' : busy ? 'Connecting…' : 'Not connected'}
+          {target.protocol === 'googlecast' ? 'Google Cast' : 'DLNA media receiver'} · {connected ? 'Media-only ready' : busy ? 'Preparing media receiver…' : 'Not connected'}
         </Text>
         <View style={[styles.notice, { backgroundColor: colors.secondary }]}>
           <View style={styles.noticeRow}>
@@ -433,8 +433,8 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         {connected && <>
         <Text style={[styles.text, { color: colors.mutedForeground }]}>
           {target.protocol === 'dlna'
-            ? 'This controls the TV’s DLNA media player; it does not open FrameCast in the TV browser. The TV may stay on its current screen until you start a photo or video. Media goes directly from your phone to the receiver.'
-            : 'Media goes directly from your phone or original source to this receiver. No TV browser code is needed. The receiver decides which formats it can play.'}
+            ? 'FrameCast sends media to the TV’s DLNA player only. It does not control the TV home screen or open its browser. The TV may stay on its current screen until playback starts.'
+            : 'FrameCast sends selected media to this receiver only. It does not control the TV home screen or open its browser. No TV browser code is needed for this media-only route.'}
         </Text>
           <View style={styles.row}>
             {button('Photos', () => void choose('image'), false)}
