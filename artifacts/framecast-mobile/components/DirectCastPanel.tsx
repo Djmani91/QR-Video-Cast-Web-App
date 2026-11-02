@@ -71,7 +71,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     openExpiredTrialPaywall();
   }, [connected, isPremium, openExpiredTrialPaywall, trial.expired]);
 
-  // One ordered native/media operation at a time, including disconnect cleanup.
+  // Keep playback commands ordered, but let disconnect interrupt a stalled command.
   const ordered = <T,>(operation: () => Promise<T>): Promise<T> => {
     const next = operations.current.then(operation);
     operations.current = next.then(() => undefined, () => undefined);
@@ -103,7 +103,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     connectedRef.current = false;
     setConnected(false);
     setMessage('Disconnecting from the TV…');
-    try { await ordered(cleanup); }
+    try { await cleanup(); }
     catch (e) { Alert.alert('Disconnect notice', detail(e)); }
     finally { onClose(); }
   };
@@ -127,7 +127,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     return () => {
       live.current = false;
       connectedRef.current = false;
-      void ordered(cleanup).catch(() => undefined);
+      void cleanup().catch(() => undefined);
     };
   }, []); // A selected target owns this panel for its lifetime.
 
@@ -144,7 +144,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     try {
       await ordered(async () => {
         const item = queueRef.current[nextIndex];
-        if (!live.current || !item) return;
+        if (!live.current || closingRef.current || !item) return;
         // End the previous read before replacing the selected-file server.
         if (indexRef.current >= 0) await controlDirect('stop');
         let source = item.uri;
@@ -152,9 +152,9 @@ export default function DirectCastPanel({ target, onClose }: Props) {
           const stream = await startLocalStream(item.uri, item.name, target.protocol === 'googlecast');
           source = stream.receiverUrl.replace(/receiver\.html$/, `media${stream.extension}`);
         } else await stopLocalStream();
-        if (!live.current) return;
+        if (!live.current || closingRef.current) return;
         await loadDirect(source, item.mime, item.name);
-        if (!live.current) return;
+        if (!live.current || closingRef.current) return;
         indexRef.current = nextIndex;
         statusRef.current = emptyStatus;
         setStatus(emptyStatus);
@@ -169,7 +169,16 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         }
       });
     } catch (e) {
-      if (live.current) { setError(detail(e)); setMessage('The TV could not open this media.'); }
+      if (live.current && !closingRef.current) {
+        const code = e && typeof e === 'object' && 'code' in e ? e.code : undefined;
+        if (code === 'CAST_LOAD_TIMEOUT') {
+          connectedRef.current = false;
+          setConnected(false);
+          setMessage('The TV did not confirm playback. Disconnect and reconnect before trying again.');
+          void Promise.allSettled([disconnectDirect(), stopLocalStream()]);
+        } else setMessage('The TV could not open this media.');
+        setError(detail(e));
+      }
     } finally { busyState(false); }
   };
   playRef.current = play;
@@ -394,8 +403,22 @@ export default function DirectCastPanel({ target, onClose }: Props) {
           {target.protocol === 'googlecast' ? 'Google Cast' : 'DLNA media receiver'} · {connected ? 'Receiver connected' : busy ? 'Connecting…' : 'Not connected'}
         </Text>
         <View style={[styles.notice, { backgroundColor: colors.secondary }]}>
-          {busy && <ActivityIndicator color={colors.primary} />}
-          <Text style={[styles.text, { color: colors.foreground }]} accessibilityLiveRegion="polite">{message}</Text>
+          <View style={styles.noticeRow}>
+            <View style={styles.progressSlot}>
+              <ActivityIndicator animating={busy} color={colors.primary} />
+            </View>
+            <Text style={[styles.text, styles.noticeText, { color: colors.foreground }]} accessibilityLiveRegion="polite">{message}</Text>
+            <Pressable
+              onPress={() => void close()}
+              disabled={!busy}
+              testID="direct-cast-cancel"
+              accessibilityRole="button"
+              accessibilityLabel="Cancel and disconnect from TV"
+              style={[styles.cancelButton, { opacity: busy ? 1 : 0 }]}
+            >
+              <Text style={[styles.cancelText, { color: colors.primary }]}>Cancel</Text>
+            </Pressable>
+          </View>
         </View>
         {connected && !isPremium && trial.hasStarted && trial.remainingMs > 0 ? (
           <View style={[styles.trialNotice, { backgroundColor: colors.secondary, borderColor: colors.border }]} testID="direct-free-trial-countdown">
@@ -461,7 +484,12 @@ const styles = StyleSheet.create({
   title: { fontSize: 30, fontFamily: 'Inter_700Bold' },
   text: { fontSize: 15, lineHeight: 22, flexShrink: 1 },
   name: { fontSize: 18, fontFamily: 'Inter_600SemiBold' },
-  notice: { borderRadius: 18, padding: 20, gap: 12 },
+  notice: { borderRadius: 18, padding: 16, minHeight: 76, justifyContent: 'center' },
+  noticeRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  progressSlot: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center' },
+  noticeText: { flex: 1 },
+  cancelButton: { minWidth: 48, alignItems: 'flex-end', paddingVertical: 8 },
+  cancelText: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   button: { borderRadius: 18, padding: 16, alignItems: 'center', flexShrink: 1 },
   buttonText: { fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   input: { borderWidth: 1, borderRadius: 16, padding: 16, fontSize: 15 },

@@ -4,6 +4,7 @@ import { localServerConfig } from './local-server-config';
 import { LatestOperationQueue, SupersededOperationError } from './latest-operation-queue';
 import { Platform } from 'react-native';
 import { getWifiLocalIpv4Address } from './tv-discovery';
+import { withOperationTimeout } from './operation-timeout';
 
 type RunningStream = {
   sessionId: string;
@@ -68,8 +69,21 @@ export async function startLocalStream(uri: string, name: string, googleCast = f
       stopInBackground: false,
       extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri), [...receiverOrigins], googleCast),
     });
+    let startupTimedOut = false;
     try {
-      const origin = await server.start();
+      const startup = server.start();
+      void startup.then(() => {
+        if (startupTimedOut) void server.stop().catch(() => undefined);
+      }, () => undefined);
+      const origin = await withOperationTimeout(
+        startup,
+        12_000,
+        'FrameCast could not start the phone’s Wi-Fi video server. Check that the phone and TV are on the same Wi-Fi, then try again.',
+        () => {
+          startupTimedOut = true;
+          void server.stop().catch(() => undefined);
+        },
+      );
       const host = new URL(origin).hostname;
       if (!/^(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(host)
         || host.split('.').some((part) => Number(part) > 255)) {
@@ -88,6 +102,11 @@ export async function startLocalStream(uri: string, name: string, googleCast = f
       active = running;
       return running;
     } catch (error) {
+      if (startupTimedOut) {
+        void server.stop().catch(() => undefined);
+        if (directory.exists) directory.delete();
+        throw error;
+      }
       await server.stop().catch(() => undefined);
       if (directory.exists) directory.delete();
       throw error;

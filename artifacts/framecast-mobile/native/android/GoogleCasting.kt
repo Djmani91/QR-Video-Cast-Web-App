@@ -34,6 +34,7 @@ class FrameCastOptionsProvider : OptionsProvider {
 
 internal object GoogleCasting {
   private val handler = Handler(Looper.getMainLooper())
+  private const val LOAD_TIMEOUT_MS = 15_000L
   private var connecting = false
   private fun context(context: Context) = CastContext.getSharedInstance(context)
 
@@ -118,18 +119,35 @@ internal object GoogleCasting {
   }
 
   fun load(context: Context, url: String, mime: String, title: String, promise: Promise) {
-    DlnaCasting.validateMedia(url, mime)
-    val photo = mime.startsWith("image/")
-    val metadata = MediaMetadata(if (photo) MediaMetadata.MEDIA_TYPE_PHOTO else MediaMetadata.MEDIA_TYPE_MOVIE)
-    metadata.putString(MediaMetadata.KEY_TITLE, title.take(200))
-    val media = MediaInfo.Builder(url).setContentType(mime)
-      .setStreamType(if (photo) MediaInfo.STREAM_TYPE_NONE else MediaInfo.STREAM_TYPE_BUFFERED)
-      .setMetadata(metadata).build()
-    client(context).load(MediaLoadRequestData.Builder().setMediaInfo(media).setAutoplay(true).build())
-      .setResultCallback { result ->
-        if (result.status.isSuccess) promise.resolve(null)
-        else promise.reject("CAST_LOAD_FAILED", "The Cast receiver rejected this media (error ${result.status.statusCode}). Its supported formats depend on the device model.")
-      }
+    var finished = false
+    lateinit var timeout: Runnable
+    fun finish(code: String?, message: String?, cause: Throwable? = null) {
+      if (finished) return
+      finished = true
+      handler.removeCallbacks(timeout)
+      if (code == null) promise.resolve(null)
+      else promise.reject(code, message, cause)
+    }
+    timeout = Runnable {
+      finish("CAST_LOAD_TIMEOUT", "The TV did not confirm the video within 15 seconds. Disconnect and reconnect to try again.")
+    }
+    handler.postDelayed(timeout, LOAD_TIMEOUT_MS)
+    try {
+      DlnaCasting.validateMedia(url, mime)
+      val photo = mime.startsWith("image/")
+      val metadata = MediaMetadata(if (photo) MediaMetadata.MEDIA_TYPE_PHOTO else MediaMetadata.MEDIA_TYPE_MOVIE)
+      metadata.putString(MediaMetadata.KEY_TITLE, title.take(200))
+      val media = MediaInfo.Builder(url).setContentType(mime)
+        .setStreamType(if (photo) MediaInfo.STREAM_TYPE_NONE else MediaInfo.STREAM_TYPE_BUFFERED)
+        .setMetadata(metadata).build()
+      client(context).load(MediaLoadRequestData.Builder().setMediaInfo(media).setAutoplay(true).build())
+        .setResultCallback { result ->
+          if (result.status.isSuccess) finish(null, null)
+          else finish("CAST_LOAD_FAILED", "The Cast receiver rejected this media (error ${result.status.statusCode}). Its supported formats depend on the device model.")
+        }
+    } catch (e: Exception) {
+      finish("CAST_LOAD_FAILED", e.message ?: "Google Cast could not start this media.", e)
+    }
   }
 
   fun status(context: Context, promise: Promise) {

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { localServerConfig } from '../lib/local-server-config.ts';
+import { withOperationTimeout } from '../lib/operation-timeout.ts';
 
 const require = createRequire(new URL('../package.json', import.meta.url));
 const ts = require('typescript');
@@ -52,6 +53,16 @@ test('direct cast bridge forwards actual load/control/status/disconnect requests
   assert.equal(calls.at(-1)[0], 'disconnectDirect');
 });
 
+test('a stalled playback operation rejects on time and invokes its cancellation hook', async () => {
+  let cancelled = 0;
+  const neverCompletes = new Promise(() => {});
+  await assert.rejects(
+    withOperationTimeout(neverCompletes, 20, 'TV startup timed out.', () => { cancelled++; }),
+    /TV startup timed out/,
+  );
+  assert.equal(cancelled, 1);
+});
+
 test('MIME detection does not confuse unknown webpages with videos', () => {
   const { directMediaMime } = bridge();
   assert.equal(directMediaMime('movie.MP4'), 'video/mp4');
@@ -86,4 +97,11 @@ test('native direct receiver requires acknowledgment and preserves connection bo
   assert.match(google, /s\.isConnected/);
   assert.match(google, /25_000/);
   assert.match(google, /IDLE_REASON_FINISHED/);
+  assert.match(google, /CAST_LOAD_TIMEOUT/);
+  assert.match(google, /LOAD_TIMEOUT_MS = 15_000L/);
+  const localStream = readFileSync(new URL('../lib/local-stream.ts', import.meta.url), 'utf8');
+  assert.match(localStream, /12_000/);
+  const panel = readFileSync(new URL('../components/DirectCastPanel.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /direct-cast-cancel/);
+  assert.match(panel, /try \{ await cleanup\(\); \}/);
 });
