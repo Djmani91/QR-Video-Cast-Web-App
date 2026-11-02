@@ -205,6 +205,10 @@ router.route("/download/framecast-release-1.1.25.aab")
   .get((req, res) => sendFrameCastAab(req, res, () => getFrameCastTvDiscoveryAabFile("1.1.25"), "1.1.25"))
   .head((req, res) => sendFrameCastAab(req, res, () => getFrameCastTvDiscoveryAabFile("1.1.25"), "1.1.25"));
 
+router.route("/download/framecast-release-1.1.26.aab")
+  .get((req, res) => sendFrameCastAab(req, res, () => getFrameCastTvDiscoveryAabFile("1.1.26"), "1.1.26"))
+  .head((req, res) => sendFrameCastAab(req, res, () => getFrameCastTvDiscoveryAabFile("1.1.26"), "1.1.26"));
+
 async function sendFrameCastAab(
   req: Request,
   res: Response,
