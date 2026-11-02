@@ -12,7 +12,7 @@ export function parseDirectTvRoom(search: string): DirectTvRoom | null {
 
   if (
     !/^[0-9a-f-]{36}$/i.test(id)
-    || !/^\d{5}$/.test(code)
+    || !/^\d{2,3}$/.test(code)
     || !Number.isFinite(Date.parse(expiresAt))
   ) {
     return null;

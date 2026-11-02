@@ -45,5 +45,14 @@ fun main() {
   }
   verify(TvDiscoveryProtocol.fromDns("8.8.8.8", "_googlecast._tcp.", "TV", emptyMap()) == null, "Public IP")
   verify(TvDiscoveryProtocol.fromDescription("127.0.0.1", xml("TV", "LG"), "") == null, "Loopback IP")
+  fun dial(name: String, maker: String, model: String) =
+    xml(name, maker, model).replace("urn:schemas-upnp-org:device:MediaRenderer:1",
+      "urn:dial-multiscreen-org:device:dial:1")
+  verify(TvDiscoveryProtocol.fromDescription(ip, dial("Living room", "Amazon", "AFTT"), "")?.type == "firetv", "Fire Stick DIAL")
+  verify(TvDiscoveryProtocol.fromDescription(ip, dial("Living room", "Google Inc.", "Chromecast"), "")?.type == "chromecast", "Chromecast DIAL")
+  verify(TvDiscoveryProtocol.fromDescription(ip, dial("Living room", "Samsung Electronics", "UE55NU7100"), "")?.type == "samsung", "Samsung DIAL")
+  verify(TvDiscoveryProtocol.fromDescription(ip, dial("Living room", "Amazon", "Echo"), "") == null, "Amazon name alone not TV evidence")
+  verify(TvDiscoveryProtocol.fromDescription(ip, dial("Kitchen", "Google", "Chromecast Audio"), "") == null, "DIAL does not turn speakers into TVs")
+  verify(TvDiscoveryProtocol.fromDescription(ip, dial("Printer", "Samsung", "Printer"), "") == null, "Samsung name alone not TV evidence")
   println("Passed $checks native TV discovery protocol checks")
 }

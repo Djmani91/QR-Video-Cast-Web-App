@@ -219,7 +219,7 @@ export const getLookupCastRoomByCodeUrl = () => {
 }
 
 /**
- * @summary Find an active room from its five-digit pairing code
+ * @summary Find an active room from its two- or three-digit pairing code
  */
 export const lookupCastRoomByCode = async (castRoomLookupInput: CastRoomLookupInput, options?: Parameters<typeof customFetch>[1]): Promise<CastRoomLookupResponse> => {
 
@@ -285,7 +285,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type LookupCastRoomByCodeMutationVariables = {data: BodyType<CastRoomLookupInput>}
 
     /**
- * @summary Find an active room from its five-digit pairing code
+ * @summary Find an active room from its two- or three-digit pairing code
  */
 export const useLookupCastRoomByCode = <TError = ErrorType<ErrorEnvelope>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof lookupCastRoomByCode>>, TError,LookupCastRoomByCodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}

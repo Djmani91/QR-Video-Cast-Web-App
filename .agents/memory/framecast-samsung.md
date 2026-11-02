@@ -9,11 +9,11 @@ For Samsung TVs, target the built-in TV browser using the existing web app; do n
 
 **How to apply:** Keep the Samsung browser receiver and native phone companion. Prioritize playback that starts before a full video transfer; verify the real TV before claiming compatibility.
 
-For phone-to-TV pairing, always retain the short TV browser address, QR scanner, and five-digit code. Nearby-TV discovery is now allowed alongside this reliable manual route.
+For phone-to-TV pairing, retain the short TV browser address and manual code entry alongside nearby-TV discovery. The owner now requires code-only pairing without QR; see framecast-pairing-choice.md.
 
 **Why:** The user previously removed discovery because Samsung “Connect” did not open the browser, then explicitly asked to restore it with a properly audited launch/approval flow on 2026-11-02.
 
-**How to apply:** This removal was superseded by the customer's explicit request on 2026-11-02 to restore nearby-device scanning and assisted Samsung browser launch. Preserve QR/code as the reliable fallback; do not label discovery or command dispatch as a connected TV.
+**How to apply:** This removal was superseded by the customer's explicit request on 2026-11-02 to restore nearby-device scanning and assisted Samsung browser launch. Preserve browser/code pairing as the reliable fallback; do not label discovery or command dispatch as a connected TV.
 
 Scan automatically on the Android pairing screen, but request remote control/browser launch only after the customer selects a TV. Finish automatic pairing only after the TV webpage itself confirms that it loaded.
 
@@ -25,13 +25,13 @@ The user wants automatic nearby scanning across common European and American TV/
 
 **Why:** The user explicitly clarified that the three named platforms were not the limit of the product's discovery scope.
 
-**How to apply:** Discover by advertised capabilities/protocols, not just brand-name matching. A detected device must not be represented as connected, nor should browser launch be promised for unsupported platforms. Preserve QR/code pairing for TVs with a browser.
+**How to apply:** Discover by advertised capabilities/protocols, not just brand-name matching. A detected device must not be represented as connected, nor should browser launch be promised for unsupported platforms. Preserve browser/code pairing for TVs with a browser.
 
 The current desired default is whole-browser fullscreen after phone pairing, with an animated connected cinema screen (photos, movie cards and popcorn) while waiting and between videos. This supersedes the earlier video-only fullscreen request.
 
 **Why:** The user repeatedly reported a distracting QR-page flash and fullscreen changes between videos, and explicitly requested a full-screen animated connected page instead.
 
-**How to apply:** Treat ending/replacing media separately from unpairing. Keep the connected waiting page and page fullscreen during media handoffs; show a fresh QR/code only on actual disconnect/new-room flow. Request fullscreen best-effort and retain a clear TV-remote fallback; browser restrictions still apply.
+**How to apply:** Treat ending/replacing media separately from unpairing. Keep the connected waiting page and page fullscreen during media handoffs; show a fresh pairing code only on actual disconnect/new-room flow. Request fullscreen best-effort and retain a clear TV-remote fallback; browser restrictions still apply.
 
 The user previously confirmed video fullscreen on their Samsung TV; the model was not supplied. Only use a native-video fullscreen path when source support is explicitly confirmed. Otherwise use container fullscreen for videos and photos.
 
@@ -108,3 +108,9 @@ Local TV discovery must use the physical Wi-Fi network, not the phone's default 
 **Why:** A phone can be connected to the same Wi-Fi as a TV while mobile data or a VPN owns its default route. An empty scan is therefore not proof that the TV is absent or incompatible.
 
 **How to apply:** Bind discovery UDP and descriptor HTTP to Wi-Fi; use network-scoped DNS-SD where Android supports it. Distinguish network errors from no replies, retain QR/code pairing, and do not promise a device will advertise through guest-network isolation or restrictive VPN/router policies.
+
+Repeated empty scans need stage-level diagnostics, not another assumption about VPNs or Wi-Fi settings.
+
+**Why:** The customer confirmed same-Wi-Fi operation without VPN/proxy, yet the Wi-Fi-bound release still found none of their devices. Routing changes and passing software tests did not establish a hardware fix.
+
+**How to apply:** Expose reply, description and resolution/error counts locally when no TV is identified. Do not upload device inventories or claim the physical scan works until actual receiver evidence is available.

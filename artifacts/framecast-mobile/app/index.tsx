@@ -20,7 +20,6 @@ import {
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import type { VideoThumbnail } from 'expo-video';
@@ -244,17 +243,6 @@ async function createPhotoPreviewDataUrl(uri: string): Promise<string | undefine
   }
 }
 
-function getRoomIdFromQr(value: string): string | null {
-  if (/^\d{5}$/.test(value.trim())) return null;
-  try {
-    const parsed = new URL(value);
-    const match = parsed.pathname.match(/\/send\/([^/]+)\/?$/);
-    return match?.[1] ? decodeURIComponent(match[1]) : null;
-  } catch {
-    return null;
-  }
-}
-
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
@@ -342,15 +330,13 @@ function FrameCastHomeScreen() {
   const { isPremium, loading: subscriptionLoading } = useSubscription();
   const { openPaywall, openFirstPairChoice, firstPairChoicePending } = useSubscriptionChoiceGate();
   const queryClient = useQueryClient();
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const lookupRoom = useLookupCastRoomByCode();
   const createTvRoom = useCreateCastRoom();
   const sendSignalMutation = useSendCastRoomMessage();
   const sendSignalRef = useRef(sendSignalMutation.mutate);
   sendSignalRef.current = sendSignalMutation.mutate;
   const [code, setCode] = useState('');
-  const [scanning, setScanning] = useState(false);
-  const [scannerStarting, setScannerStarting] = useState(false);
+  const [nearbyScanRequest, setNearbyScanRequest] = useState(0);
   const [roomId, setRoomId] = useState('');
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
@@ -450,7 +436,6 @@ function FrameCastHomeScreen() {
   const videoStreamingRef = useRef(false);
   const seenMessages = useRef(new Set<number>());
   const queuedIce = useRef<Record<string, unknown>[]>([]);
-  const scanHandled = useRef(false);
   const unsupportedVideoHelpVisible = selectedMedia?.kind === 'video'
     && !isUrlPlayback
     && isUnsupportedTvVideoError(error);
@@ -850,7 +835,7 @@ function FrameCastHomeScreen() {
 
   const joinRoom = (id: string) => {
     if (!id) {
-      setError('That QR code does not contain a FrameCast room. Scan the code shown on the TV.');
+      setError('That connection does not contain a FrameCast room. Enter the code shown on the TV.');
       return;
     }
     closePeer(Boolean(peerRef.current));
@@ -880,78 +865,14 @@ function FrameCastHomeScreen() {
     setSentBytes(0);
     setTotalBytes(0);
     setError('');
-    setScanning(false);
     openFirstPairChoice();
-  };
-
-  const handleScan = (value: string) => {
-    if (scanHandled.current) return;
-    scanHandled.current = true;
-    setScanning(false);
-    const directRoomId = getRoomIdFromQr(value);
-    if (directRoomId) {
-      joinRoom(directRoomId);
-      return;
-    }
-    if (/^\d{5}$/.test(value.trim())) {
-      setCode(value.trim());
-      lookupRoom.mutate({ data: { code: value.trim() } }, {
-        onSuccess: (result) => joinRoom(result.roomId),
-        onError: () => setError('That five-digit code is invalid or has expired. Check the TV screen and try again.'),
-      });
-      return;
-    }
-    setError('That QR code is not a FrameCast pairing code.');
-  };
-
-  const startScanner = async () => {
-    if (scannerStarting || scanning) return;
-    setError('');
-    setScannerStarting(true);
-    try {
-      const permission = cameraPermission?.granted
-        ? cameraPermission
-        : await requestCameraPermission();
-      if (!permission.granted) {
-        if (!permission.canAskAgain && Platform.OS !== 'web') {
-          Alert.alert(
-            'Camera permission is off',
-            'Allow camera access in Settings to scan the TV code. You can still enter the five-digit code.',
-            [
-              { text: 'Not now', style: 'cancel' },
-              {
-                text: 'Open settings',
-                onPress: () => {
-                  void Linking.openSettings().catch(() => {
-                    setError('Could not open device settings. You can still enter the five-digit code.');
-                  });
-                },
-              },
-            ],
-          );
-        }
-        setError(permission.canAskAgain
-          ? 'Camera access is needed to scan the TV code. Allow it when your phone asks, or enter the five-digit code.'
-          : 'Camera access is turned off for FrameCast. Enable it in device Settings, or enter the five-digit code.');
-        return;
-      }
-      scanHandled.current = false;
-      setScanning(true);
-    } catch (scannerError) {
-      const reason = scannerError instanceof Error ? scannerError.message : '';
-      setError(reason
-        ? `The camera could not be opened: ${reason}. You can still enter the five-digit code.`
-        : 'The camera could not be opened. You can still enter the five-digit code.');
-    } finally {
-      setScannerStarting(false);
-    }
   };
 
   const submitCode = () => {
     Keyboard.dismiss();
     setError('');
-    if (!/^\d{5}$/.test(code)) {
-      setError('Enter all five digits shown on the TV.');
+    if (!/^\d{2,3}$/.test(code)) {
+      setError('Enter the two- or three-digit code shown on the TV.');
       return;
     }
     lookupRoom.mutate({ data: { code } }, {
@@ -2036,7 +1957,7 @@ function FrameCastHomeScreen() {
   };
   onTvLostRef.current = () => {
     leaveRoom();
-    setError('The TV is no longer responding. Open FrameCast on the TV and scan its current QR code or enter its code to reconnect.');
+    setError('The TV is no longer responding. Open FrameCast on the TV and enter its current code to reconnect.');
   };
 
   const openAdPrivacyOptions = async () => {
@@ -2063,8 +1984,6 @@ function FrameCastHomeScreen() {
     setVideoLinkError('');
     setTransferNotice('');
     setTotalBytes(0);
-    setScanning(false);
-    scanHandled.current = true;
     lookupRoom.reset();
     if (previousRoom) {
       const queryKey = getGetCastRoomMessagesQueryKey(previousRoom);
@@ -2378,7 +2297,7 @@ function FrameCastHomeScreen() {
         {stage === 'join' && (
           <View style={styles.main}>
             <Text style={[styles.title, { color: activeColors.foreground }]}>Connect to your TV</Text>
-            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Open FrameCast in the TV browser, then scan its QR code or enter the five-digit code.</Text>
+            <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>Open 2tx1.com in the TV browser, then enter its short code below.</Text>
 
             <View style={[styles.tvAddressHint, { backgroundColor: activeColors.secondary, borderColor: activeColors.border }]} testID="tv-pairing-instructions">
               <Text style={[styles.tvAddressLabel, { color: activeColors.mutedForeground }]}>TV browser address</Text>
@@ -2391,79 +2310,67 @@ function FrameCastHomeScreen() {
               >{TV_BROWSER_ADDRESS}</Text>
             </View>
 
-            <NearbyTvs onPaired={joinRoom} />
+            <View style={styles.connectionMethods} testID="connection-methods">
+              <Text style={[styles.connectionMethodsTitle, { color: activeColors.foreground }]}>Choose how to connect</Text>
+              <Text style={[styles.connectionMethodsSubtitle, { color: activeColors.mutedForeground }]}>
+                Find a TV on Wi-Fi, or use its browser and enter the code below.
+              </Text>
+              <View style={styles.connectionMethodButtons}>
+                <Pressable
+                  testID="button-find-tvs-on-wifi"
+                  accessibilityRole="button"
+                  accessibilityLabel="Find TVs on Wi-Fi"
+                  accessibilityHint="Search your local Wi-Fi network for supported TVs and streaming devices"
+                  onPress={() => setNearbyScanRequest((request) => request + 1)}
+                  style={({ pressed }) => [
+                    styles.connectionMethodButton,
+                    { borderColor: activeColors.border, backgroundColor: pressed ? activeColors.secondary : activeColors.background },
+                  ]}
+                >
+                  <Ionicons name="wifi-outline" size={19} color={activeColors.primary} />
+                  <Text style={[styles.connectionMethodButtonText, { color: activeColors.primary }]}>Find TVs</Text>
+                </Pressable>
+                <Pressable
+                  testID="button-tv-browser-instructions"
+                  accessibilityRole="button"
+                  accessibilityLabel="Use the TV browser"
+                  accessibilityHint="Shows how to connect using a short TV code"
+                  onPress={() => Alert.alert('Use your TV browser', 'On your TV, open its Internet browser and type 2tx1.com. Enter the code shown on the TV in this app. It is normally two digits, or three when all two-digit codes are in use. Keep both devices on the same Wi-Fi.')}
+                  style={({ pressed }) => [
+                    styles.connectionMethodButton,
+                    { borderColor: activeColors.border, backgroundColor: pressed ? activeColors.secondary : activeColors.background },
+                  ]}
+                >
+                  <Ionicons name="globe-outline" size={19} color={activeColors.primary} />
+                  <Text style={[styles.connectionMethodButtonText, { color: activeColors.primary }]}>TV browser</Text>
+                </Pressable>
+              </View>
+              <NearbyTvs onPaired={joinRoom} scanRequest={nearbyScanRequest} />
+            </View>
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
-              {scanning ? (
-                <View style={[styles.cameraFrame, { backgroundColor: activeColors.primary }]}>
-                  <CameraView
-                    style={StyleSheet.absoluteFill}
-                    facing="back"
-                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                    onBarcodeScanned={({ data }) => handleScan(data)}
-                    onMountError={({ message }) => {
-                      setScanning(false);
-                      setError(message
-                        ? `The camera could not start: ${message}. You can still enter the five-digit code.`
-                        : 'The camera could not start. You can still enter the five-digit code.');
-                    }}
-                    testID="camera-tv-qr-scanner"
-                  />
-                  <View pointerEvents="none" style={styles.scanOverlay}>
-                    <View style={styles.scanCornerTopLeft} />
-                    <View style={styles.scanCornerTopRight} />
-                    <View style={styles.scanCornerBottomLeft} />
-                    <View style={styles.scanCornerBottomRight} />
-                  </View>
-                  <Pressable style={styles.cameraClose} onPress={() => setScanning(false)} testID="button-close-scanner">
-                    <Ionicons name="close" size={22} color={activeColors.primaryForeground} />
-                  </Pressable>
-                  <View style={styles.cameraCaption}>
-                    <Text style={styles.cameraCaptionText}>Point your camera at the TV QR code</Text>
-                  </View>
-                </View>
-              ) : (
-                <Pressable
-                  style={({ pressed }) => [styles.scanButton, { borderColor: activeColors.border, backgroundColor: pressed ? activeColors.secondary : activeColors.background }]}
-                  onPress={() => void startScanner()}
-                  disabled={scannerStarting}
-                  testID="button-scan-tv-qr"
-                >
-                  <View style={[styles.actionIcon, { backgroundColor: activeColors.secondary }]}>
-                    {scannerStarting
-                      ? <ActivityIndicator color={activeColors.primary} />
-                      : <Ionicons name="scan-outline" size={23} color={activeColors.primary} />}
-                  </View>
-                  <View style={styles.scanButtonCopy}>
-                    <Text style={[styles.buttonTitle, { color: activeColors.foreground }]}>{scannerStarting ? 'Opening camera…' : 'Scan TV code'}</Text>
-                    <Text style={[styles.buttonSubtitle, { color: activeColors.mutedForeground }]}>{scannerStarting ? 'Allow camera access when asked' : 'Use your phone camera'}</Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={activeColors.mutedForeground} />
-                </Pressable>
-              )}
-
               <View style={styles.divider}>
                 <View style={[styles.dividerLine, { backgroundColor: activeColors.border }]} />
-                <Text style={[styles.dividerText, { color: activeColors.mutedForeground }]}>OR ENTER THE 5-DIGIT CODE</Text>
+                <Text style={[styles.dividerText, { color: activeColors.mutedForeground }]}>ENTER THE TV CODE · 2 OR 3 DIGITS</Text>
                 <View style={[styles.dividerLine, { backgroundColor: activeColors.border }]} />
               </View>
 
               <TextInput
                 value={code}
-                onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 5))}
+                onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 3))}
                 style={[styles.codeInput, { borderColor: activeColors.border, backgroundColor: activeColors.background, color: activeColors.foreground }]}
-                placeholder="00000"
+                placeholder="00"
                 placeholderTextColor={activeColors.mutedForeground}
                 keyboardType="number-pad"
                 textContentType="oneTimeCode"
-                maxLength={5}
-                accessibilityLabel="Five-digit TV code"
+                maxLength={3}
+                accessibilityLabel="TV code, two or three digits"
                 testID="input-tv-code"
               />
               <Pressable
                 onPress={submitCode}
-                disabled={code.length !== 5 || lookupRoom.isPending}
-                style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: code.length !== 5 || lookupRoom.isPending ? 0.5 : pressed ? 0.86 : 1 }]}
+                disabled={!/^\d{2,3}$/.test(code) || lookupRoom.isPending}
+                style={({ pressed }) => [styles.primaryButton, { backgroundColor: activeColors.primary, opacity: !/^\d{2,3}$/.test(code) || lookupRoom.isPending ? 0.5 : pressed ? 0.86 : 1 }]}
                 testID="button-join-tv"
               >
                 {lookupRoom.isPending ? <ActivityIndicator color={activeColors.primaryForeground} /> : <Ionicons name="link-outline" size={18} color={activeColors.primaryForeground} />}
@@ -2969,6 +2876,12 @@ const styles = StyleSheet.create({
   tvAddressHint: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 13, paddingVertical: 10, marginBottom: 12, gap: 3 },
   tvAddressLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 0.7, textTransform: 'uppercase' },
   tvAddress: { fontFamily: 'Inter_600SemiBold', fontSize: 22, lineHeight: 28 },
+  connectionMethods: { marginBottom: 12, gap: 10 },
+  connectionMethodsTitle: { fontFamily: 'Inter_700Bold', fontSize: 17 },
+  connectionMethodsSubtitle: { fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19 },
+  connectionMethodButtons: { flexDirection: 'row', gap: 10 },
+  connectionMethodButton: { flex: 1, minHeight: 58, borderWidth: 1.5, borderRadius: 16, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  connectionMethodButtonText: { fontFamily: 'Inter_700Bold', fontSize: 13, flexShrink: 1, textAlign: 'center' },
   pairCard: { borderWidth: 1, borderRadius: 24, padding: 16 },
   videoLinkCard: { borderWidth: 1, borderRadius: 20, padding: 16, marginTop: 18, gap: 9 },
   scanButton: { minHeight: 78, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 17, paddingHorizontal: 13, gap: 12 },

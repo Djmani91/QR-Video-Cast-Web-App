@@ -8,9 +8,9 @@
 
 export interface CastRoomLookupInput {
   /**
-     * @minLength 5
-     * @maxLength 5
-     * @pattern ^[0-9]{5}$
+     * @minLength 2
+     * @maxLength 3
+     * @pattern ^[0-9]{2,3}$
      */
   code: string;
 }

@@ -15,3 +15,4 @@
 - [FrameCast ad placement](framecast-ad-placement.md) — keep pairing ads, add an Android casting banner, and cap interstitials to video breaks only.
 - [FrameCast subscriptions](framecast-subscriptions.md) — show offers after first pairing; refresh RevenueCat on return from Play before deciding whether ads can run.
 - [FrameCast color palette](framecast-brand-colors.md) — use the same purple/yellow/white palette across the website and native app.
+- [FrameCast pairing choice](framecast-pairing-choice.md) — code-only, two digits with three-digit overflow; no QR or extra approval steps.

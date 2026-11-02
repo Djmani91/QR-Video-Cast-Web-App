@@ -47,7 +47,7 @@ Use Android-aware validators for APK packaging; do not rewrite a signed APK to s
 
 The Gradle-cached `bundletool` artifact is a thin library JAR, not the standalone CLI.
 
-**Why:** Running it with `java -jar` fails because it has no main manifest, and using only that JAR on the classpath misses runtime dependencies such as protobuf.
+**Why:** Running it with `java -jar` fails because it has no main manifest, and using only that JAR on the classpath misses runtime dependencies such as protobuf. Mixing arbitrary cached protobuf versions can also cause `IllegalAccessError`; this indicates a validator classpath mismatch, not necessarily a damaged AAB. Use a coherent resolved runtime dependency set rather than the entire Gradle cache.
 
 **How to apply:** For local AAB validation, use the official `bundletool-all` distribution or invoke `BundleToolMain` with the bundletool JAR and its cached runtime dependencies on the classpath. Prefer the JRE Guava variant ahead of Android/transitively bundled variants; mixed variants can cause `Predicate` interface errors unrelated to the AAB.
 
@@ -62,3 +62,9 @@ Do not identify an AAB signer by grepping `jarsigner -verify -certs` output; it 
 **Why:** A correctly signed bundle can pass `jarsigner` verification while a subject-name grep falsely reports a signing mismatch.
 
 **How to apply:** Use `keytool -printcert -jarfile` to inspect the certificate and compare its SHA-256 fingerprint with the known-good Play upload certificate or a previously accepted Play bundle.
+
+Run standalone Kotlin protocol checks with the compiler's declared runtime dependencies, not every JAR in the Gradle cache.
+
+**Why:** The cache includes incompatible scripting/IntelliJ plugins. An unrestricted classpath can crash the test compiler before it evaluates the app code, and exceed the shell's argument limit.
+
+**How to apply:** Derive the compiler runtime classpath from its cached POM, plus JetBrains annotations. Use Java argument files for genuinely large classpaths.

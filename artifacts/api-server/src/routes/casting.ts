@@ -1,4 +1,5 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { allocatePairingCode } from "../lib/pairing-code";
 import { Router, type IRouter } from "express";
 import {
   CreateCastRoomResponse,
@@ -63,13 +64,7 @@ function refreshRoomExpiry(room: Room, now = Date.now()): string {
 }
 
 function createUniqueCode(): string {
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const code = randomInt(0, 100_000).toString().padStart(5, "0");
-    if (!roomIdsByCode.has(code)) {
-      return code;
-    }
-  }
-  throw new Error("Unable to allocate a unique pairing code");
+  return allocatePairingCode(roomIdsByCode);
 }
 
 function allowCodeLookup(ip: string, now = Date.now()): boolean {
@@ -114,7 +109,7 @@ router.post("/cast/rooms/lookup", (req, res): void => {
   clearExpiredRooms();
   const parsed = LookupCastRoomByCodeBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "Enter a valid five-digit code." });
+    res.status(400).json({ error: "Enter the two- or three-digit code shown on the TV." });
     return;
   }
 

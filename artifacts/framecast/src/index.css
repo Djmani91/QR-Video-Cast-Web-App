@@ -441,6 +441,9 @@
 .scanner-frame p { position: absolute; left: 12px; right: 12px; bottom: 7px; color: #f6f4eb; text-align: center; font-size: 12px; text-shadow: 0 1px 8px #111; }
 .scanner-stop { display: flex; margin: 7px auto 0; }
 .room-code { font: 700 20px var(--app-font-mono); letter-spacing: .2em; }
+.tv-code-display { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 210px; gap: 14px; margin: 18px 0; padding: 20px 12px; border-radius: 20px; background: #fff; color: #54248f; text-align: center; }
+.tv-code-display > span { font-size: 14px; font-weight: 700; }
+.tv-code-display > strong { font: 800 clamp(72px, 8vw, 104px)/1.1 var(--app-font-mono); letter-spacing: .08em; }
 .room-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 10px var(--app-font-mono); color: hsl(var(--muted-foreground)); margin-top: 10px; text-align: center; }
 .photo-preview { object-fit: contain; }
 .capture-canvas { position: absolute; left: -10000px; top: -10000px; pointer-events: none; }

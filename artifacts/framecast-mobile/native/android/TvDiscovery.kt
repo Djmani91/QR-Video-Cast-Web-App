@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -41,11 +42,16 @@ internal object TvDiscovery {
       ?: throw IllegalStateException("The Wi-Fi connection is not ready. Try scanning again.")
     val localAddress = links.linkAddresses.map { it.address }.firstOrNull {
       it is Inet4Address && isPrivateIpv4(it.hostAddress ?: "")
-    } ?: throw IllegalStateException("This Wi-Fi has no supported local IPv4 address. Use the TV QR/code instead.")
+    } ?: throw IllegalStateException("This Wi-Fi has no supported local IPv4 address. Use the TV browser code instead.")
     val wifiInterface = links.interfaceName?.let { NetworkInterface.getByName(it) }
       ?: throw IllegalStateException("The Wi-Fi interface is unavailable. Reconnect Wi-Fi and rescan.")
     val results = ConcurrentHashMap<String, DiscoveredTv>()
     val active = AtomicBoolean(true)
+    val ssdpReplies = AtomicInteger()
+    val dnsFound = AtomicInteger()
+    val dnsFailed = AtomicInteger()
+    val resolveFailed = AtomicInteger()
+    val descriptionsRead = AtomicInteger()
     val resolving = ConcurrentHashMap.newKeySet<String>()
     val resolveBusy = AtomicBoolean(false)
     val resolveQueue = ConcurrentLinkedQueue<Pair<NsdServiceInfo, String>>()
@@ -53,16 +59,18 @@ internal object TvDiscovery {
     val listeners = mutableListOf<NsdManager.DiscoveryListener>()
     val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     val lock = wifi?.createMulticastLock("framecast-tv-discovery")
-    val descriptions = Executors.newFixedThreadPool(2)
+    val descriptions = Executors.newFixedThreadPool(4)
     val described = ConcurrentHashMap.newKeySet<String>()
-    val http = OkHttpClient.Builder().connectTimeout(600, TimeUnit.MILLISECONDS)
-      .readTimeout(800, TimeUnit.MILLISECONDS).callTimeout(1200, TimeUnit.MILLISECONDS)
+    val http = OkHttpClient.Builder().connectTimeout(1500, TimeUnit.MILLISECONDS)
+      .readTimeout(2000, TimeUnit.MILLISECONDS).callTimeout(3000, TimeUnit.MILLISECONDS)
       .proxy(Proxy.NO_PROXY)
       .socketFactory(wifiNetwork.socketFactory)
       .followRedirects(false).followSslRedirects(false).build()
     fun describe(ip: String, response: String) {
       val location = TvDiscoveryProtocol.descriptionUrl(response, ip) ?: return
-      if (described.size >= 24 || !described.add(ip)) return
+      // One TV advertises several distinct descriptions. Its first response may
+      // describe an unrelated service; do not suppress the TV/DIAL URL by IP.
+      if (described.size >= 24 || !described.add(location)) return
       descriptions.submit {
         if (!active.get()) return@submit
         try {
@@ -81,6 +89,7 @@ internal object TvDiscovery {
               }
             }
             if (output.size() > 65_536) return@use
+            descriptionsRead.incrementAndGet()
             val device = TvDiscoveryProtocol.fromDescription(ip, output.toString("UTF-8"), response)
             if (device != null && active.get() && results.size < 32) results["${device.type}:$ip"] = device
           }
@@ -97,13 +106,18 @@ internal object TvDiscovery {
       try {
         nsd?.resolveService(pending.first, object : NsdManager.ResolveListener {
           private fun finished() { resolveBusy.set(false); resolveNext() }
-          override fun onResolveFailed(service: NsdServiceInfo, error: Int) { finished() }
+          override fun onResolveFailed(service: NsdServiceInfo, error: Int) {
+            resolveFailed.incrementAndGet()
+            finished()
+          }
           override fun onServiceResolved(service: NsdServiceInfo) {
             try {
               if (!active.get()) return
               @Suppress("DEPRECATION")
-              val ip = service.host?.hostAddress ?: return
-              if (!isPrivateIpv4(ip)) return
+              val addresses = if (Build.VERSION.SDK_INT >= 34) service.hostAddresses
+                else listOfNotNull(service.host)
+              val ip = addresses.mapNotNull { it.hostAddress }.firstOrNull { isPrivateIpv4(it) }
+                ?: run { resolveFailed.incrementAndGet(); return }
                val attributes = service.attributes.mapValues { it.value.toString(Charsets.UTF_8).take(100) }
                val device = TvDiscoveryProtocol.fromDns(ip, pending.second, service.serviceName, attributes) ?: return
                results["${device.type}:$ip"] = device
@@ -111,6 +125,7 @@ internal object TvDiscovery {
           }
         })
       } catch (_: Exception) {
+        resolveFailed.incrementAndGet()
         resolveBusy.set(false)
         resolveNext()
       }
@@ -124,10 +139,11 @@ internal object TvDiscovery {
         val listener = object : NsdManager.DiscoveryListener {
           override fun onDiscoveryStarted(type: String) {}
           override fun onDiscoveryStopped(type: String) {}
-          override fun onStartDiscoveryFailed(type: String, error: Int) {}
+          override fun onStartDiscoveryFailed(type: String, error: Int) { dnsFailed.incrementAndGet() }
           override fun onStopDiscoveryFailed(type: String, error: Int) {}
           override fun onServiceLost(info: NsdServiceInfo) {}
           override fun onServiceFound(info: NsdServiceInfo) {
+            dnsFound.incrementAndGet()
             val key = "$serviceType:${info.serviceName}"
             if (!active.get() || results.size >= 32 || resolving.size >= 32 || !resolving.add(key)) return
             // Older Android releases permit only one resolver at a time.
@@ -144,6 +160,7 @@ internal object TvDiscovery {
           }
           listeners.add(listener)
         } catch (_: Exception) {
+          dnsFailed.incrementAndGet()
           // SSDP remains available if the platform rejects a DNS-SD service.
         }
       }
@@ -157,7 +174,10 @@ internal object TvDiscovery {
         val group = InetAddress.getByName("239.255.255.250")
          val targets = listOf("ssdp:all", "roku:ecp", "urn:lge-com:service:webos-second-screen:1",
            "urn:dial-multiscreen-org:service:dial:1", "urn:samsung.com:device:RemoteControlReceiver:1",
-           "urn:schemas-upnp-org:device:MediaRenderer:1")
+           "urn:schemas-upnp-org:device:MediaRenderer:1",
+           "urn:samsung.com:device:MainTVServer:1",
+           "urn:samsung.com:service:MultiScreenService:1",
+           "urn:dial-multiscreen-org:device:dial:1", "upnp:rootdevice")
          fun search() { targets.forEach { target ->
           val request = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n" +
             "MAN: \"ssdp:discover\"\r\nMX: 2\r\nST: $target\r\n\r\n").toByteArray(Charsets.US_ASCII)
@@ -177,6 +197,7 @@ internal object TvDiscovery {
             socket.receive(packet)
             val ip = packet.address.hostAddress ?: continue
             if (!isPrivateIpv4(ip) || results.size >= 32) continue
+            ssdpReplies.incrementAndGet()
             val response = String(packet.data, packet.offset, packet.length, Charsets.UTF_8)
              val device = TvDiscoveryProtocol.fromAdvertisement(ip, response)
             if (device != null) results.putIfAbsent("${device.type}:$ip", device)
@@ -187,8 +208,16 @@ internal object TvDiscovery {
         }
       }
        descriptions.shutdown()
-       descriptions.awaitTermination(750, TimeUnit.MILLISECONDS)
+       descriptions.awaitTermination(4000, TimeUnit.MILLISECONDS)
        val snapshot = results.values.toList()
+       if (snapshot.isEmpty()) {
+         throw IllegalStateException(
+           "No supported TV identified. Scan details: LAN replies ${ssdpReplies.get()}, " +
+             "device descriptions ${descriptionsRead.get()}, DNS services ${dnsFound.get()}, " +
+             "DNS start errors ${dnsFailed.get()}, address errors ${resolveFailed.get()}. " +
+             "TV browser code pairing is still available."
+         )
+       }
        val namedPlatforms = snapshot.filter { it.type != "dlna" }.map { it.ip }.toSet()
        return snapshot.filterNot { it.type == "dlna" && it.ip in namedPlatforms }
          .sortedWith(compareBy({ it.type }, { it.name }, { it.ip })).take(32)

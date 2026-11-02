@@ -54,7 +54,7 @@ test('a short permission dialog does not invalidate a fresh TV reply', () => {
   assert.equal(presence.status(), 'online');
 });
 test('refresh restores the same unexpired TV room and paired state', () => {
-  const room = { id: '12345678-1234-1234-1234-123456789abc', code: '12345',
+  const room = { id: '12345678-1234-1234-1234-123456789abc', code: '12',
     expiresAt: new Date(Date.now() + 60_000).toISOString(), paired: true };
   const restored = parseSavedTvRoom(JSON.stringify(room));
   assert.equal(restored.id, room.id);

@@ -109,10 +109,16 @@ internal object TvDiscoveryProtocol {
         else -> false
       }
       val rendererTv = deviceType.contains("MediaRenderer", true) && (tvName || knownTvModel)
+      val dial = deviceType.contains("urn:dial-multiscreen-org:device:dial:", true)
+      val fireModel = Regex("^(AFT[A-Z0-9]+|Fire\\s*TV.*)$", RegexOption.IGNORE_CASE).matches(model)
       val type = when {
         advertised != null -> advertised.type
         deviceType.contains("roku", true) -> "roku"
         xml.contains("webos-second-screen", true) -> "webos"
+        dial && maker.contains("amazon", true) && fireModel -> "firetv"
+        dial && maker.contains("google", true) &&
+          model.contains("chromecast", true) && !model.contains("audio", true) -> "chromecast"
+        dial && maker.contains("samsung", true) && (tvName || knownTvModel) -> "samsung"
         rendererTv && maker.contains("samsung", true) -> "samsung"
         rendererTv -> "dlna"
         else -> return null

@@ -13,7 +13,6 @@ import {
   useSendCastRoomMessage,
   type CastSignalType,
 } from '@workspace/api-client-react';
-import { QRCodeSVG } from 'qrcode.react';
 import { createFile } from 'mp4box';
 import { assertBrowserFileReadable, isSelectedMediaAccessError, preserveBrowserSelection, SelectedMediaAccessError } from './lib/browser-media';
 import { exitVideoFullscreen, isVideoFullscreen, requestReceiverFullscreen, requestMediaFullscreen } from './lib/video-fullscreen';
@@ -38,7 +37,6 @@ import { TvCinemaWaitingScreen } from './components/TvCinemaWaitingScreen';
 import { parseSavedTvRoom } from './lib/tv-room-resume';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
-import { BrowserQRCodeReader } from '@zxing/browser';
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -55,7 +53,6 @@ import {
   RefreshCw,
   ShieldCheck,
   Smartphone,
-  ScanLine,
   Volume2,
   VolumeX,
   Wifi,
@@ -214,56 +211,13 @@ function PhoneJoinPage() {
   const lookup = useLookupCastRoomByCode();
   const [, setLocation] = useLocation();
   const [code, setCode] = useState('');
-  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
-  const scannerVideoRef = useRef<HTMLVideoElement>(null);
-  const scannerControlRef = useRef<{ stop: () => void } | null>(null);
-  const scannerSupported = typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
-
-  const openScannedLink = useCallback((value: string) => {
-    try {
-      const scannedUrl = new URL(value, window.location.origin);
-      const match = scannedUrl.pathname.match(/\/send\/([^/]+)\/?$/);
-      if (!match) {
-        setError('That code is not a FrameCast pairing link. Scan the code shown on the TV.');
-        return;
-      }
-      scannerControlRef.current?.stop();
-      setScanning(false);
-      setError('');
-      setLocation(`/send/${encodeURIComponent(decodeURIComponent(match[1]))}`);
-    } catch {
-      setError('We couldn’t read that QR code. Try again or enter the five-digit code.');
-    }
-  }, [setLocation]);
-
-  useEffect(() => {
-    if (!scanning || !scannerVideoRef.current) return;
-    const reader = new BrowserQRCodeReader();
-    let active = true;
-    reader.decodeFromVideoDevice(undefined, scannerVideoRef.current, (result) => {
-      if (active && result) openScannedLink(result.getText());
-    }).then((controls) => {
-      if (active) scannerControlRef.current = controls;
-      else controls.stop();
-    }).catch(() => {
-      if (active) {
-        setScanning(false);
-        setError('Camera access is unavailable. Allow camera access or enter the code instead.');
-      }
-    });
-    return () => {
-      active = false;
-      scannerControlRef.current?.stop();
-      scannerControlRef.current = null;
-    };
-  }, [scanning, openScannedLink]);
 
   const submitCode = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError('');
-    if (!/^\d{5}$/.test(code)) {
-      setError('Enter all five digits from the TV screen.');
+    if (!/^\d{2,3}$/.test(code)) {
+      setError('Enter the two- or three-digit code from the TV screen.');
       return;
     }
     lookup.mutate({ data: { code } }, {
@@ -280,45 +234,30 @@ function PhoneJoinPage() {
           <div className="phone-heading">
             <span className="eyebrow">Start with the TV</span>
             <h1>Join the screen.</h1>
-            <p>Scan the QR code or enter the five-digit code displayed on the TV.</p>
+            <p>Enter the short code displayed on the TV.</p>
           </div>
           <div className="join-card">
-            {scanning ? (
-              <div className="scanner-frame">
-                <video ref={scannerVideoRef} className="scanner-video" autoPlay muted playsInline aria-label="Live camera QR scanner" data-testid="video-qr-scanner" />
-                <span className="scanner-reticle" aria-hidden="true" />
-                <p role="status" data-testid="status-qr-scanner">Hold the TV’s FrameCast QR code inside the frame.</p>
-              </div>
-            ) : (
-              <button type="button" className="scan-launch" onClick={() => { setError(''); setScanning(true); }} disabled={!scannerSupported} data-testid="button-start-scan">
-                <span className="scan-icon"><ScanLine size={22} /></span>
-                <span><strong>Scan the TV’s QR code</strong><small>{scannerSupported ? 'Use your camera to pair instantly' : 'Camera scanning is not available in this browser'}</small></span>
-                <ArrowUpRight size={17} />
-              </button>
-            )}
-            {scanning && <button type="button" className="button-quiet scanner-stop" onClick={() => setScanning(false)} data-testid="button-stop-scan">Close scanner</button>}
-            <div className="join-divider"><span>or enter the code</span></div>
             <form className="code-form" onSubmit={submitCode}>
-              <label htmlFor="pairing-code">Five-digit TV code</label>
+              <label htmlFor="pairing-code">TV code · 2 or 3 digits</label>
               <div className="code-entry">
                 <input
                   id="pairing-code"
                   value={code}
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  pattern="[0-9]{5}"
-                  maxLength={5}
-                  placeholder="00000"
-                  onChange={(event) => setCode(event.currentTarget.value.replace(/\D/g, '').slice(0, 5))}
+                  pattern="[0-9]{2,3}"
+                  maxLength={3}
+                  placeholder="00"
+                  onChange={(event) => setCode(event.currentTarget.value.replace(/\D/g, '').slice(0, 3))}
                   aria-describedby="code-help"
                   data-testid="input-pairing-code"
                 />
-                <button type="submit" className="button-primary" disabled={code.length !== 5 || lookup.isPending} data-testid="button-join-code">
+                <button type="submit" className="button-primary" disabled={!/^\d{2,3}$/.test(code) || lookup.isPending} data-testid="button-join-code">
                   {lookup.isPending ? <RefreshCw size={16} className="animate-spin" /> : <ArrowUpRight size={16} />}
                   {lookup.isPending ? 'Finding room…' : 'Join'}
                 </button>
               </div>
-              <small id="code-help">The code is shown next to the QR code on the TV.</small>
+              <small id="code-help">Open 2tx1.com in the TV browser to see its code.</small>
             </form>
             {error && <div className="error-banner" role="alert" data-testid="text-join-error">{error}</div>}
           </div>
@@ -2066,7 +2005,6 @@ function TvPage() {
     invalidRoomRef.current = roomId;
     startRoom();
   }, [roomId, messagesQuery.error]);
-  const phoneUrl = room ? `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/send/${encodeURIComponent(room.id)}` : '';
   const roomExpired = Boolean(room && new Date(room.expiresAt).getTime() <= clock);
   const statusCopy = status === 'connected'
     ? screenMirroring
@@ -2089,7 +2027,7 @@ function TvPage() {
           : room
             ? launchedFromPhone
               ? 'FrameCast is ready. Choose media on your phone.'
-              : 'Ready when you are. Scan the code with your phone camera.'
+              : 'Ready when you are. Enter this TV’s code on your phone.'
             : 'Create a private room to pair your phone with this screen.';
 
   const cinemaLoading = waitingForPlayback || playlistTransitioning;
@@ -2253,13 +2191,13 @@ function TvPage() {
               </div>
             )}
             {status !== 'connected' && !playlistTransitioning && (
-              <div className="qr-frame" data-testid="status-pairing-code" aria-label={room ? 'Scan the QR code to pair your phone' : 'Pairing code not created'}>
+              <div className="tv-code-display" data-testid="status-pairing-code" aria-label={room ? `TV pairing code ${room.code}` : 'Pairing code not created'}>
                 {room && !roomExpired
-                  ? <QRCodeSVG value={phoneUrl} size={184} level="M" marginSize={1} fgColor="#54248f" bgColor="#ffffff" />
+                  ? <><span>Enter this code on your phone</span><strong data-testid="text-tv-pairing-code">{room.code}</strong></>
                   : <div className="qr-empty"><Smartphone size={28} /><span>{roomExpired ? 'This pairing code has expired' : 'Your pairing code will appear here'}</span></div>}
               </div>
             )}
-              <p className="pair-prompt">{status === 'connected' ? photoPreviewVisible && mediaKind === 'image' ? 'A quick preview is on screen. The complete photo is arriving directly from the phone.' : transferProgress !== null && transferProgress < 100 ? mediaKind === 'video' ? videoStreamActive ? 'The TV is playing this video while it continues to arrive.' : 'The TV is checking the video format and starting playback.' : 'Receiving the photo directly from the phone.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Scan with your phone camera or enter the code on the join screen.' : 'Preparing a temporary room for this screen…'}</p>
+              <p className="pair-prompt">{status === 'connected' ? photoPreviewVisible && mediaKind === 'image' ? 'A quick preview is on screen. The complete photo is arriving directly from the phone.' : transferProgress !== null && transferProgress < 100 ? mediaKind === 'video' ? videoStreamActive ? 'The TV is playing this video while it continues to arrive.' : 'The TV is checking the video format and starting playback.' : 'Receiving the photo directly from the phone.' : mediaKind === 'image' && receivedImages.length > 1 ? `${receivedImages.length} photos are ready. Use the phone to browse and zoom.` : `Your guest’s ${mediaKind === 'image' ? 'photo' : 'video'} is on the big screen.` : status === 'paired' ? 'Your guest is connected and choosing content on their phone.' : roomExpired ? 'This temporary room has closed. Create a fresh code to pair again.' : room ? 'Enter this code in the FrameCast app or on the phone’s join screen.' : 'Preparing a temporary room for this screen…'}</p>
             {!room || status === 'failed' || roomExpired ? (
               <button type="button" className="button-primary" onClick={startRoom} disabled={creatingRoom} data-testid="button-create-room">
                 {creatingRoom ? <RefreshCw size={16} className="animate-spin" /> : status === 'failed' || roomExpired ? <RefreshCw size={16} /> : <ArrowUpRight size={16} />}
@@ -2340,7 +2278,6 @@ function TvPage() {
               <button className="button-quiet" type="button" onClick={reconnect} data-testid="button-tv-new-room"><RefreshCw size={14} /> New room</button>
             ) : null}
             {room && <div className="room-meta"><span>CODE <strong className="room-code" data-testid="text-room-code">{room.code}</strong></span><span data-testid="text-room-expiry">{roomExpired ? 'Room expired' : '4-hour idle timeout'}</span></div>}
-            {room && status !== 'connected' && <div className="room-link" data-testid="text-room-link">{phoneUrl}</div>}
             <div className="status-row" role="status" aria-live="polite" data-testid="status-tv-connection">
               <span className={`status-dot${status === 'connected' ? ' live' : ''}`} />
               <span className="status-text">{statusCopy}</span>
@@ -2356,7 +2293,7 @@ function TvPage() {
             <h3>From your phone to here.</h3>
             <div className="steps">
               <div className="step"><span className="step-number">01</span><strong>Make a room</strong></div>
-              <div className="step"><span className="step-number">02</span><strong>Scan with your phone</strong></div>
+              <div className="step"><span className="step-number">02</span><strong>Enter the code on your phone</strong></div>
               <div className="step"><span className="step-number">03</span><strong>Show it on the TV</strong></div>
             </div>
           </section>

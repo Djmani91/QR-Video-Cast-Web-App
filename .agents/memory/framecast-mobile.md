@@ -131,7 +131,7 @@ The user wants returning to the same phone browser to reconnect to the same TV a
 
 **How to apply:** Separate pairing intent from an individual WebRTC peer. Probe the existing transport on return and recreate it automatically in the same room when stale. Preserve selected files and playback state in the live page; suppress overlapping repairs and ignore replies/candidates/closes from replaced sessions. An explicit Disconnect or TV room replacement must cancel recovery. Be clear that the OS can suspend playback/networking, closing the tab loses in-memory files, and server restarts or a genuinely expired room cannot be repaired from browser state alone.
 
-Keep the phone's first screen connection-first: a concise TV browser instruction, QR scan, and code entry instead of a large marketing hero. Android background casting is Premium-only and starts automatically for every paired room while Premium is active; free casting stops when FrameCast is backgrounded.
+Keep the phone's first screen connection-first: concise TV browser instructions, nearby-TV discovery, and code entry instead of a large marketing hero. QR scanning was explicitly removed by the owner; see framecast-pairing-choice.md. Android background casting is Premium-only and starts automatically for every paired room while Premium is active; free casting stops when FrameCast is backgrounded.
 
 **Why:** The user clarified that a Premium customer should not have to enable a separate background-casting switch; an unchecked preference made the paid feature appear broken.
 

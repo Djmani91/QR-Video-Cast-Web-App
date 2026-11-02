@@ -2,7 +2,7 @@
   "expo": {
     "name": "FrameCast Mobile",
     "slug": "framecast-mobile",
-    "version": "1.1.20",
+    "version": "1.1.23",
     "orientation": "portrait",
     "icon": "./assets/images/icon-purple-yellow-white.png",
     "splash": {
@@ -14,16 +14,15 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.framecast.mobile",
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "FrameCast uses your local network to send media directly to the TV you paired.",
-        "NSCameraUsageDescription": "FrameCast uses the camera to scan the pairing QR code on your TV."
+        "NSLocalNetworkUsageDescription": "FrameCast uses your local network to send media directly to the TV you paired."
       }
     },
     "android": {
       "package": "com.tvcast.com",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 31,
+      "versionCode": 34,
+      "blockedPermissions": ["android.permission.CAMERA"],
       "permissions": [
-        "android.permission.CAMERA",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
@@ -50,19 +49,18 @@
       "./plugins/with-screen-mirror-performance.cjs",
       "./plugins/with-android-upload-signing.cjs",
       "expo-router",
-      "expo-camera",
       [
         "expo-image-picker",
         {
           "photosPermission": "FrameCast needs access to let you choose a photo or video to send to your TV.",
-          "cameraPermission": "FrameCast uses the camera only to scan the TV pairing code.",
+          "cameraPermission": false,
           "microphonePermission": "FrameCast uses Android playback capture to send supported app audio directly to your TV. It does not record microphone audio."
         }
       ],
       [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "FrameCast uses the camera only to scan the TV pairing code.",
+          "cameraPermission": false,
           "microphonePermission": "FrameCast uses Android playback capture to send supported app audio directly to your TV during screen mirroring. It does not record microphone audio."
         }
       ],

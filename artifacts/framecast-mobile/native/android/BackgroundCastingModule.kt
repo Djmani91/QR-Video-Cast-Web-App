@@ -92,7 +92,7 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
         }
         promise.resolve(result)
       } catch (error: Exception) {
-        promise.reject("TV_DISCOVERY_FAILED", error.message ?: "FrameCast could not scan this Wi-Fi network. Use the TV QR/code instead.", error)
+        promise.reject("TV_DISCOVERY_FAILED", error.message ?: "FrameCast could not scan this Wi-Fi network. Use the TV browser code instead.", error)
       }
     }, "FrameCastNearbyTvs").start()
   }

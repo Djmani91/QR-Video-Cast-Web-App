@@ -8,7 +8,7 @@ const require = createRequire(new URL('../package.json', import.meta.url));
 const ts = require('typescript');
 const source = readFileSync(new URL('../lib/tv-discovery.ts', import.meta.url), 'utf8');
 const roomSource = readFileSync(new URL('../lib/tv-room-url.ts', import.meta.url), 'utf8');
-const room = { id: 'private-room-created-by-api', code: '12345', expiresAt: '2099-01-01T00:00:00Z' };
+const room = { id: 'private-room-created-by-api', code: '12', expiresAt: '2099-01-01T00:00:00Z' };
 const samsung = { ip: '192.168.1.208', name: 'Living room', model: 'Samsung', type: 'samsung' };
 const acknowledgement = { from: 'tv', type: 'ready', payload: { action: 'tv-browser-ready', sessionId: room.id } };
 
@@ -144,5 +144,5 @@ test('a sent browser command without TV acknowledgement produces fallback instea
   let now = 0;
   class Clock extends Date { static now() { return now += 50_000; } }
   const { discovery } = load({ Date: Clock, api: { getCastRoomMessages: async () => ({ messages: [] }) } });
-  await assert.rejects(discovery.connectSamsungTv(samsung, options()), /did not confirm.*QR\/code/);
+  await assert.rejects(discovery.connectSamsungTv(samsung, options()), /did not confirm.*enter its code/);
 });

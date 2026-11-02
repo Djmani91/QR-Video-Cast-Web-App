@@ -38,7 +38,10 @@ export function getFrameCastTvDiscoveryAabFile(
     | "1.1.17"
     | "1.1.18"
     | "1.1.19"
-    | "1.1.20" = "1.1.11",
+    | "1.1.20"
+    | "1.1.21"
+    | "1.1.22"
+    | "1.1.23" = "1.1.11",
 ) {
   return getFrameCastAabFile(`framecast-releases/FrameCast-Android-${version}.aab`);
 }

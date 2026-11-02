@@ -61,7 +61,7 @@ internal object SamsungBrowserRemote {
           val fingerprint = Base64.encodeToString(
             MessageDigest.getInstance("SHA-256").digest(certificate.encoded), Base64.NO_WRAP)
           if (expectedCertificate != null && fingerprint != expectedCertificate) {
-            throw CertificateException("The TV identity changed. For safety, use the QR/code at 2tx1.com instead.")
+            throw CertificateException("The TV identity changed. For safety, use the code at 2tx1.com instead.")
           }
           receivedCertificate.set(fingerprint)
         }
@@ -104,7 +104,7 @@ internal object SamsungBrowserRemote {
               finished.countDown()
             }
             "ms.error" -> {
-              failure.set(ApprovalException("This TV rejected the remote command. Open 2tx1.com manually and use its QR/code."))
+              failure.set(ApprovalException("This TV rejected the remote command. Open 2tx1.com manually and use its code."))
               finished.countDown()
             }
           }
@@ -125,7 +125,7 @@ internal object SamsungBrowserRemote {
       }
       override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
         if (!launchSent.get()) {
-          failure.set(ApprovalException("The TV closed the request before approval. Use Allow on the TV or pair by QR/code."))
+          failure.set(ApprovalException("The TV closed the request before approval. Use Allow on the TV or pair by code."))
         }
         finished.countDown()
         webSocket.close(code, null)
@@ -133,7 +133,7 @@ internal object SamsungBrowserRemote {
     })
     try {
       if (!finished.await(45, TimeUnit.SECONDS)) {
-        throw ApprovalException("TV approval timed out. Select Allow on your TV, or open 2tx1.com and scan its QR/code.")
+        throw ApprovalException("TV approval timed out. Select Allow on your TV, or open 2tx1.com and enter its code in FrameCast.")
       }
       failure.get()?.let { throw it }
       check(launchSent.get()) { "The TV did not approve remote control." }

@@ -113,12 +113,12 @@ export async function connectSamsungTv(
     } catch (error) {
       throwIfCancelled(signal);
       if (++networkFailures >= 3) {
-        throw new Error('Could not confirm the TV connection. Check internet access on both devices, or scan the TV QR/code.');
+        throw new Error('Could not confirm the TV connection. Check internet access on both devices, or enter the TV browser code.');
       }
     }
     await waitForPoll(signal);
   }
-  throw new Error('The TV did not confirm opening FrameCast. Open its Internet browser at 2tx1.com and scan the QR/code. This model may not support remote browser launch.');
+  throw new Error('The TV did not confirm opening FrameCast. Open its Internet browser at 2tx1.com and enter its code in this app. This model may not support remote browser launch.');
 }
 
 export async function discoverNearbySamsungTvs(): Promise<NearbySamsungTv[]> {

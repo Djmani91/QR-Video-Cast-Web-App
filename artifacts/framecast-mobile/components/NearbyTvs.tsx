@@ -12,11 +12,12 @@ import {
 
 export interface NearbyTvsProps {
   onPaired: (roomId: string) => void;
+  scanRequest?: number;
 }
 
 type ScanState = 'idle' | 'scanning' | 'done' | 'error';
 
-const FALLBACK = 'You can always scan the QR code or type the code shown on the TV instead.';
+const FALLBACK = 'You can always open 2tx1.com in the TV browser and enter its code here instead.';
 
 const TYPE_LABEL: Record<NearbyTv['type'], string> = {
   samsung: 'Samsung TV',
@@ -30,17 +31,17 @@ const TYPE_LABEL: Record<NearbyTv['type'], string> = {
 
 const LIMITATION: Record<Exclude<NearbyTv['type'], 'samsung'>, string> = {
   chromecast:
-    'Detected only. FrameCast cannot connect to this TV yet. Chromecast needs a registered Cast receiver app and cannot open the normal 2tx1.com website. Use the QR code or code on another screen instead.',
+    'Detected only. FrameCast cannot connect to this TV yet. Chromecast needs a registered Cast receiver app and cannot open the normal 2tx1.com website. Use the code on another screen with a browser instead.',
   firetv:
-    'Detected only. FrameCast cannot connect to this TV automatically. You can open the Silk browser on the Fire TV yourself, go to 2tx1.com, then scan its QR code or enter its code here. Automatic connection would need a Matter receiver, which is not supported yet.',
+    'Detected only. FrameCast cannot connect to this TV automatically. Open the Silk browser on the Fire TV, go to 2tx1.com, then enter its code here. Automatic connection would need a Matter receiver, which is not supported yet.',
   webos:
-    'Found your LG TV. Open its Web Browser, type 2tx1.com, then scan the TV QR code or enter its code here. Automatic browser control for LG needs a separate approved webOS pairing connection; it is not enabled yet.',
+    'Found your LG TV. Open its Web Browser, type 2tx1.com, then enter its code here. Automatic browser control for LG needs a separate approved webOS pairing connection; it is not enabled yet.',
   roku:
-    'Found your Roku TV or player. Roku does not provide a general TV web browser. Connecting from FrameCast would require a Roku receiver channel, which is not included yet. Use a different screen with a browser for QR/code pairing.',
+    'Found your Roku TV or player. Roku does not provide a general TV web browser. Connecting from FrameCast would require a Roku receiver channel, which is not included yet. Use a different screen with a browser for code pairing.',
   dlna:
-    'Found a smart TV using its media-discovery service. If it has an Internet browser, open 2tx1.com there and scan the TV QR code or enter its code here. Finding the TV alone does not enable direct DLNA playback or automatic browser control.',
+    'Found a smart TV using its media-discovery service. If it has an Internet browser, open 2tx1.com there and enter its code here. Finding the TV alone does not enable direct DLNA playback or automatic browser control.',
   appletv:
-    'Found your Apple TV through its AirPlay advertisement. FrameCast Android does not include an AirPlay sender or Apple TV receiver app, and Apple TV has no built-in general web browser. Use another screen with a browser for QR/code pairing.',
+    'Found your Apple TV through its AirPlay advertisement. FrameCast Android does not include an AirPlay sender or Apple TV receiver app, and Apple TV has no built-in general web browser. Use another screen with a browser for code pairing.',
 };
 
 const tvKey = (tv: NearbyTv) => `${tv.type}-${tv.ip}`;
@@ -49,13 +50,13 @@ function errMsg(e: unknown, fallback: string) {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-export default function NearbyTvs({ onPaired }: NearbyTvsProps) {
+export default function NearbyTvs({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
   const supported = Platform.OS === 'android' && nearbyDiscoveryAvailable && typeof discoverNearbyTvs === 'function';
   if (!supported) return null;
-  return <NearbyTvsInner onPaired={onPaired} />;
+  return <NearbyTvsInner onPaired={onPaired} scanRequest={scanRequest} />;
 }
 
-function NearbyTvsInner({ onPaired }: NearbyTvsProps) {
+function NearbyTvsInner({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
   const colors = useColors();
   const [scan, setScan] = useState<ScanState>('idle');
   const [scanError, setScanError] = useState<string | null>(null);
@@ -109,6 +110,10 @@ function NearbyTvsInner({ onPaired }: NearbyTvsProps) {
       abortRef.current?.abort();
     };
   }, [runScan]);
+
+  useEffect(() => {
+    if (scanRequest > 0) runScan();
+  }, [runScan, scanRequest]);
 
   const startSamsung = useCallback(async (tv: NearbyTv) => {
     if (connectBusy.current || scanPromise.current) return;

@@ -21,11 +21,11 @@ export const HealthCheckResponse = zod.object({
  * Creates an in-memory pairing room. No video is sent to this API.
  * @summary Create a temporary casting room
  */
-export const createCastRoomResponseCodeMin = 5;
-export const createCastRoomResponseCodeMax = 5;
+export const createCastRoomResponseCodeMin = 2;
+export const createCastRoomResponseCodeMax = 3;
 
 
-export const createCastRoomResponseCodeRegExp = new RegExp('^[0-9]{5}$');
+export const createCastRoomResponseCodeRegExp = new RegExp('^[0-9]{2,3}$');
 
 
 export const CreateCastRoomResponse = zod.object({
@@ -36,13 +36,13 @@ export const CreateCastRoomResponse = zod.object({
 
 
 /**
- * @summary Find an active room from its five-digit pairing code
+ * @summary Find an active room from its two- or three-digit pairing code
  */
-export const lookupCastRoomByCodeBodyCodeMin = 5;
-export const lookupCastRoomByCodeBodyCodeMax = 5;
+export const lookupCastRoomByCodeBodyCodeMin = 2;
+export const lookupCastRoomByCodeBodyCodeMax = 3;
 
 
-export const lookupCastRoomByCodeBodyCodeRegExp = new RegExp('^[0-9]{5}$');
+export const lookupCastRoomByCodeBodyCodeRegExp = new RegExp('^[0-9]{2,3}$');
 
 
 export const LookupCastRoomByCodeBody = zod.object({
