@@ -64,8 +64,19 @@ test('expanded scan retains TV platforms and rejects unknown or public-IP device
 test('Samsung browser launch takes priority over an advertised DLNA renderer', () => {
   const { discovery } = load();
   assert.equal(discovery.getNearbyTvAction({ ...samsung, rendererId: 'dlna-renderer' }, true), 'samsung-browser');
-  assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv' }, true), 'direct-media');
+  assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv', flingId: 'receiver-123' }, true), 'direct-media');
   assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv' }, false), 'instructions');
+});
+
+test('Fling receivers can be listed without exposing a TV IP, but require a bounded receiver id', async () => {
+  const { discovery } = load({ native: { discoverNearbyTvs: async () => [
+    { name: 'Fire TV', model: 'Amazon Fire TV media receiver', type: 'firetv', flingId: 'receiver:123' },
+    { name: 'Invalid receiver', model: 'Fire TV', type: 'firetv', flingId: ['bad', 'receiver'].join(String.fromCharCode(10)) },
+  ] } });
+  const results = await discovery.discoverNearbyTvs();
+  assert.equal(results.length, 1);
+  assert.equal(results[0].flingId, 'receiver:123');
+  assert.equal(results[0].ip, undefined);
 });
 
 test('selecting a discovered TV shows choices but does not connect automatically', () => {

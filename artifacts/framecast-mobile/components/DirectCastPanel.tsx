@@ -118,7 +118,9 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         setConnected(true);
         setMessage(target.protocol === 'dlna'
           ? 'DLNA media-only receiver ready. Choose a photo or video to play.'
-          : 'Media-only receiver ready. Choose a photo or video to play.');
+          : target.protocol === 'amazonfling'
+            ? 'Fire TV built-in media receiver ready. Choose a photo or video to play.'
+            : 'Google Cast media receiver ready. Choose a photo or video to play.');
         openFirstPairChoice();
       } catch (e) {
         if (live.current) { setError(detail(e)); setMessage('Could not connect to the receiver.'); }
@@ -400,7 +402,9 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         </View>
         <Text style={[styles.title, { color: colors.foreground }]}>{target.name}</Text>
         <Text style={[styles.text, { color: colors.mutedForeground }]}>
-          {target.protocol === 'googlecast' ? 'Google Cast' : 'DLNA media receiver'} · {connected ? 'Media-only ready' : busy ? 'Preparing media receiver…' : 'Not connected'}
+          {target.protocol === 'googlecast' ? 'Google Cast'
+            : target.protocol === 'dlna' ? 'DLNA media receiver'
+              : 'Amazon Fire TV built-in receiver'} · {connected ? 'Media-only ready' : busy ? 'Preparing media receiver…' : 'Not connected'}
         </Text>
         <View style={[styles.notice, { backgroundColor: colors.secondary }]}>
           <View style={styles.noticeRow}>
@@ -432,9 +436,11 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         {!!error && <Text style={[styles.text, { color: colors.foreground }]} accessibilityLiveRegion="assertive">{error}</Text>}
         {connected && <>
         <Text style={[styles.text, { color: colors.mutedForeground }]}>
-          {target.protocol === 'dlna'
-            ? 'FrameCast sends media to the TV’s DLNA player only. It does not control the TV home screen or open its browser. The TV may stay on its current screen until playback starts.'
-            : 'FrameCast sends selected media to this receiver only. It does not control the TV home screen or open its browser. No TV browser code is needed for this media-only route.'}
+          {target.protocol === 'amazonfling'
+            ? 'FrameCast sends selected media to Fire TV’s built-in player over Wi-Fi. It does not open a browser or control the TV home screen.'
+            : target.protocol === 'dlna'
+              ? 'FrameCast sends media to the TV’s DLNA player only. It does not control the TV home screen or open its browser. The TV may stay on its current screen until playback starts.'
+              : 'FrameCast sends selected media to this Google Cast receiver only. It does not control the TV home screen or open its browser.'}
         </Text>
           <View style={styles.row}>
             {button('Photos', () => void choose('image'), false)}

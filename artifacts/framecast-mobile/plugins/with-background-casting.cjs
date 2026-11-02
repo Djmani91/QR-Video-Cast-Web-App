@@ -7,9 +7,13 @@ module.exports = function withBackgroundCasting(config) {
   if (!appPackage) throw new Error('FrameCast background casting requires android.package.');
   const service = `${appPackage}.casting.BackgroundCastingService`;
   config = withAppBuildGradle(config, result => {
-    const dependency = 'implementation("com.google.android.gms:play-services-cast-framework:22.2.0")';
-    if (!result.modResults.contents.includes(dependency)) {
-      result.modResults.contents += `\ndependencies {\n    ${dependency}\n}\n`;
+    const dependencies = [
+      'implementation("com.google.android.gms:play-services-cast-framework:22.2.0")',
+      "implementation files('libs/AmazonFling.jar', 'libs/WhisperPlay.jar')",
+    ];
+    const missing = dependencies.filter(dependency => !result.modResults.contents.includes(dependency));
+    if (missing.length) {
+      result.modResults.contents += `\ndependencies {\n${missing.map(dependency => `    ${dependency}`).join('\n')}\n}\n`;
     }
     return result;
   });
@@ -65,9 +69,20 @@ module.exports = function withBackgroundCasting(config) {
     const source = path.join(result.modRequest.projectRoot, 'native', 'android');
     const target = path.join(result.modRequest.platformProjectRoot, 'app', 'src', 'main', 'java', ...appPackage.split('.'), 'casting');
     await fs.mkdir(target, { recursive: true });
-    for (const name of ['BackgroundCastingService.kt', 'BackgroundCastingModule.kt', 'BackgroundCastingPackage.kt', 'TvDiscovery.kt', 'TvDiscoveryProtocol.kt', 'SamsungBrowserRemote.kt', 'DlnaCasting.kt', 'GoogleCasting.kt']) {
+    for (const name of ['BackgroundCastingService.kt', 'BackgroundCastingModule.kt', 'BackgroundCastingPackage.kt', 'TvDiscovery.kt', 'TvDiscoveryProtocol.kt', 'SamsungBrowserRemote.kt', 'DlnaCasting.kt', 'GoogleCasting.kt', 'AmazonFlingCasting.kt']) {
       const text = await fs.readFile(path.join(source, name), 'utf8');
       await fs.writeFile(path.join(target, name), text.replaceAll('__PACKAGE__', `${appPackage}.casting`));
+    }
+    const libsSource = path.join(source, 'libs');
+    const libsTarget = path.join(result.modRequest.platformProjectRoot, 'app', 'libs');
+    await fs.mkdir(libsTarget, { recursive: true });
+    for (const name of ['AmazonFling.jar', 'WhisperPlay.jar']) {
+      await fs.copyFile(path.join(libsSource, name), path.join(libsTarget, name));
+    }
+    const noticesTarget = path.join(result.modRequest.platformProjectRoot, 'app', 'src', 'main', 'assets', 'third-party-licenses');
+    await fs.mkdir(noticesTarget, { recursive: true });
+    for (const name of ['AMAZON_FLING_LICENSE.txt', 'AMAZON_FLING_NOTICES.txt']) {
+      await fs.copyFile(path.join(libsSource, name), path.join(noticesTarget, name));
     }
     return result;
   }]);

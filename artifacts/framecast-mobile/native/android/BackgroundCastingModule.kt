@@ -82,13 +82,28 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
     Thread({
       try {
         val result = Arguments.createArray()
-        TvDiscovery.scanNearby(reactApplicationContext).forEach { device ->
+        val scanned = TvDiscovery.scanNearby(reactApplicationContext)
+        val flingReceivers = runCatching {
+          AmazonFlingCasting.discover(reactApplicationContext)
+        }.getOrElse {
+          android.util.Log.w("FrameCastFling", "Fire TV receiver scan failed", it)
+          emptyList()
+        }
+        val devices = if (flingReceivers.isEmpty()) scanned else {
+          scanned.filter { it.type != "firetv" }.toMutableList().apply {
+            flingReceivers.forEach { receiver ->
+              add(DiscoveredTv("", receiver.name, "Amazon Fire TV media receiver", "firetv", flingId = receiver.id))
+            }
+          }
+        }
+        devices.forEach { device ->
           val item = Arguments.createMap()
-          item.putString("ip", device.ip)
+          if (device.ip.isNotBlank()) item.putString("ip", device.ip)
           item.putString("name", device.name)
           item.putString("model", device.model)
           item.putString("type", device.type)
           item.putString("rendererId", device.rendererId)
+          item.putString("flingId", device.flingId)
           result.pushMap(item)
         }
         promise.resolve(result)
@@ -139,26 +154,49 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
           promise.resolve(null)
         } catch (e: Exception) { promise.reject("DIRECT_CONNECT_FAILED", e.message, e) }
       }
+    } else if (protocol == "amazonfling") {
+      directExecutor.submit {
+        try {
+          AmazonFlingCasting.connect(receiver)
+          directProtocol = "amazonfling"
+          promise.resolve(null)
+        } catch (e: Exception) { promise.reject("DIRECT_CONNECT_FAILED", e.message, e) }
+      }
     } else promise.reject("DIRECT_UNSUPPORTED", "This TV has no supported direct receiver.")
   }
 
   @ReactMethod
   fun loadDirect(url: String, mime: String, title: String, promise: Promise) {
-    directCall(promise, { DlnaCasting.load(url, mime, title); null }) {
+    if (directProtocol == "amazonfling") {
+      directExecutor.submit {
+        try { AmazonFlingCasting.load(url, mime, title); promise.resolve(null) }
+        catch (e: Exception) { promise.reject("FLING_LOAD_FAILED", e.message, e) }
+      }
+    } else directCall(promise, { DlnaCasting.load(url, mime, title); null }) {
       GoogleCasting.load(reactApplicationContext, url, mime, title, promise)
     }
   }
 
   @ReactMethod
   fun statusDirect(promise: Promise) {
-    directCall(promise, { Arguments.makeNativeMap(DlnaCasting.status()) }) {
+    if (directProtocol == "amazonfling") {
+      directExecutor.submit {
+        try { promise.resolve(Arguments.makeNativeMap(AmazonFlingCasting.status())) }
+        catch (e: Exception) { promise.reject("FLING_STATUS_FAILED", e.message, e) }
+      }
+    } else directCall(promise, { Arguments.makeNativeMap(DlnaCasting.status()) }) {
       GoogleCasting.status(reactApplicationContext, promise)
     }
   }
 
   @ReactMethod
   fun controlDirect(action: String, position: Double, promise: Promise) {
-    directCall(promise, { DlnaCasting.control(action, position); null }) {
+    if (directProtocol == "amazonfling") {
+      directExecutor.submit {
+        try { AmazonFlingCasting.control(action, position); promise.resolve(null) }
+        catch (e: Exception) { promise.reject("FLING_CONTROL_FAILED", e.message, e) }
+      }
+    } else directCall(promise, { DlnaCasting.control(action, position); null }) {
       GoogleCasting.control(reactApplicationContext, action, position, promise)
     }
   }
@@ -167,6 +205,11 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
   fun disconnectDirect(promise: Promise) {
     if (directProtocol == "googlecast") {
       reactApplicationContext.runOnUiQueueThread { GoogleCasting.disconnect(reactApplicationContext, promise) }
+    } else if (directProtocol == "amazonfling") {
+      directExecutor.submit {
+        try { AmazonFlingCasting.disconnect(); promise.resolve(null) }
+        catch (e: Exception) { promise.reject("FLING_STOP_FAILED", e.message, e) }
+      }
     } else {
       directExecutor.submit {
         try { DlnaCasting.disconnect(); promise.resolve(null) }

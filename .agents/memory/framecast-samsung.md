@@ -19,9 +19,9 @@ Scan automatically on the Android pairing screen, but request remote control/bro
 
 **Why:** The customer asked again for same-Wi-Fi Samsung, Chromecast and Fire TV discovery and automatic browser setup. Earlier attempts found Samsung devices but did not open their browsers; a detected device is not a connected receiver.
 
-**How to apply:** Samsung browser launch depends on model support and TV approval. Google Cast requires an actual Cast receiver session, not the ordinary TV website. The user approved trying built-in legacy Amazon Fling for Fire TV, but its official support ended on 2026-03-05 and the archived SDK/download was not available from Amazon or Maven Central in this workspace. Do not add unofficial SDK copies or treat detection as playback. Matter Casting is the current official route but requires a Fire TV content app, which changes the phone-only scope. Verify on hardware before claiming success.
+**How to apply:** Samsung browser launch depends on model support and TV approval. Google Cast uses Google's built-in Default Media Receiver for ordinary supported media; still wait for a real Cast session before showing connected. Fire TV must use its built-in media receiver, not Silk or a browser route. Offer media playback only after Fling discovery and a receiver status response; a scan result alone is not a connection. Fling is retired and not guaranteed to remain available, so keep it best-effort and verify on a real Fire TV before claiming compatibility.
 
-**Why:** On 2026-11-02, the user approved a legacy Fling attempt after learning about its unsupported status. The official Amazon Fling documentation pages were no longer served, and Maven Central had no Fling artifact; an unofficial binary would be unsafe to ship.
+**Why:** The user repeatedly observed that another phone app launches Fire TV's built-in media player without opening a TV browser, and explicitly corrected FrameCast's Fire TV flow to match that media-only behavior. The official Fling support period ended on 2026-03-05; an Apache-licensed plugin distributes Amazon Fling JARs under Amazon's separate program-material terms, so retain its license and notices when using that best-effort route.
 
 Keep this a phone-app-only product: do not require customers to install a separate FrameCast TV receiver app.
 

@@ -9,7 +9,7 @@ export type NearbySamsungTv = {
   model: string;
 };
 
-export type NearbyTv = NearbySamsungTv & { type: 'samsung' | 'chromecast' | 'firetv' | 'webos' | 'roku' | 'dlna' | 'appletv'; rendererId?: string };
+export type NearbyTv = Omit<NearbySamsungTv, 'ip'> & { ip?: string; type: 'samsung' | 'chromecast' | 'firetv' | 'webos' | 'roku' | 'dlna' | 'appletv'; rendererId?: string; flingId?: string };
 export type NearbyTvAction = 'samsung-browser' | 'direct-media' | 'instructions';
 
 /**
@@ -62,11 +62,16 @@ export async function discoverNearbyTvs(): Promise<NearbyTv[]> {
   const unique = new Map<string, NearbyTv>();
   for (const tv of results) {
     if (!tv || !['samsung', 'chromecast', 'firetv', 'webos', 'roku', 'dlna', 'appletv'].includes(tv.type)
-      || typeof tv.ip !== 'string' || !isPrivateIpv4(tv.ip)
       || typeof tv.name !== 'string' || typeof tv.model !== 'string') continue;
-    unique.set(`${tv.type}:${tv.ip}`, {
+    const validPrivateIp = typeof tv.ip === 'string' && isPrivateIpv4(tv.ip);
+    const validFlingId = typeof tv.flingId === 'string' && tv.flingId.length > 0 &&
+      tv.flingId.length <= 300 && !/[\u0000-\u001f\u007f]/.test(tv.flingId);
+    if (!validPrivateIp && !(tv.type === 'firetv' && validFlingId)) continue;
+    const key = tv.type === 'firetv' && validFlingId ? `${tv.type}:fling:${tv.flingId}` : `${tv.type}:${tv.ip}`;
+    unique.set(key, {
       ...tv, name: tv.name.slice(0, 100), model: tv.model.slice(0, 100),
       rendererId: typeof tv.rendererId === 'string' && /^[a-f0-9-]{36}$/i.test(tv.rendererId) ? tv.rendererId : undefined,
+      flingId: validFlingId ? tv.flingId : undefined,
     });
   }
   return [...unique.values()].slice(0, 32);
@@ -117,6 +122,9 @@ export async function connectSamsungTv(
   { signal, onProgress }: { signal: AbortSignal; onProgress: (message: string) => void },
 ): Promise<string> {
   if (tv.type !== 'samsung') throw new Error('Automatic browser launch is available only for compatible Samsung TVs.');
+  if (!tv.ip || !isPrivateIpv4(tv.ip)) {
+    throw new Error('The Samsung TV did not provide a valid local Wi-Fi address. Rescan and try again.');
+  }
   throwIfCancelled(signal);
   onProgress('Preparing a private pairing room…');
   const room = await boundedRequest(signal, requestSignal => createCastRoom({ signal: requestSignal }));

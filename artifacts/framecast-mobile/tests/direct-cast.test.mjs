@@ -27,6 +27,7 @@ test('only devices with a playable direct receiver are offered a direct connecti
   const { getDirectTarget } = bridge();
   const tv = { name: 'Living room', ip: '192.168.1.208' };
   assert.equal(getDirectTarget({ ...tv, type: 'firetv' }), null);
+  assert.equal(getDirectTarget({ ...tv, type: 'firetv', flingId: 'receiver-123' }).protocol, 'amazonfling');
   assert.equal(getDirectTarget({ ...tv, type: 'roku' }), null);
   assert.equal(getDirectTarget({ ...tv, type: 'samsung' }), null);
   assert.equal(getDirectTarget({ ...tv, type: 'chromecast' }).protocol, 'googlecast');
@@ -92,7 +93,13 @@ test('native direct receiver requires acknowledgment and preserves connection bo
   assert.match(dlna, /DOCTYPE\|ENTITY/);
   assert.match(dlna, /SetAVTransportURI/);
   assert.match(dlna, /renderers\[id\]/);
+  const fling = readFileSync(new URL('../native/android/AmazonFlingCasting.kt', import.meta.url), 'utf8');
+  assert.match(fling, /amzn\.thin\.pl/);
+  assert.match(fling, /setMediaSource/);
+  assert.match(fling, /getStatus\(\)\.get/);
+  assert.match(fling, /PlayerSeekMode\.Relative/);
   const google = readFileSync(new URL('../native/android/GoogleCasting.kt', import.meta.url), 'utf8');
+  assert.match(google, /setReceiverApplicationId\(CastMediaControlIntent\.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID\)/);
   assert.match(google, /onSessionStarted/);
   assert.match(google, /s\.isConnected/);
   assert.match(google, /25_000/);

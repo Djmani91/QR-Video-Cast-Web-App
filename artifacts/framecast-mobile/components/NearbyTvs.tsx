@@ -24,7 +24,6 @@ const FALLBACK = 'For browser pairing, open 2tx1.com on the TV and enter the cod
 
 const BROWSER_GUIDANCE: Partial<Record<NearbyTv['type'], string>> = {
   samsung: 'Tap “Open browser on TV” to try the Samsung browser handoff. If it does not open, open Internet Browser on the TV, enter 2tx1.com, and type the TV code here.',
-  firetv: 'On the Fire TV, open Silk Browser and enter 2tx1.com. The TV will show a short code; enter it here. FrameCast plays media in the browser and does not control the Fire TV home screen.',
   webos: 'On the LG TV, open its Internet Browser and enter 2tx1.com. Then type the code shown on the TV here.',
   dlna: 'If this TV has an Internet browser, open 2tx1.com and enter the code shown there. Otherwise, use the media-only option below if available.',
 };
@@ -43,7 +42,7 @@ const LIMITATION: Record<Exclude<NearbyTv['type'], 'samsung'>, string> = {
   chromecast:
     'This Chromecast has no general TV browser. If media-only playback is offered below, use that. Otherwise, pair with a browser-equipped TV at 2tx1.com.',
   firetv:
-    'Open Silk Browser on the Fire TV and type 2tx1.com. Pairing uses the code shown on the TV; scanning does not connect or control the Fire TV dashboard.',
+    'Fire TV was found on Wi-Fi, but its built-in media receiver did not answer FrameCast. It is not connected. Rescan; playback is available only when the receiver responds.',
   webos:
     'Open the LG TV’s Internet Browser, type 2tx1.com, then enter its code here. FrameCast does not control the TV home screen.',
   roku:
@@ -54,7 +53,7 @@ const LIMITATION: Record<Exclude<NearbyTv['type'], 'samsung'>, string> = {
     'Apple TV has no general web browser, and FrameCast does not include an AirPlay receiver. Use another browser-equipped TV for code pairing.',
 };
 
-const tvKey = (tv: NearbyTv) => `${tv.type}-${tv.ip}`;
+const tvKey = (tv: NearbyTv) => `${tv.type}-${tv.flingId ?? tv.ip ?? tv.name}`;
 
 function errMsg(e: unknown, fallback: string) {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -135,7 +134,8 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
     setConnectError(null);
     setProgress('Opening FrameCast on the TV. If the TV asks, choose Allow for FrameCast with the TV remote.');
     try {
-      const roomId = await connectSamsungTv(tv, {
+      if (!tv.ip) throw new Error('The Samsung TV did not provide its local Wi-Fi address. Rescan and try again.');
+      const roomId = await connectSamsungTv({ ...tv, ip: tv.ip }, {
         signal: controller.signal,
         onProgress: (m) => {
           if (mounted.current && !controller.signal.aborted) setProgress(m);
@@ -172,6 +172,13 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
   const selectedAction = selectedTv
     ? getNearbyTvAction(selectedTv, Boolean(selectedDirectTarget && onDirectTarget))
     : null;
+  const selectedGuidance = selectedTv && selectedAction === 'direct-media'
+    ? selectedTv.type === 'firetv'
+      ? 'Fire TV’s built-in media receiver answered. FrameCast will send only your selected media over Wi-Fi; it will not open a browser or control the TV home screen.'
+      : 'A media receiver is available. FrameCast will send only your selected photos or videos; it will not control the TV home screen.'
+    : selectedTv
+      ? BROWSER_GUIDANCE[selectedTv.type] ?? LIMITATION[selectedTv.type as Exclude<NearbyTv['type'], 'samsung'>]
+      : '';
 
   return (
     <View
@@ -316,9 +323,7 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
           <Text style={[styles.panelText, { color: colors.mutedForeground }]}>
             {TYPE_LABEL[selectedTv.type]} found on Wi-Fi · not connected
           </Text>
-          <Text style={[styles.panelText, { color: colors.mutedForeground }]}>
-            {BROWSER_GUIDANCE[selectedTv.type] ?? LIMITATION[selectedTv.type as Exclude<NearbyTv['type'], 'samsung'>]}
-          </Text>
+          <Text style={[styles.panelText, { color: colors.mutedForeground }]}>{selectedGuidance}</Text>
           {BROWSER_GUIDANCE[selectedTv.type] ? (
             <View style={[styles.address, { backgroundColor: colors.secondary, borderRadius: colors.radius }]}>
               <Feather name="globe" size={16} color={colors.primary} />
@@ -346,9 +351,6 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
           ) : null}
           {selectedAction === 'direct-media' && selectedDirectTarget && onDirectTarget ? (
             <>
-              <Text style={[styles.panelText, { color: colors.primary }]}>
-                Media-only playback: FrameCast sends photos and videos to the receiver. It does not control the TV home screen.
-              </Text>
               <Pressable
                 testID="nearby-tvs-play-media"
                 accessibilityRole="button"

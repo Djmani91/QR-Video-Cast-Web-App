@@ -1,7 +1,7 @@
 import { NativeModules, Platform } from 'react-native';
 import type { NearbyTv } from './tv-discovery';
 
-export type DirectTarget = { protocol: 'googlecast' | 'dlna'; receiver: string; name: string };
+export type DirectTarget = { protocol: 'googlecast' | 'dlna' | 'amazonfling'; receiver: string; name: string };
 export type DirectStatus = { state: string; position: number; duration: number };
 type DirectNative = {
   connectDirect(protocol: string, receiver: string): Promise<void>;
@@ -15,7 +15,8 @@ export const directCastingAvailable = Boolean(native?.connectDirect);
 
 export function getDirectTarget(tv: NearbyTv): DirectTarget | null {
   if (!directCastingAvailable) return null;
-  if (tv.type === 'chromecast') return { protocol: 'googlecast', receiver: tv.ip, name: tv.name };
+  if (tv.type === 'firetv' && tv.flingId) return { protocol: 'amazonfling', receiver: tv.flingId, name: tv.name };
+  if (tv.type === 'chromecast' && tv.ip) return { protocol: 'googlecast', receiver: tv.ip, name: tv.name };
   if (tv.rendererId) return { protocol: 'dlna', receiver: tv.rendererId, name: tv.name };
   return null;
 }
