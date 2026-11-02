@@ -19,7 +19,13 @@ Scan automatically on the Android pairing screen, but request remote control/bro
 
 **Why:** The customer asked again for same-Wi-Fi Samsung, Chromecast and Fire TV discovery and automatic browser setup. Earlier attempts found Samsung devices but did not open their browsers; a detected device is not a connected receiver.
 
-**How to apply:** Samsung browser launch depends on model support and TV approval. Chromecast needs a registered Cast receiver; Fire TV's supported route requires Matter/content-app integration. Be explicit about detection-only entries until those actual connection paths exist. Do not silently switch to unsupported legacy casting or claim hardware verification from software tests.
+**How to apply:** Samsung browser launch depends on model support and TV approval. Google Cast requires an actual Cast receiver session, not the ordinary TV website; Fire TV's supported route requires Matter/content-app integration. Be explicit about detection-only entries until actual connection paths exist. Do not silently switch to unsupported legacy casting or claim hardware verification from software tests.
+
+Keep this a phone-app-only product: do not require customers to install a separate FrameCast TV receiver app.
+
+**Why:** On 2026-11-02, the user explicitly chose “No, phone app only” after the Fire TV receiver requirement was explained.
+
+**How to apply:** Prefer receivers already built into supported devices and retain browser-code pairing. Do not promise universal tap-to-connect Fire TV support when its available receiver cannot accept FrameCast media. Revisit a separate TV app only if the user changes this scope.
 
 The user wants automatic nearby scanning across common European and American TV/streaming platforms, not a list restricted to Samsung, Chromecast and Amazon; those were examples.
 

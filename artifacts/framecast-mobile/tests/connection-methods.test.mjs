@@ -13,7 +13,7 @@ test('pairing puts Wi-Fi discovery and browser instructions above short code ent
   assert.match(joinScreen, /testID="button-tv-browser-instructions"/);
   assert.match(joinScreen, /Alert\.alert\('Use your TV browser'/);
   assert.doesNotMatch(screen, /CameraView|useCameraPermissions|button-open-tv-qr-scanner/);
-  assert.match(joinScreen, /<NearbyTvs onPaired=\{joinRoom\} scanRequest=\{nearbyScanRequest\} \/>/);
+  assert.match(joinScreen, /<NearbyTvs onPaired=\{joinRoom\} onDirectTarget=\{setDirectTarget\} scanRequest=\{nearbyScanRequest\} \/>/);
   assert.ok(inputCodeAt > 0, 'keep code entry available below the connection choices');
   assert.ok(joinScreen.indexOf('button-find-tvs-on-wifi') < joinScreen.indexOf('button-tv-browser-instructions'));
   assert.ok(joinScreen.indexOf('button-tv-browser-instructions') < joinScreen.indexOf('input-tv-code'));

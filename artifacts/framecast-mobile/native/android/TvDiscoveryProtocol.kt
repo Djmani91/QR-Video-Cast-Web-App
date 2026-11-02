@@ -6,7 +6,8 @@ import javax.xml.parsers.DocumentBuilderFactory
 import org.xml.sax.InputSource
 import org.xml.sax.helpers.DefaultHandler
 
-internal data class DiscoveredTv(val ip: String, val name: String, val model: String, val type: String)
+internal data class DiscoveredTv(val ip: String, val name: String, val model: String, val type: String,
+  val rendererId: String? = null)
 
 /** Protocol evidence, not brand names alone: speakers/routers must not become TVs. */
 internal object TvDiscoveryProtocol {

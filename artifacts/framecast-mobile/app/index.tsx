@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import NearbyTvs from '@/components/NearbyTvs';
+import DirectCastPanel from '@/components/DirectCastPanel';
+import type { DirectTarget } from '@/lib/direct-cast';
 import { configureLowLatencyScreenSender, type ScreenSenderLike } from '@/lib/screen-mirror-performance';
 import {
   ActivityIndicator,
@@ -338,6 +340,7 @@ function FrameCastHomeScreen() {
   sendSignalRef.current = sendSignalMutation.mutate;
   const [code, setCode] = useState('');
   const [nearbyScanRequest, setNearbyScanRequest] = useState(0);
+  const [directTarget, setDirectTarget] = useState<DirectTarget | null>(null);
   const [roomId, setRoomId] = useState('');
   const pairingResumeRef = useRef(createPairingResume(AsyncStorage));
   const lastPairingSaveRef = useRef(0);
@@ -2066,6 +2069,7 @@ function FrameCastHomeScreen() {
 
   const backgroundControlRef = useRef<(action: string) => void>(() => undefined);
   backgroundControlRef.current = action => {
+    if (directTarget) return;
     if (action === 'disconnect') leaveRoom();
     else if (action === 'playlist:previous' || action === 'playlist:next') {
       const direction = action === 'playlist:next' ? 1 : -1;
@@ -2079,6 +2083,7 @@ function FrameCastHomeScreen() {
   useEffect(() => onBackgroundControl(action => backgroundControlRef.current(action)), []);
   useEffect(() => onBackgroundStopped(() => setBackgroundEnabled(false)), []);
   useEffect(() => {
+    if (directTarget) return;
     if (!roomId) {
       backgroundStartedRoomRef.current = '';
       setBackgroundEnabled(false);
@@ -2118,7 +2123,7 @@ function FrameCastHomeScreen() {
         setError(reason instanceof Error ? reason.message : 'Background casting could not start. Allow notifications to keep the TV connected.');
       }
     });
-  }, [roomId, isPremium, subscriptionLoading]);
+  }, [roomId, isPremium, subscriptionLoading, directTarget]);
   useEffect(() => {
     if (backgroundEnabled && roomId) {
       updateBackgroundCasting({
@@ -2308,6 +2313,8 @@ function FrameCastHomeScreen() {
     );
   }
 
+  if (directTarget) return <DirectCastPanel target={directTarget} onClose={() => setDirectTarget(null)} />;
+
   return (
     <>
     <SafeAreaView style={[styles.safeArea, { backgroundColor: activeColors.background, paddingTop: Platform.OS === 'web' ? Math.max(insets.top, 67) : 0, paddingBottom: Platform.OS === 'web' ? Math.max(insets.bottom, 34) : 0 }]} testID="screen-framecast-mobile">
@@ -2389,7 +2396,7 @@ function FrameCastHomeScreen() {
                   <Text style={[styles.connectionMethodButtonText, { color: activeColors.primary }]}>TV browser</Text>
                 </Pressable>
               </View>
-              <NearbyTvs onPaired={joinRoom} scanRequest={nearbyScanRequest} />
+              <NearbyTvs onPaired={joinRoom} onDirectTarget={setDirectTarget} scanRequest={nearbyScanRequest} />
             </View>
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>

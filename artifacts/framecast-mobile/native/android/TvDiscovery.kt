@@ -46,6 +46,7 @@ internal object TvDiscovery {
     val wifiInterface = links.interfaceName?.let { NetworkInterface.getByName(it) }
       ?: throw IllegalStateException("The Wi-Fi interface is unavailable. Reconnect Wi-Fi and rescan.")
     val results = ConcurrentHashMap<String, DiscoveredTv>()
+    val rendererIds = ConcurrentHashMap<String, String>()
     val active = AtomicBoolean(true)
     val ssdpReplies = AtomicInteger()
     val dnsFound = AtomicInteger()
@@ -95,9 +96,17 @@ internal object TvDiscovery {
             }
             if (output.size() > 65_536) { descriptionFailed.incrementAndGet(); return@use }
             descriptionsRead.incrementAndGet()
-            val device = TvDiscoveryProtocol.fromDescription(ip, output.toString("UTF-8"), response)
+            val xml = output.toString("UTF-8")
+            val rendererId = DlnaCasting.register(ip, location, xml)
+            if (rendererId != null) rendererIds[ip] = rendererId
+            val identified = TvDiscoveryProtocol.fromDescription(ip, xml, response)
+            val device = identified?.copy(rendererId = rendererId)
             if (device == null) descriptionUnrecognized.incrementAndGet()
-            if (device != null && active.get() && results.size < 32) results["${device.type}:$ip"] = device
+            if (device != null && active.get() && results.size < 32) {
+              results.compute("${device.type}:$ip") { _, old ->
+                if (device.rendererId != null || old?.rendererId == null) device else old
+              }
+            }
           }
         } catch (error: Exception) {
           descriptionFailed.incrementAndGet()
@@ -230,6 +239,7 @@ internal object TvDiscovery {
        }
        val namedPlatforms = snapshot.filter { it.type != "dlna" }.map { it.ip }.toSet()
        return snapshot.filterNot { it.type == "dlna" && it.ip in namedPlatforms }
+         .map { it.copy(rendererId = it.rendererId ?: rendererIds[it.ip]) }
          .sortedWith(compareBy({ it.type }, { it.name }, { it.ip })).take(32)
     } finally {
       active.set(false)

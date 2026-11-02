@@ -22,7 +22,7 @@ test('real phone-server config serves the player as HTML and supports private me
 server.document-root = "${root}"
 server.bind = "127.0.0.1"
 server.port = ${port}
-${localServerConfig('/testsession', '.mp4', `${root}/receiver.html`, `${root}/movie with spaces.mp4`, ['http://192.168.1.45:45678'])}`);
+${localServerConfig('/testsession', '.mp4', `${root}/receiver.html`, `${root}/movie with spaces.mp4`, ['http://192.168.1.45:45678'], true)}`);
   const server = spawn('lighttpd', ['-D', '-f', `${root}/server.conf`], { stdio: ['ignore', 'ignore', 'pipe'] });
   let errors = '';
   server.stderr.on('data', value => { errors += value; });
@@ -65,6 +65,12 @@ ${localServerConfig('/testsession', '.mp4', `${root}/receiver.html`, `${root}/mo
       headers: { Origin: 'https://unrelated.example' },
     });
     assert.equal(untrusted.headers.get('access-control-allow-origin'), null);
+    const cast = await fetch(`${origin}/testsession/media.mp4`, {
+      headers: { Origin: 'https://www.gstatic.com', Range: 'bytes=0-3' },
+    });
+    assert.equal(cast.status, 206);
+    assert.equal(cast.headers.get('access-control-allow-origin'), 'https://www.gstatic.com');
+    assert.deepEqual(Buffer.from(await cast.arrayBuffer()), media.subarray(0, 4));
     assert.equal((await fetch(`${origin}/private.txt`)).status, 403);
     assert.equal((await fetch(`${origin}/testsession/`)).status, 403);
   } finally {

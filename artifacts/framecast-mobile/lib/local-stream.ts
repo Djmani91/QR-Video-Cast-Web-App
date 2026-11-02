@@ -31,7 +31,7 @@ export function stopLocalStream(): Promise<void> {
   });
 }
 
-export async function startLocalStream(uri: string, name: string): Promise<RunningStream> {
+export async function startLocalStream(uri: string, name: string, googleCast = false): Promise<RunningStream> {
   const version = lifecycle.issue();
   return lifecycle.run(version, async () => {
     await stopActiveStream();
@@ -59,7 +59,7 @@ export async function startLocalStream(uri: string, name: string): Promise<Runni
       fileDir: path(directory.uri),
       nonLocal: true,
       stopInBackground: false,
-      extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri), [...receiverOrigins]),
+      extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri), [...receiverOrigins], googleCast),
     });
     try {
       const origin = await server.start();

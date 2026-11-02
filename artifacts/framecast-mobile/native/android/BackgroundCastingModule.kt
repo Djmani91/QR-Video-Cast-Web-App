@@ -88,6 +88,7 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
           item.putString("name", device.name)
           item.putString("model", device.model)
           item.putString("type", device.type)
+          item.putString("rendererId", device.rendererId)
           result.pushMap(item)
         }
         promise.resolve(result)
@@ -107,6 +108,70 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
         promise.reject("TV_BROWSER_LAUNCH_FAILED", error.message ?: "The TV did not accept the automatic browser launch.", error)
       }
     }, "FrameCastTvBrowserLaunch").start()
+  }
+
+  private val directExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+  @Volatile private var directProtocol = ""
+
+  @ReactMethod
+  fun connectDirect(protocol: String, receiver: String, promise: Promise) {
+    if (protocol == "googlecast") {
+      reactApplicationContext.runOnUiQueueThread {
+        GoogleCasting.connect(reactApplicationContext, receiver, promise) { directProtocol = "googlecast" }
+      }
+    } else if (protocol == "dlna") {
+      directExecutor.submit {
+        try {
+          DlnaCasting.connect(receiver)
+          directProtocol = "dlna"
+          promise.resolve(null)
+        } catch (e: Exception) { promise.reject("DIRECT_CONNECT_FAILED", e.message, e) }
+      }
+    } else promise.reject("DIRECT_UNSUPPORTED", "This TV has no supported direct receiver.")
+  }
+
+  @ReactMethod
+  fun loadDirect(url: String, mime: String, title: String, promise: Promise) {
+    directCall(promise, { DlnaCasting.load(url, mime, title); null }) {
+      GoogleCasting.load(reactApplicationContext, url, mime, title, promise)
+    }
+  }
+
+  @ReactMethod
+  fun statusDirect(promise: Promise) {
+    directCall(promise, { Arguments.makeNativeMap(DlnaCasting.status()) }) {
+      GoogleCasting.status(reactApplicationContext, promise)
+    }
+  }
+
+  @ReactMethod
+  fun controlDirect(action: String, position: Double, promise: Promise) {
+    directCall(promise, { DlnaCasting.control(action, position); null }) {
+      GoogleCasting.control(reactApplicationContext, action, position, promise)
+    }
+  }
+
+  @ReactMethod
+  fun disconnectDirect(promise: Promise) {
+    if (directProtocol == "googlecast") {
+      reactApplicationContext.runOnUiQueueThread { GoogleCasting.disconnect(reactApplicationContext, promise) }
+    } else {
+      directExecutor.submit {
+        try { DlnaCasting.disconnect(); promise.resolve(null) }
+        catch (e: Exception) { promise.reject("DIRECT_STOP_FAILED", e.message, e) }
+      }
+    }
+    directProtocol = ""
+  }
+
+  private fun directCall(promise: Promise, dlna: () -> Any?, google: () -> Unit) {
+    if (directProtocol == "googlecast") reactApplicationContext.runOnUiQueueThread {
+      try { google() } catch (e: Exception) { promise.reject("CAST_FAILED", e.message, e) }
+    }
+    else if (directProtocol == "dlna") directExecutor.submit {
+      try { promise.resolve(dlna()) } catch (e: Exception) { promise.reject("DLNA_FAILED", e.message, e) }
+    }
+    else promise.reject("DIRECT_DISCONNECTED", "Connect a TV receiver before playing.")
   }
 
   @ReactMethod

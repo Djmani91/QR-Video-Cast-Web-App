@@ -9,7 +9,7 @@ export type NearbySamsungTv = {
   model: string;
 };
 
-export type NearbyTv = NearbySamsungTv & { type: 'samsung' | 'chromecast' | 'firetv' | 'webos' | 'roku' | 'dlna' | 'appletv' };
+export type NearbyTv = NearbySamsungTv & { type: 'samsung' | 'chromecast' | 'firetv' | 'webos' | 'roku' | 'dlna' | 'appletv'; rendererId?: string };
 
 type FrameCastTvDiscoveryModule = {
   discoverNearbyTvs?: () => Promise<NearbyTv[]>;
@@ -36,7 +36,10 @@ export async function discoverNearbyTvs(): Promise<NearbyTv[]> {
     if (!tv || !['samsung', 'chromecast', 'firetv', 'webos', 'roku', 'dlna', 'appletv'].includes(tv.type)
       || typeof tv.ip !== 'string' || !isPrivateIpv4(tv.ip)
       || typeof tv.name !== 'string' || typeof tv.model !== 'string') continue;
-    unique.set(`${tv.type}:${tv.ip}`, { ...tv, name: tv.name.slice(0, 100), model: tv.model.slice(0, 100) });
+    unique.set(`${tv.type}:${tv.ip}`, {
+      ...tv, name: tv.name.slice(0, 100), model: tv.model.slice(0, 100),
+      rendererId: typeof tv.rendererId === 'string' && /^[a-f0-9-]{36}$/i.test(tv.rendererId) ? tv.rendererId : undefined,
+    });
   }
   return [...unique.values()].slice(0, 32);
 }

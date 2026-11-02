@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useColors } from '@/hooks/useColors';
+import { getDirectTarget, type DirectTarget } from '@/lib/direct-cast';
 import {
   connectSamsungTv,
   discoverNearbyTvs,
@@ -12,6 +13,7 @@ import {
 
 export interface NearbyTvsProps {
   onPaired: (roomId: string) => void;
+  onDirectTarget?: (target: DirectTarget) => void;
   scanRequest?: number;
 }
 
@@ -50,13 +52,13 @@ function errMsg(e: unknown, fallback: string) {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-export default function NearbyTvs({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
+export default function NearbyTvs({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvsProps) {
   const supported = Platform.OS === 'android' && nearbyDiscoveryAvailable && typeof discoverNearbyTvs === 'function';
   if (!supported) return null;
-  return <NearbyTvsInner onPaired={onPaired} scanRequest={scanRequest} />;
+  return <NearbyTvsInner onPaired={onPaired} onDirectTarget={onDirectTarget} scanRequest={scanRequest} />;
 }
 
-function NearbyTvsInner({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
+function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvsProps) {
   const colors = useColors();
   const [scan, setScan] = useState<ScanState>('idle');
   const [scanError, setScanError] = useState<string | null>(null);
@@ -226,7 +228,9 @@ function NearbyTvsInner({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
                 onPress={() => {
                   setSelected(key);
                   setConnectError(null);
-                  if (tv.type === 'samsung') startSamsung(tv);
+                  const direct = getDirectTarget(tv);
+                  if (direct && onDirectTarget) onDirectTarget(direct);
+                  else if (tv.type === 'samsung') startSamsung(tv);
                 }}
                 style={({ pressed }) => [
                   styles.row,
@@ -245,7 +249,7 @@ function NearbyTvsInner({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
                   <Text numberOfLines={1} style={[styles.name, { color: colors.foreground }]}>{tv.name}</Text>
                   <Text numberOfLines={1} style={[styles.meta, { color: colors.mutedForeground }]}>
                     {TYPE_LABEL[tv.type]}{tv.model ? ` · ${tv.model}` : ''}
-                    {tv.type !== 'samsung' ? ' · detected only' : ''}
+                    {getDirectTarget(tv) ? ' · direct playback' : tv.type !== 'samsung' ? ' · detected only' : ''}
                   </Text>
                 </View>
                 {isConn ? <ActivityIndicator color={colors.primary} /> : <Feather name="chevron-right" size={18} color={colors.mutedForeground} />}
@@ -289,7 +293,7 @@ function NearbyTvsInner({ onPaired, scanRequest = 0 }: NearbyTvsProps) {
             {connectError} Tap the TV to try again, or {FALLBACK.charAt(0).toLowerCase() + FALLBACK.slice(1)}
           </Text>
         </View>
-      ) : selectedTv && selectedTv.type !== 'samsung' ? (
+      ) : selectedTv && selectedTv.type !== 'samsung' && !getDirectTarget(selectedTv) ? (
         <View style={[styles.panel, { backgroundColor: colors.muted, borderRadius: colors.radius }]} accessibilityLiveRegion="polite">
           <Text style={[styles.panelTitle, { color: colors.foreground }]}>{TYPE_LABEL[selectedTv.type]} found</Text>
           <Text style={[styles.panelText, { color: colors.mutedForeground }]}>{LIMITATION[selectedTv.type]}</Text>

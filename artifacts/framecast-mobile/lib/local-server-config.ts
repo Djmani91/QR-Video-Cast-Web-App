@@ -2,7 +2,7 @@
  * The library does not supply a default MIME map: HTML must be explicit or
  * TVs can treat the receiver page as an unsupported file download.
  */
-export function localServerConfig(prefix: string, extension: string, receiverPath: string, mediaPath: string, receiverOrigins: string[] = []): string {
+export function localServerConfig(prefix: string, extension: string, receiverPath: string, mediaPath: string, receiverOrigins: string[] = [], googleCast = false): string {
   const cors = [...new Set(receiverOrigins)].map(origin => {
     const url = new URL(origin);
     if (url.protocol !== 'http:' || url.origin !== origin || url.username || url.password
@@ -29,7 +29,9 @@ export function localServerConfig(prefix: string, extension: string, receiverPat
       ".html" => "text/html; charset=utf-8",
       ".mp4" => "video/mp4", ".m4v" => "video/mp4",
       ".mov" => "video/quicktime", ".3gp" => "video/3gpp",
-      ".webm" => "video/webm", ".mkv" => "video/x-matroska"
+      ".webm" => "video/webm", ".mkv" => "video/x-matroska",
+      ".jpg" => "image/jpeg", ".jpeg" => "image/jpeg",
+      ".png" => "image/png", ".webp" => "image/webp"
     )
     alias.url = (
       "${prefix}/receiver.html" => ${JSON.stringify(receiverPath)},
@@ -43,5 +45,15 @@ export function localServerConfig(prefix: string, extension: string, receiverPat
       "Referrer-Policy" => "no-referrer"
     )
     ${cors}
+    ${googleCast ? `
+    $REQUEST_HEADER["Origin"] == "https://www.gstatic.com" {
+      setenv.add-response-header += (
+        "Access-Control-Allow-Origin" => "https://www.gstatic.com",
+        "Access-Control-Allow-Methods" => "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers" => "Range",
+        "Access-Control-Expose-Headers" => "Content-Length, Content-Range",
+        "Vary" => "Origin"
+      )
+    }` : ''}
   `;
 }
