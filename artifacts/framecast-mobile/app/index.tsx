@@ -2864,9 +2864,11 @@ function FrameCastHomeScreen() {
 
 export default function HomeScreen() {
   return (
-    <SubscriptionChoiceGate>
-      <FrameCastHomeScreen />
-    </SubscriptionChoiceGate>
+    <FreeCastingTrialProvider>
+      <SubscriptionChoiceGate>
+        <FrameCastHomeScreen />
+      </SubscriptionChoiceGate>
+    </FreeCastingTrialProvider>
   );
 }
 
@@ -2918,6 +2920,10 @@ const styles = StyleSheet.create({
   connectedBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, marginBottom: 19 },
   connectedDot: { width: 8, height: 8, borderRadius: 4 },
   connectedBadgeText: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  trialTimerCard: { borderWidth: 1, borderRadius: 15, padding: 12, marginTop: -10, marginBottom: 14, flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+  trialTimerCopy: { flex: 1, gap: 3 },
+  trialTimerTitle: { fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  trialTimerSubtitle: { fontFamily: 'Inter_400Regular', fontSize: 11, lineHeight: 16 },
   chooseButton: { minHeight: 82, borderWidth: 1, borderRadius: 18, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 12 },
   mediaCard: { minHeight: 78, paddingHorizontal: 13, borderRadius: 17, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
   mediaIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },

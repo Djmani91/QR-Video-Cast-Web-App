@@ -62,6 +62,8 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     );
   }, [connected, firstPairChoicePending, isPremium, subscriptionLoading, trial.setSessionConnected]);
 
+  useEffect(() => () => trial.setSessionConnected(false, premiumRef.current), [trial.setSessionConnected]);
+
   useEffect(() => {
     if (!connected || isPremium || !trial.expired) return;
     void ordered(() => controlDirect('pause')).catch(() => undefined);
@@ -129,6 +131,10 @@ export default function DirectCastPanel({ target, onClose }: Props) {
 
   const play = async (nextIndex: number) => {
     if (!connectedRef.current || busyRef.current || !queueRef.current[nextIndex]) return;
+    if (!premiumRef.current && !trial.available) {
+      openExpiredTrialPaywall();
+      return;
+    }
     busyState(true);
     setError('');
     setMessage('Opening your media on the TV…');
@@ -219,6 +225,10 @@ export default function DirectCastPanel({ target, onClose }: Props) {
 
   const control = (action: string) => {
     if (!connectedRef.current || busyRef.current) return;
+    if (!premiumRef.current && !trial.available && action !== 'disconnect' && action !== 'pause') {
+      openExpiredTrialPaywall();
+      return;
+    }
     if (action === 'next') { void playRef.current(indexRef.current + 1); return; }
     if (action === 'previous') { void playRef.current(indexRef.current - 1); return; }
     if (action === 'disconnect') { void close(); return; }
@@ -237,7 +247,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   useEffect(() => {
     if (!connected) return;
     const sub = AppState.addEventListener('change', state => {
-      if (state !== 'background' || premiumRef.current || adRef.current) return;
+      if (state !== 'background' || premiumRef.current) return;
       pausedForBackground.current = true;
       playedRef.current = false;
       void ordered(() => controlDirect('stop')).then(() => {
@@ -273,7 +283,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   }), []);
 
   useEffect(() => {
-    if (subscriptionLoading || isPremium || !connected || AppState.currentState !== 'background' || adRef.current) return;
+    if (subscriptionLoading || isPremium || !connected || AppState.currentState !== 'background') return;
     pausedForBackground.current = true;
     playedRef.current = false;
     void ordered(() => controlDirect('stop')).catch(e => {
@@ -289,7 +299,9 @@ export default function DirectCastPanel({ target, onClose }: Props) {
       openExpiredTrialPaywall();
       return 0;
     }
-    return Math.max(0, MAX_MEDIA_SELECTION_ITEMS - count);
+    const slots = Math.max(0, MAX_MEDIA_SELECTION_ITEMS - count);
+    if (slots === 0) setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${kind === 'image' ? 'photos' : 'videos'} in this TV session.`);
+    return slots;
   };
 
   const choose = async (kind: 'image' | 'video') => {
@@ -383,6 +395,15 @@ export default function DirectCastPanel({ target, onClose }: Props) {
           {busy && <ActivityIndicator color={colors.primary} />}
           <Text style={[styles.text, { color: colors.foreground }]} accessibilityLiveRegion="polite">{message}</Text>
         </View>
+        {connected && !isPremium && trial.hasStarted && trial.remainingMs > 0 ? (
+          <View style={[styles.trialNotice, { backgroundColor: colors.secondary, borderColor: colors.border }]} testID="direct-free-trial-countdown">
+            <Feather name="clock" size={17} color={colors.primary} />
+            <Text style={[styles.text, { color: colors.foreground }]}>
+              Ad-supported access · {formatFreeCastingTrialTime(trial.remainingMs)} left. Time counts while connected and FrameCast is open.
+            </Text>
+          </View>
+        ) : null}
+        {trial.error && !isPremium ? <Text style={[styles.text, { color: colors.foreground }]} accessibilityRole="alert">{trial.error}</Text> : null}
         {!!error && <Text style={[styles.text, { color: colors.foreground }]} accessibilityLiveRegion="assertive">{error}</Text>}
         {connected && <>
           <Text style={[styles.text, { color: colors.mutedForeground }]}>Media goes directly from your phone or original source to this receiver. No TV browser code is needed. The receiver decides which formats it can play.</Text>
@@ -428,6 +449,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 }, content: { padding: 24, gap: 18, paddingBottom: 40 },
+  trialNotice: { borderWidth: 1, borderRadius: 15, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 9 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   brand: { flex: 1, fontSize: 24, fontFamily: 'Inter_700Bold' },
   title: { fontSize: 30, fontFamily: 'Inter_700Bold' },

@@ -6,6 +6,7 @@ import Purchases from 'react-native-purchases';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { useSubscription } from '@/lib/revenuecat';
+import { useFreeCastingTrial } from '@/lib/free-casting-trial';
 
 const PLAN_CHOICE_KEY = 'framecast.subscriptionChoice.v1';
 const PLAY_SUBSCRIPTIONS_URL = 'https://play.google.com/store/account/subscriptions?package=com.tvcast.com';
@@ -13,12 +14,14 @@ const PLAY_SUBSCRIPTIONS_URL = 'https://play.google.com/store/account/subscripti
 type GateContextValue = {
   openPaywall: () => void;
   openExpiredTrialPaywall: () => void;
+  dismissExpiredTrialPaywall: () => void;
   openFirstPairChoice: () => void;
   firstPairChoicePending: boolean;
 };
 const GateContext = createContext<GateContextValue>({
   openPaywall: () => undefined,
   openExpiredTrialPaywall: () => undefined,
+  dismissExpiredTrialPaywall: () => undefined,
   openFirstPairChoice: () => undefined,
   firstPairChoicePending: false,
 });
@@ -40,10 +43,12 @@ function hasThreeDayFreeTrial(pkg: ReturnType<typeof useSubscription>['monthlyPa
 function SubscriptionChoiceScreen({
   onContinueWithAds,
   onPremiumActivated,
+  onDismissExpired,
   mode,
 }: {
   onContinueWithAds: () => void;
   onPremiumActivated: () => void;
+  onDismissExpired: () => void;
   mode: 'offer' | 'expired';
 }) {
   const colors = useColors();
@@ -263,7 +268,19 @@ function SubscriptionChoiceScreen({
           >
             <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>Continue with ads</Text>
           </Pressable>
-        ) : null}
+        ) : (
+          <Pressable
+            onPress={onDismissExpired}
+            accessibilityRole="button"
+            testID="button-dismiss-expired-trial"
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              { borderColor: colors.border, backgroundColor: colors.card, opacity: pressed ? 0.8 : 1 },
+            ]}
+          >
+            <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>Not now</Text>
+          </Pressable>
+        )}
 
         <View style={styles.footerRow}>
           {!purchaseNeedsConfirmation ? (
@@ -288,6 +305,7 @@ function SubscriptionChoiceScreen({
 export function SubscriptionChoiceGate({ children }: { children: React.ReactNode }) {
   const colors = useColors();
   const { isPremium, loading, initialLoading } = useSubscription();
+  const freeCastingTrial = useFreeCastingTrial();
   const [choice, setChoice] = useState<string | null>(null);
   const [choiceLoaded, setChoiceLoaded] = useState(false);
   const [forcedOpen, setForcedOpen] = useState(false);
@@ -330,16 +348,20 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
 
   const openPaywall = useCallback(() => {
     if (!isPremium) {
-      setExpiredTrialOpen(false);
+      setExpiredTrialOpen(freeCastingTrial.expired);
       setForcedOpen(true);
     }
-  }, [isPremium]);
+  }, [freeCastingTrial.expired, isPremium]);
   const openExpiredTrialPaywall = useCallback(() => {
     if (!isPremium) {
       setExpiredTrialOpen(true);
       setForcedOpen(true);
     }
   }, [isPremium]);
+  const dismissExpiredTrialPaywall = useCallback(() => {
+    setExpiredTrialOpen(false);
+    setForcedOpen(false);
+  }, []);
   const openFirstPairChoice = useCallback(() => {
     setFirstPairOfferRequested(true);
   }, []);
@@ -350,8 +372,8 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
     && choice === null
     && firstPairOfferRequested;
   const gateValue = useMemo(
-    () => ({ openPaywall, openExpiredTrialPaywall, openFirstPairChoice, firstPairChoicePending }),
-    [openExpiredTrialPaywall, openPaywall, openFirstPairChoice, firstPairChoicePending],
+    () => ({ openPaywall, openExpiredTrialPaywall, dismissExpiredTrialPaywall, openFirstPairChoice, firstPairChoicePending }),
+    [dismissExpiredTrialPaywall, openExpiredTrialPaywall, openPaywall, openFirstPairChoice, firstPairChoicePending],
   );
 
   if (Platform.OS !== 'android') return <GateContext.Provider value={gateValue}>{children}</GateContext.Provider>;
@@ -376,6 +398,7 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
             <SubscriptionChoiceScreen
               onContinueWithAds={() => void saveChoice('ads')}
               onPremiumActivated={() => void saveChoice('premium')}
+              onDismissExpired={dismissExpiredTrialPaywall}
               mode={expiredTrialOpen ? 'expired' : 'offer'}
             />
           </View>
