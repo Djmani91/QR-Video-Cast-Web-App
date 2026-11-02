@@ -12,6 +12,10 @@ type RunningStream = {
 
 let active: RunningStream | undefined;
 const lifecycle = new LatestOperationQueue();
+// The first receiver document can remain open through several server/port
+// changes. Permit its metadata reads on subsequent selected-file servers,
+// without granting wildcard CORS or persisting any network addresses.
+const receiverOrigins = new Set<string>();
 
 async function stopActiveStream(): Promise<void> {
   const previous = active;
@@ -55,7 +59,7 @@ export async function startLocalStream(uri: string, name: string): Promise<Runni
       fileDir: path(directory.uri),
       nonLocal: true,
       stopInBackground: false,
-      extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri)),
+      extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri), [...receiverOrigins]),
     });
     try {
       const origin = await server.start();
@@ -65,6 +69,7 @@ export async function startLocalStream(uri: string, name: string): Promise<Runni
         throw new Error('Connect this phone to your home Wi-Fi before playing on the TV.');
       }
       if (!lifecycle.isCurrent(version)) throw new SupersededOperationError();
+      receiverOrigins.add(new URL(origin).origin);
 
       const running: RunningStream = {
         sessionId, extension,

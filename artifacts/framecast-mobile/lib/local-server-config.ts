@@ -2,7 +2,25 @@
  * The library does not supply a default MIME map: HTML must be explicit or
  * TVs can treat the receiver page as an unsupported file download.
  */
-export function localServerConfig(prefix: string, extension: string, receiverPath: string, mediaPath: string): string {
+export function localServerConfig(prefix: string, extension: string, receiverPath: string, mediaPath: string, receiverOrigins: string[] = []): string {
+  const cors = [...new Set(receiverOrigins)].map(origin => {
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' || url.origin !== origin || url.username || url.password
+      || !/^(10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(url.hostname)
+      || url.hostname.split('.').some(part => Number(part) > 255)) {
+      throw new Error('Invalid local receiver origin.');
+    }
+    return `
+    $REQUEST_HEADER["Origin"] == ${JSON.stringify(origin)} {
+      setenv.add-response-header += (
+        "Access-Control-Allow-Origin" => ${JSON.stringify(origin)},
+        "Access-Control-Allow-Methods" => "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers" => "Range",
+        "Access-Control-Expose-Headers" => "Content-Length, Content-Range",
+        "Vary" => "Origin"
+      )
+    }`;
+  }).join('\n');
   return `
     server.modules += ("mod_alias", "mod_access", "mod_setenv")
     dir-listing.activate = "disable"
@@ -24,5 +42,6 @@ export function localServerConfig(prefix: string, extension: string, receiverPat
       "Cache-Control" => "no-store",
       "Referrer-Policy" => "no-referrer"
     )
+    ${cors}
   `;
 }

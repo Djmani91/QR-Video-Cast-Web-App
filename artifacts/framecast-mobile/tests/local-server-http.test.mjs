@@ -22,7 +22,7 @@ test('real phone-server config serves the player as HTML and supports private me
 server.document-root = "${root}"
 server.bind = "127.0.0.1"
 server.port = ${port}
-${localServerConfig('/testsession', '.mp4', `${root}/receiver.html`, `${root}/movie with spaces.mp4`)}`);
+${localServerConfig('/testsession', '.mp4', `${root}/receiver.html`, `${root}/movie with spaces.mp4`, ['http://192.168.1.45:45678'])}`);
   const server = spawn('lighttpd', ['-D', '-f', `${root}/server.conf`], { stdio: ['ignore', 'ignore', 'pipe'] });
   let errors = '';
   server.stderr.on('data', value => { errors += value; });
@@ -48,12 +48,35 @@ ${localServerConfig('/testsession', '.mp4', `${root}/receiver.html`, `${root}/mo
     assert.equal(part.headers.get('content-type'), 'video/mp4');
     assert.equal(part.headers.get('content-range'), `bytes 8-15/${media.length}`);
     assert.deepEqual(Buffer.from(await part.arrayBuffer()), media.subarray(8, 16));
+    const trusted = await fetch(`${origin}/testsession/media.mp4`, {
+      headers: { Origin: 'http://192.168.1.45:45678', Range: 'bytes=0-3' },
+    });
+    assert.equal(trusted.status, 206);
+    assert.equal(trusted.headers.get('access-control-allow-origin'), 'http://192.168.1.45:45678');
+    assert.match(trusted.headers.get('access-control-expose-headers'), /Content-Length/);
+    const preflight = await fetch(`${origin}/testsession/media.mp4`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://192.168.1.45:45678', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'Range' },
+    });
+    assert.equal(preflight.ok, true);
+    assert.equal(preflight.headers.get('access-control-allow-origin'), 'http://192.168.1.45:45678');
+    assert.equal(preflight.headers.get('access-control-allow-headers'), 'Range');
+    const untrusted = await fetch(`${origin}/testsession/media.mp4`, {
+      headers: { Origin: 'https://unrelated.example' },
+    });
+    assert.equal(untrusted.headers.get('access-control-allow-origin'), null);
     assert.equal((await fetch(`${origin}/private.txt`)).status, 403);
     assert.equal((await fetch(`${origin}/testsession/`)).status, 403);
   } finally {
     server.kill();
     await exited;
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('metadata access cannot be granted to public or injected receiver origins', () => {
+  for (const origin of ['https://unrelated.example', 'http://192.168.evil.example', 'http://192.168.1.45:45678/path', 'http://192.168.1.45:45678"\n']) {
+    assert.throws(() => localServerConfig('/testsession', '.mp4', '/receiver.html', '/video.mp4', [origin]));
   }
 });
 

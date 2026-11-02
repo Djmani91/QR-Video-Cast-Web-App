@@ -15,11 +15,11 @@ Android website detection is an Android-only in-app browser that scans the top-l
 
 **How to apply:** Keep detection limited to openly exposed HTTP(S) sources, retain the official YouTube player path, and state when a site does not expose a TV-shareable source. For services such as TikTok that do not expose direct URLs, use an official player integration rather than scraping or bypassing protection.
 
-Keep a phone-hosted HTTP receiver on the same origin as its local HTTP media, instead of embedding local HTTP video inside the cloud HTTPS page.
+Start direct playback on a phone-hosted HTTP receiver, instead of embedding local HTTP video inside the cloud HTTPS page. Once open, keep that receiver document alive across video changes and local-server recovery.
 
 **Why:** Browser mixed-content restrictions can otherwise block an apparently valid local video URL. The user's comparison recording demonstrates the desired browser playback experience, but does not prove universal codec support or zero buffering.
 
-**How to apply:** Pass only session/control metadata through cloud signaling. Keep local media and receiver on the phone; never add a cloud proxy to work around mixed content. A source-only change does not update an installed native app: rebuild it before claiming the new transport is available.
+**How to apply:** Pass only session/control metadata through cloud signaling. Keep local media and receiver on the phone; never add a cloud proxy to work around mixed content. Replacing a local server must replace the media source, not navigate the top-level browser again: an unreachable top-level URL displays a browser-owned error outside FrameCast's recovery control. If the server origin changes, preserve rotation metadata reads with narrowly scoped CORS for prior receiver origins, never wildcard access. A source-only change does not update an installed native app: rebuild it before claiming the new transport is available.
 
 Some automation Chromium builds cannot decode H.264/AAC even when an MP4 is valid; generated VP8/Opus WebM can exercise the browser casting/recovery journey instead.
 

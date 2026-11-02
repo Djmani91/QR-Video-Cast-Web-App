@@ -25,7 +25,7 @@ try{
 }catch(e){document.getElementById('notice').textContent='Invalid pairing address.';return;}
 var video=document.getElementById('video'),bar=document.getElementById('bar'),notice=document.getElementById('notice');
 video.style.objectFit='contain';
-var fileOrientation=null;
+var fileOrientation=null,mediaUrl='./media'+(config.extension||'.mp4');
 function readU32(bytes,offset){return ((bytes[offset]*16777216)+(bytes[offset+1]<<16)+(bytes[offset+2]<<8)+bytes[offset+3])>>>0;}
 function readI32(bytes,offset){var value=readU32(bytes,offset);return value>2147483647?value-4294967296:value;}
 function readBox(bytes,offset,end){
@@ -84,11 +84,12 @@ function fitVideoToScreen(){
  video.style.transform='translate(-50%,-50%) rotate('+rotation+'deg)';
 }
 function readVideoOrientation(){
- fetch('./media'+(config.extension||'.mp4'),{method:'HEAD',cache:'no-store'}).then(function(head){
+ var requestedMediaUrl=mediaUrl;
+ fetch(requestedMediaUrl,{method:'HEAD',cache:'no-store'}).then(function(head){
   var length=Number(head.headers&&head.headers.get('content-length'));if(!head.ok||!isFinite(length)||length<1)return null;
   var limits=[1024*1024,4*1024*1024],attempt=0;
   function readRange(start,end){
-   return fetch('./media'+(config.extension||'.mp4'),{headers:{Range:'bytes='+start+'-'+end},cache:'no-store'}).then(function(response){
+   return fetch(requestedMediaUrl,{headers:{Range:'bytes='+start+'-'+end},cache:'no-store'}).then(function(response){
     if(response.status!==206)return null;
     return response.arrayBuffer().then(function(buffer){return new Uint8Array(buffer);});
    });
@@ -106,7 +107,7 @@ function readVideoOrientation(){
    var info=bytes&&parseMovieOrientation(bytes);
    return info||readTail();
   });
- }).then(function(info){if(info){fileOrientation=info;fitVideoToScreen();}}).catch(function(){});
+ }).then(function(info){if(info&&mediaUrl===requestedMediaUrl){fileOrientation=info;fitVideoToScreen();}}).catch(function(){});
 }
 video.addEventListener('loadedmetadata',fitVideoToScreen);
 if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',fitVideoToScreen);
@@ -169,19 +170,30 @@ function command(action){
  else if(action==='fullscreen:exit')exitFullscreen();
  state();
 }
- function openNextLocalVideo(message,target){
-  var attempts=0;
+  var localOpenVersion=0;
+  function openNextLocalVideo(message,target){
+   var attempts=0,version=++localOpenVersion;
   function probe(){
-   if(exiting)return;
+    if(exiting||version!==localOpenVersion)return;
    // no-cors keeps this probe from needing a wildcard CORS grant on the
    // phone's private media server. A network failure rejects; an opaque
    // response still confirms the TV can reach the server.
    fetch(target.href,{method:'HEAD',mode:'no-cors',cache:'no-store'}).then(function(){
-    if(exiting)return;
+     if(exiting||version!==localOpenVersion)return;
     config.sessionId=message.payload.sessionId;config.extension=message.payload.extension;config.after=message.sequence;config.resumeAt=Math.max(0,Number(message.payload.resumeAt)||0);
-    exiting=true;location.replace(target.href+'#'+encodeURIComponent(JSON.stringify(config)));
+     // Keep this document (and its recovery handlers/fullscreen) alive even
+     // when the phone replaces its HTTP server. Never navigate the browser
+     // to a new local receiver between playlist tracks.
+     session=config.sessionId;
+     clearTimeout(networkRetryTimer);clearTimeout(startupRetryTimer);clearTimeout(videoOutputTimer);
+     networkRetryDeadline=0;startupRetryCount=0;playedAtLeastOnce=false;
+     resumePosition=config.resumeAt;fileOrientation=null;problem='';playback='opening';
+     mediaUrl=new URL('./media'+(config.extension||'.mp4'),target.href).href;
+     notice.textContent='Loading the next video from your phone…';
+     video.src=mediaUrl;fitVideoToScreen();readVideoOrientation();
+     video.load();play();state();
    }).catch(function(){
-    if(exiting)return;
+     if(exiting||version!==localOpenVersion)return;
     if(attempts<2){attempts++;setTimeout(probe,250*attempts);return;}
     playback='error';problem='TV_LOCAL_SERVER_UNREACHABLE';
     notice.textContent='The phone video link is temporarily unreachable. Keeping this screen open while FrameCast retries…';
@@ -190,7 +202,7 @@ function command(action){
     // Let the phone start the compatibility path. Returning to its web page
     // keeps large-video failures recoverable instead of leaving Samsung on
     // its browser-owned "server not found" screen.
-    setTimeout(function(){if(!exiting)leave(cursor);},5000);
+     setTimeout(function(){if(!exiting&&version===localOpenVersion)leave(cursor);},5000);
    });
   }
   probe();
@@ -204,9 +216,9 @@ function poll(){
    if(m.from!=='phone')continue;
    if(m.type==='close'){leave(cursor);return;}
    if(m.type==='offer'){leave(m.sequence-1);return;}
-   if(m.type==='local-video'&&m.payload.sessionId!==session){
+    if(m.type==='local-video'&&m.payload.sessionId!==session){
     var next=new URL(m.payload.receiverUrl);
-    if(next.protocol!=='http:'||next.username||next.password||!isPrivate(next.hostname)||!/^\\/[a-z0-9]+\\/receiver[.]html$/.test(next.pathname))continue;
+     if(next.protocol!=='http:'||next.username||next.password||!isPrivate(next.hostname)||!/^\\/[a-z0-9]+\\/receiver[.]html$/.test(next.pathname)||!/^\\.[a-z0-9]{1,8}$/.test(m.payload.extension||'.mp4'))continue;
      openNextLocalVideo(m,next);return;
    }
    if(m.type==='player-command'&&m.payload.sessionId===session&&m.sequence>lastCommand){
@@ -291,7 +303,7 @@ video.onerror=function(){
     : 'The TV could not read the video from your phone. Keep FrameCast open and try again.';
   notice.textContent=problem;state();reveal();
 };
-video.src='./media'+(config.extension||'.mp4');
+video.src=mediaUrl;
 readVideoOrientation();
 video.load();play();setInterval(poll,500);setInterval(state,3000);poll();state();
 })();

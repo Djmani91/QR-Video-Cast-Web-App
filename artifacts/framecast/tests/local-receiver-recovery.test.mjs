@@ -5,7 +5,7 @@ import { LOCAL_RECEIVER_HTML } from '../../framecast-mobile/lib/local-receiver.t
 
 function setup() {
   const start = LOCAL_RECEIVER_HTML.indexOf('var networkRetryDeadline=');
-  const end = LOCAL_RECEIVER_HTML.indexOf("video.src='./media");
+  const end = LOCAL_RECEIVER_HTML.lastIndexOf("video.src=mediaUrl;");
   assert.ok(start >= 0 && end > start, 'exercise the actual local receiver recovery handlers');
   let now = 0;
   let timerId = 0;

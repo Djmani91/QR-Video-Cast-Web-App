@@ -152,10 +152,14 @@ test('preserves playback position when the phone restarts its local video server
   r.timers.get(500)();
   await flush();
   await flush();
-  const nextUrl = new URL(r.location.next);
-  const nextConfig = JSON.parse(decodeURIComponent(nextUrl.hash.slice(1)));
-  assert.equal(nextConfig.resumeAt, 84);
-  assert.equal(nextConfig.sessionId, 'session2');
+  assert.equal(r.location.next, undefined, 'keep the working receiver document open');
+  assert.equal(r.video.src, 'http://192.168.1.46:4040/session2/media.mp4');
+  r.video.listeners.loadedmetadata();
+  assert.equal(r.video.currentTime, 84);
+  const states = r.requests.filter(request => request.method === 'POST')
+    .map(request => JSON.parse(request.body))
+    .filter(request => request.payload?.sessionId === 'session2');
+  assert.ok(states.length > 0, 'acknowledge the replacement session');
 });
 
 test('rotates portrait metadata and sizes it to fit inside the TV screen', async () => {
@@ -282,7 +286,7 @@ test('rejects public hosts disguised as a private address when switching videos'
   assert.equal(r.location.next, undefined);
 });
 
-test('checks a new phone player URL before navigating away from the working receiver', async () => {
+test('checks the replacement server and changes media without navigating the working receiver', async () => {
   const r = receiver();
   await flush();
   r.setMessages([{ sequence: 21, from: 'phone', type: 'local-video', payload: {
@@ -296,8 +300,12 @@ test('checks a new phone player URL before navigating away from the working rece
   const probe = r.requests.find((request) => request.method === 'HEAD' && request.url === 'http://192.168.1.45:45678/abc123/receiver.html');
   assert.equal(probe.url, 'http://192.168.1.45:45678/abc123/receiver.html');
   assert.equal(probe.mode, 'no-cors');
-  assert.equal(r.location.next.includes('session2'), true);
-  assert.equal(new URL(r.location.next).pathname, '/abc123/receiver.html');
+  assert.equal(r.location.next, undefined);
+  assert.equal(r.video.src, 'http://192.168.1.45:45678/abc123/media.mp4');
+  assert.ok(r.requests.some(request => request.method === 'HEAD' && request.url === r.video.src),
+    'orientation metadata is read from the replacement media, not the stopped server');
+  r.video.onerror();
+  assert.equal(r.location.next, undefined, 'a failed media request must not become browser navigation');
 });
 
 test('keeps the current receiver alive and reports a phone-server failure after bounded retries', async () => {
@@ -322,6 +330,27 @@ test('keeps the current receiver alive and reports a phone-server failure after 
     .map((request) => JSON.parse(request.body))
     .find((request) => request.payload.message === 'TV_LOCAL_SERVER_UNREACHABLE');
   assert.equal(report.payload.sessionId, 'session2');
+});
+
+test('several video changes keep one receiver document and acknowledge each new session', async () => {
+  const r = receiver();
+  await flush();
+  for (let i = 2; i <= 4; i++) {
+    r.setMessages([{ sequence: 30 + i, from: 'phone', type: 'local-video', payload: {
+      sessionId: `session${i}`,
+      receiverUrl: `http://192.168.1.45:${45678 + i}/session${i}/receiver.html`,
+      extension: '.mp4',
+    } }]);
+    r.timers.get(500)();
+    await flush();
+    await flush();
+    assert.equal(r.location.next, undefined);
+    assert.equal(r.video.src, `http://192.168.1.45:${45678 + i}/session${i}/media.mp4`);
+    const state = r.requests.filter(request => request.method === 'POST')
+      .map(request => JSON.parse(request.body)).at(-1);
+    assert.equal(state.payload.sessionId, `session${i}`);
+    assert.equal(state.payload.playback, 'opening');
+  }
 });
 
 test('a temporary initial video request failure is retried and can recover', async () => {
