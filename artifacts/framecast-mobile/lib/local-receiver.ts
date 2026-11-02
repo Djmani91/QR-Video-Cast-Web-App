@@ -232,6 +232,10 @@ function poll(){
   for(var i=0;i<messages.length;i++){
    var m=messages[i];if(m.sequence<=cursor)continue;cursor=m.sequence;
    if(m.from!=='phone')continue;
+    if(m.type==='ready'&&m.payload&&m.payload.action==='connection-ping'){
+     post('ready',{action:'connection-pong',sessionId:m.payload.sessionId}).catch(function(){});
+     continue;
+    }
    if(m.type==='close'){leave(cursor,m.payload&&m.payload.action==='disconnect');return;}
    if(m.type==='offer'){leave(m.sequence-1);return;}
     if(m.type==='local-video'&&m.payload.sessionId!==session){

@@ -29,6 +29,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
+import { createTvPresence, TV_CONNECTION_CHECK } from '@/lib/tv-presence';
+import { shouldUnlockExtraMedia } from '@/lib/rewarded-media-policy';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
 import {
   BUFFERED_VIDEO_FALLBACK_MAX_BYTES,
@@ -352,6 +354,9 @@ function FrameCastHomeScreen() {
   const [roomId, setRoomId] = useState('');
   const currentRoomRef = useRef(roomId);
   currentRoomRef.current = roomId;
+  const presenceRef = useRef<ReturnType<typeof createTvPresence> | null>(null);
+  const onTvLostRef = useRef<() => void>(() => undefined);
+  const [tvPresence, setTvPresence] = useState('checking');
   const [backgroundEnabled, setBackgroundEnabled] = useState(false);
   const [analyticsEnabled, setAnalyticsEnabled] = useState(false);
   const backgroundStartedRoomRef = useRef('');
@@ -509,6 +514,7 @@ function FrameCastHomeScreen() {
     sendSignalRef.current(
       { roomId, data: { from: 'phone', type, payload } },
       { onError: () => {
+        if (currentRoomRef.current !== roomId) return;
         setError('The TV connection signal could not be sent. Check both devices are online and try again.');
         setStage(current => current === 'connecting' || current === 'sending' ? 'paired' : current);
       } },
@@ -646,9 +652,43 @@ function FrameCastHomeScreen() {
   }, [roomId, sendSignal, firstPairChoicePending, subscriptionLoading, isPremium]);
 
   useEffect(() => {
+    if (!roomId) return;
+    const presence = createTvPresence();
+    presenceRef.current = presence;
+    const probe = () => {
+      // A suspended free app must not expire its pairing just because JS paused.
+      if (AppState.currentState !== 'active' && !backgroundEnabled) return;
+      const status = presence.status();
+      setTvPresence(status);
+      if (status === 'lost') {
+        onTvLostRef.current();
+        return;
+      }
+      sendSignal('ready', { action: 'connection-ping', sessionId: presence.challenge });
+    };
+    probe();
+    const timer = setInterval(probe, 5_000);
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') { presence.resume(); probe(); }
+    });
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+      if (presenceRef.current === presence) presenceRef.current = null;
+    };
+  }, [roomId, sendSignal, backgroundEnabled]);
+
+  useEffect(() => {
     for (const signal of messages) {
       if (signal.from !== 'tv' || seenMessages.current.has(signal.sequence)) continue;
       seenMessages.current.add(signal.sequence);
+      if (signal.type === 'ready' && signal.payload.action === 'connection-pong') {
+        if (presenceRef.current?.acknowledge(signal.payload.sessionId)) {
+          setTvPresence('online');
+          setError(current => current === TV_CONNECTION_CHECK ? '' : current);
+        }
+        continue;
+      }
       if (signal.type === 'player-state' && signal.payload.sessionId === localSessionRef.current) {
         const state = signal.payload;
         if (state.message === 'TV_LOCAL_RECEIVER_UNSUPPORTED') {
@@ -949,8 +989,8 @@ function FrameCastHomeScreen() {
 
   const showRewardedAdForRoom = async (roomAtPrompt: string) => {
     if (premiumStateRef.current) return 'earned' as const;
-    if (subscriptionLoadingRef.current) return 'unavailable' as const;
-    if (rewardedAdInProgressRef.current) return 'unavailable' as const;
+    if (subscriptionLoadingRef.current) return 'cancelled' as const;
+    if (rewardedAdInProgressRef.current) return 'cancelled' as const;
     rewardedAdInProgressRef.current = true;
     setRewardedAdLoading(true);
     try {
@@ -1190,7 +1230,7 @@ function FrameCastHomeScreen() {
     const mediaLabel = kind === 'image' ? 'photos' : 'videos';
     Alert.alert(
       `Add one more ${singular}`,
-      `One ${singular} is free. Watch a rewarded ad to choose one more ${singular}. After that, Premium is needed for more ${mediaLabel}. This reward applies only to ${mediaLabel}.`,
+      `One ${singular} is free. Watch a rewarded ad to choose one more ${singular}. If no ad is available, that one extra ${singular} is still allowed. After that, Premium is needed for more ${mediaLabel}. This applies only to ${mediaLabel}.`,
       [
         { text: 'Not now', style: 'cancel' },
         {
@@ -1198,12 +1238,13 @@ function FrameCastHomeScreen() {
           onPress: () => {
             void (async () => {
               const result = await showRewardedAdForRoom(roomAtPrompt);
-              if (result === 'earned') {
+              if (shouldUnlockExtraMedia(result)) {
                 const activeRoom = currentRoomRef.current;
-                if (!activeRoom) {
+                if (!activeRoom || activeRoom !== roomAtPrompt) {
                   setError('The TV connection ended before the selection could be unlocked.');
                   return;
                 }
+                setError('');
                 if (kind === 'image') {
                   photoSelectionUnlockRoomRef.current = activeRoom;
                   setPhotoSelectionUnlocked(true);
@@ -1261,6 +1302,12 @@ function FrameCastHomeScreen() {
     requestedQueueIndex?: number,
     forceCompatibilityTransfer = false,
   ) => {
+    const receiverStatus = presenceRef.current?.status();
+    if (!receiverStatus || receiverStatus === 'reconnecting' || receiverStatus === 'lost') {
+      screenStream?.getTracks().forEach(track => track.stop());
+      setError(TV_CONNECTION_CHECK);
+      return;
+    }
     if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
     fullscreenAckTimerRef.current = null;
     setFullscreenNotice('');
@@ -1987,6 +2034,10 @@ function FrameCastHomeScreen() {
     setSentBytes(0);
     setError('');
   };
+  onTvLostRef.current = () => {
+    leaveRoom();
+    setError('The TV is no longer responding. Open FrameCast on the TV and scan its current QR code or enter its code to reconnect.');
+  };
 
   const openAdPrivacyOptions = async () => {
     try {
@@ -2149,7 +2200,7 @@ function FrameCastHomeScreen() {
         if (premiumStateRef.current) return;
         Alert.alert(
           'Keep casting while you use other apps',
-          'Free casting stops when FrameCast is in the background. Premium keeps your TV connected while you use other apps.',
+          'Playback stopped while FrameCast was in the background, but your TV pairing is kept. Resume casting in the app, or get Premium to keep playing while you use other apps.',
           [
             { text: 'Not now', style: 'cancel' },
             { text: 'View Premium', onPress: openPaywall },
@@ -2172,6 +2223,11 @@ function FrameCastHomeScreen() {
   }, [betweenVideoAdStatus, isPremium, pairingAdStatus, rewardedAdLoading, stage, stopFreeCastingForBackground]);
 
   const startScreenMirror = async () => {
+    const receiverStatus = presenceRef.current?.status();
+    if (!receiverStatus || receiverStatus === 'reconnecting' || receiverStatus === 'lost') {
+      setError(TV_CONNECTION_CHECK);
+      return;
+    }
     if (Platform.OS !== 'android' || !roomId) {
       setError('Connect to the TV before starting screen mirroring.');
       return;
@@ -2421,7 +2477,7 @@ function FrameCastHomeScreen() {
           <View style={styles.main}>
             <View style={[styles.connectedBadge, { backgroundColor: activeColors.secondary }]}>
               <View style={[styles.connectedDot, { backgroundColor: stage === 'paired' ? activeColors.accent : activeColors.primary }]} />
-              <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : localPlayback ? videoStreaming ? 'Connected · Playing on TV' : 'Connected · Opening video' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
+              <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{tvPresence !== 'online' ? tvPresence === 'reconnecting' ? 'Reconnecting to TV…' : 'Checking TV connection…' : stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : localPlayback ? videoStreaming ? 'Connected · Playing on TV' : 'Connected · Opening video' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
             </View>
             <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? selectedMedia?.kind === 'video' ? 'Playing on the TV.' : mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
             <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>

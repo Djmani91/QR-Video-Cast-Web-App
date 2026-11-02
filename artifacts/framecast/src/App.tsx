@@ -35,6 +35,7 @@ import { monitorVideoStream, readVideoStats, type StreamHealth } from './lib/vid
 import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/video-playlist';
 import { VideoPlaylist } from './components/VideoPlaylist';
 import { TvCinemaWaitingScreen } from './components/TvCinemaWaitingScreen';
+import { parseSavedTvRoom } from './lib/tv-room-resume';
 import { getYouTubeVideoId } from './lib/youtube';
 import { YouTubePlayer, type YouTubePlayerApi } from '@/components/youtube-player';
 import { BrowserQRCodeReader } from '@zxing/browser';
@@ -79,22 +80,12 @@ function readInitialTvRoom() {
     sessionStorage.removeItem('framecast-tv-resume');
     return null;
   }
-  if (params.get('resume') === '1') {
+  const direct = parseDirectTvRoom(window.location.search);
+  if (direct) return direct;
+  {
     try {
-      const saved = JSON.parse(sessionStorage.getItem('framecast-tv-resume') || 'null') as {
-        id?: unknown;
-        code?: unknown;
-        expiresAt?: unknown;
-      } | null;
-      if (
-        saved
-        && typeof saved.id === 'string'
-        && /^[0-9a-f-]{36}$/i.test(saved.id)
-        && typeof saved.code === 'string'
-        && /^\d{5}$/.test(saved.code)
-        && typeof saved.expiresAt === 'string'
-        && Number.isFinite(Date.parse(saved.expiresAt))
-      ) {
+      const saved = parseSavedTvRoom(sessionStorage.getItem('framecast-tv-resume'));
+      if (saved) {
         return { id: saved.id, code: saved.code, expiresAt: saved.expiresAt };
       }
     } catch {
@@ -512,8 +503,23 @@ function TvPage() {
   createRoomRef.current = createRoomMutation;
   const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(readInitialTvRoom);
   const [launchedFromPhone, setLaunchedFromPhone] = useState(() => parseDirectTvRoom(window.location.search) !== null);
-  const [phonePaired, setPhonePaired] = useState(() =>
-    Boolean(room && new URLSearchParams(window.location.search).get('resume') === '1'));
+  const [phonePaired, setPhonePaired] = useState(() => {
+    try {
+      const saved = parseSavedTvRoom(sessionStorage.getItem('framecast-tv-resume'));
+      return Boolean(room && (new URLSearchParams(window.location.search).get('resume') === '1'
+        || (saved?.id === room.id && saved.paired)));
+    } catch { return false; }
+  });
+  const persistedRoomRef = useRef({ id: '', paired: false, at: 0 });
+  useEffect(() => {
+    if (!room) return;
+    const previous = persistedRoomRef.current;
+    if (previous.id === room.id && previous.paired === phonePaired && Date.now() - previous.at < 60_000) return;
+    try {
+      sessionStorage.setItem('framecast-tv-resume', JSON.stringify({ ...room, paired: phonePaired }));
+      persistedRoomRef.current = { id: room.id, paired: phonePaired, at: Date.now() };
+    } catch { /* Some TV privacy modes disable tab storage; live presence still works. */ }
+  }, [room, phonePaired]);
   const [waitingForPlayback, setWaitingForPlayback] = useState(false);
   const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
@@ -1226,6 +1232,12 @@ function TvPage() {
     for (const signal of messages) {
       if (signal.from !== 'phone' || signal.sequence <= resumeAfterRef.current || seenRef.current.has(signal.sequence)) continue;
       seenRef.current.add(signal.sequence);
+      if (signal.type === 'ready' && signal.payload.action === 'connection-ping') {
+        send('tv', 'ready', { action: 'connection-pong', sessionId: signal.payload.sessionId });
+        setPhonePaired(true);
+        setStatus(current => current === 'idle' ? 'paired' : current);
+        continue;
+      }
       if (signal.type === 'local-video') {
         try {
           const target = new URL(String(signal.payload.receiverUrl));
@@ -2043,6 +2055,17 @@ function TvPage() {
   const reconnect = () => {
     startRoom();
   };
+  const invalidRoomRef = useRef('');
+  useEffect(() => {
+    const queryError = messagesQuery.error;
+    if (!roomId || !queryError || typeof queryError !== 'object'
+      || !('status' in queryError) || queryError.status !== 404
+      || invalidRoomRef.current === roomId) return;
+    // A server restart can discard ephemeral rooms. Do not stay on a dead
+    // restored code; the phone's live check will also require re-pairing.
+    invalidRoomRef.current = roomId;
+    startRoom();
+  }, [roomId, messagesQuery.error]);
   const phoneUrl = room ? `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/send/${encodeURIComponent(room.id)}` : '';
   const roomExpired = Boolean(room && new Date(room.expiresAt).getTime() <= clock);
   const statusCopy = status === 'connected'

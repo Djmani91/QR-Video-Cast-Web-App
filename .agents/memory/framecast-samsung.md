@@ -99,6 +99,12 @@ Do not diagnose Samsung's “This function is not supported” dialog as a fulls
 
 Samsung TV discovery only confirms that the device is present. Open its built-in browser by sending `ms.channel.emit` with `event: ed.apps.launch`, `to: host`, and `data` containing `appId: org.tizen.browser`, `action_type: NATIVE_LAUNCH`, and the target URL in `metaTag`. If remote text entry is needed, Samsung expects `SendInputString` with the text Base64-encoded in `Cmd` and `DataOfCmd: base64`; ordinary key presses do not substitute for that payload.
 
-**Why:** FrameCast 1.1.14 found the TV and established a WebSocket connection but its `KEY_BROWSER`/Ctrl+L sequence and plain-text input command did not open the browser. The maintained Samsung WebSocket implementation launches the browser through `ed.apps.launch`; its text-input command uses Base64 encoding.
+**Why:** Earlier builds found the TV and established a WebSocket connection but the `KEY_BROWSER`/Ctrl+L sequence and plain-text input command did not open the browser. The maintained Samsung WebSocket implementation launches the browser through `ed.apps.launch`; its text-input command uses Base64 encoding.
 
-**How to apply:** This launch sequence is relevant only if the user explicitly asks to restore Samsung discovery. Keep it out of the normal pairing UI, and never report success based only on SSDP discovery, a WebSocket handshake, or sending the request; verify browser opening on the actual TV.
+**How to apply:** Use this sequence only for a user-selected Samsung launch attempt, never to take over TVs merely because an automatic scan found them. Never report success based only on SSDP discovery, a WebSocket handshake, or sending the request; verify the receiver page actually opened.
+
+Local TV discovery must use the physical Wi-Fi network, not the phone's default route, and must not change the whole application's network binding.
+
+**Why:** A phone can be connected to the same Wi-Fi as a TV while mobile data or a VPN owns its default route. An empty scan is therefore not proof that the TV is absent or incompatible.
+
+**How to apply:** Bind discovery UDP and descriptor HTTP to Wi-Fi; use network-scoped DNS-SD where Android supports it. Distinguish network errors from no replies, retain QR/code pairing, and do not promise a device will advertise through guest-network isolation or restrictive VPN/router policies.

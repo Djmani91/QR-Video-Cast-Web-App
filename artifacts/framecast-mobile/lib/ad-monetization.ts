@@ -1,6 +1,8 @@
 import { Platform } from 'react-native';
+import { isRewardedNoFill } from './rewarded-media-policy';
 
 const AD_LOAD_TIMEOUT_MS = 60_000;
+const REWARDED_AD_LOAD_TIMEOUT_MS = 15_000;
 const VIDEO_BREAK_AD_LOAD_TIMEOUT_MS = 15_000;
 const ANDROID_INTERSTITIAL_UNIT_ID = 'ca-app-pub-9928204391830083/9055409035';
 const ANDROID_REWARDED_UNIT_ID = 'ca-app-pub-9928204391830083/2258367710';
@@ -37,7 +39,7 @@ export async function showSelectionRewardedAd(
     const consent = await AdsConsent.gatherConsent();
     if (!consent.canRequestAds) {
       reportIssue('Google ad consent is not complete. You can still use one photo or video; update Advertising privacy choices to unlock more.');
-      return 'unavailable';
+      return 'cancelled';
     }
 
     const adUnitId = __DEV__
@@ -58,6 +60,7 @@ export async function showSelectionRewardedAd(
       let settled = false;
       let earned = false;
       let showStarted = false;
+      let opened = false;
       let timeout: ReturnType<typeof setTimeout> | null = null;
 
       const finish = (result: RewardedAdResult) => {
@@ -69,9 +72,9 @@ export async function showSelectionRewardedAd(
       };
 
       timeout = setTimeout(() => {
-        reportIssue('The rewarded ad took too long to load. Your current selection is unchanged; try again later.');
+        reportIssue('No ad is available right now. You can still add one extra item.');
         finish('unavailable');
-      }, AD_LOAD_TIMEOUT_MS);
+      }, REWARDED_AD_LOAD_TIMEOUT_MS);
 
       subscriptions.push(ad.addAdEventListener(RewardedAdEventType.LOADED, () => {
         if (showStarted || settled) return;
@@ -79,17 +82,23 @@ export async function showSelectionRewardedAd(
           finish('cancelled');
           return;
         }
+        // A load timeout must never unlock media in the middle of a real ad.
+        if (timeout) clearTimeout(timeout);
+        timeout = null;
         showStarted = true;
         void ad.show().catch((error: unknown) => {
           const detail = error instanceof Error ? error.message : '';
           reportIssue(detail
             ? `The rewarded ad could not open: ${detail}`
             : 'The rewarded ad could not open. Your current selection is unchanged.');
-          finish(earned ? 'earned' : 'unavailable');
+          finish(earned ? 'earned' : opened ? 'cancelled' : 'unavailable');
         });
       }));
       subscriptions.push(ad.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => {
         earned = true;
+      }));
+      subscriptions.push(ad.addAdEventListener(AdEventType.OPENED, () => {
+        opened = true;
       }));
       subscriptions.push(ad.addAdEventListener(AdEventType.CLOSED, () => {
         finish(earned ? 'earned' : 'cancelled');
@@ -97,9 +106,7 @@ export async function showSelectionRewardedAd(
       subscriptions.push(ad.addAdEventListener(AdEventType.ERROR, (error) => {
         const errorCode = error.code || error.reason || 'unknown';
         reportIssue(`AdMob could not load or show the rewarded ad (error ${errorCode}). Your current selection is unchanged.`);
-        const noFill = error.phase === 'load'
-          && (error.reason === 'no-fill' || error.reason === 'mediation-no-fill');
-        finish(noFill ? 'no-fill' : 'unavailable');
+        finish(earned ? 'earned' : opened ? 'cancelled' : isRewardedNoFill(error) ? 'no-fill' : 'unavailable');
       }));
 
       try {

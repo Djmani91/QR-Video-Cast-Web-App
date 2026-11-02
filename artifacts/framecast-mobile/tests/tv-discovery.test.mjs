@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildTvRoomUrl } from '../lib/tv-room-url.ts';
 
+test('LAN discovery binds its own sockets to Wi-Fi rather than changing the app network', () => {
+  const native = fs.readFileSync(new URL('../native/android/TvDiscovery.kt', import.meta.url), 'utf8');
+  assert.match(native, /TRANSPORT_WIFI/);
+  assert.match(native, /!caps\.hasTransport\(NetworkCapabilities\.TRANSPORT_VPN\)/);
+  assert.match(native, /wifiNetwork\.bindSocket\(socket\)/);
+  assert.match(native, /socket\.networkInterface = wifiInterface/);
+  assert.match(native, /\.socketFactory\(wifiNetwork\.socketFactory\)/);
+  assert.match(native, /NsdManager\.PROTOCOL_DNS_SD, wifiNetwork/);
+  assert.match(native, /!repeated[\s\S]*repeated = true[\s\S]*search\(\)/);
+  assert.doesNotMatch(native, /bindProcessToNetwork|setProcessDefaultNetwork/);
+});
+
 test('nearby TV launch URL joins the room created by the phone', () => {
   const url = new URL(buildTvRoomUrl({
     id: 'a4acb99b-6291-46dd-a412-6725109f7441',

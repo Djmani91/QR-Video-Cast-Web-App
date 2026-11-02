@@ -13,7 +13,9 @@ The user chose separate rewarded gates for photos and videos. One photo and one 
 
 **Why:** The user first chose one free mirroring minute and one additional rewarded minute, then explicitly required Premium for background use. Since external-app mirroring requires background use, the later Premium-only rule supersedes the earlier mirror reward.
 
-**How to apply:** Track photo and video item allowances independently and reset them on disconnect or a new TV room. Require Premium for screen mirroring and for keeping any cast active while FrameCast is backgrounded; otherwise stop the cast and explain the Premium benefit when the user returns. Rewarded ads only unlock the single additional photo or video after the user completes the ad; closing early, declining consent, or ad errors do not unlock media.
+**How to apply:** Track photo and video item allowances independently and reset them on disconnect or a new TV room. Require Premium for screen mirroring and for keeping any cast active while FrameCast is backgrounded; otherwise stop the media, preserve pairing, and explain the Premium benefit when the user returns. A completed rewarded ad unlocks one additional item. If the user voluntarily requests the ad but inventory is unavailable or the provider fails before showing it, grant that same single extra item as an app courtesy, not a fabricated ad reward. Closing a displayed ad early, declining consent, or cancelling does not unlock media.
+
+**Why for the no-ad exception:** The user explicitly requires that an AdMob high-floor/no-fill or other unavailable-ad response must not block a customer who tried to watch. This exception does not remove the existing two-item free-session cap or unlock Premium/background features.
 
 The user wants Android advertising to use AdMob only and does not want Appodeal.
 

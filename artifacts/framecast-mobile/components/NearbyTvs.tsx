@@ -200,7 +200,7 @@ function NearbyTvsInner({ onPaired }: NearbyTvsProps) {
         <View style={styles.state}>
           <Feather name="tv" size={18} color={colors.mutedForeground} />
           <Text style={[styles.stateText, { color: colors.mutedForeground }]}>
-            No TVs found. Make sure the phone and TV share the same Wi-Fi and the TV is on. {FALLBACK}
+            No TVs replied to this scan. Keep the TV awake and check that both devices use your main Wi-Fi, not an isolated guest network. A VPN or router device-isolation setting can block discovery. This does not mean your TV cannot use FrameCast. {FALLBACK}
           </Text>
         </View>
       ) : (

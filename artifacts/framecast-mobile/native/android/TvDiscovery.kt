@@ -1,12 +1,17 @@
 package __PACKAGE__
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import java.net.DatagramPacket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.net.MulticastSocket
 import java.net.Proxy
 import java.io.ByteArrayOutputStream
@@ -22,6 +27,23 @@ internal object TvDiscovery {
   fun scan(context: Context): List<DiscoveredTv> = scanNearby(context).filter { it.type == "samsung" }
 
   fun scanNearby(context: Context): List<DiscoveredTv> {
+    val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+      ?: throw IllegalStateException("Android could not access Wi-Fi network information.")
+    // A default route can point at mobile data or a VPN even while Wi-Fi is on.
+    // Bind only this scan's sockets, never the application's global network.
+    @Suppress("DEPRECATION")
+    val wifiNetwork = connectivity.allNetworks.firstOrNull { network ->
+      val caps = connectivity.getNetworkCapabilities(network)
+      caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+        !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    } ?: throw IllegalStateException("Connect this phone to Wi-Fi before scanning for TVs.")
+    val links = connectivity.getLinkProperties(wifiNetwork)
+      ?: throw IllegalStateException("The Wi-Fi connection is not ready. Try scanning again.")
+    val localAddress = links.linkAddresses.map { it.address }.firstOrNull {
+      it is Inet4Address && isPrivateIpv4(it.hostAddress ?: "")
+    } ?: throw IllegalStateException("This Wi-Fi has no supported local IPv4 address. Use the TV QR/code instead.")
+    val wifiInterface = links.interfaceName?.let { NetworkInterface.getByName(it) }
+      ?: throw IllegalStateException("The Wi-Fi interface is unavailable. Reconnect Wi-Fi and rescan.")
     val results = ConcurrentHashMap<String, DiscoveredTv>()
     val active = AtomicBoolean(true)
     val resolving = ConcurrentHashMap.newKeySet<String>()
@@ -36,6 +58,7 @@ internal object TvDiscovery {
     val http = OkHttpClient.Builder().connectTimeout(600, TimeUnit.MILLISECONDS)
       .readTimeout(800, TimeUnit.MILLISECONDS).callTimeout(1200, TimeUnit.MILLISECONDS)
       .proxy(Proxy.NO_PROXY)
+      .socketFactory(wifiNetwork.socketFactory)
       .followRedirects(false).followSslRedirects(false).build()
     fun describe(ip: String, response: String) {
       val location = TvDiscoveryProtocol.descriptionUrl(response, ip) ?: return
@@ -113,7 +136,12 @@ internal object TvDiscovery {
           }
         }
         try {
-          nsd?.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+          if (Build.VERSION.SDK_INT >= 33) {
+            nsd?.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, wifiNetwork,
+              java.util.concurrent.Executor { task -> if (active.get()) task.run() }, listener)
+          } else {
+            nsd?.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+          }
           listeners.add(listener)
         } catch (_: Exception) {
           // SSDP remains available if the platform rejects a DNS-SD service.
@@ -121,19 +149,29 @@ internal object TvDiscovery {
       }
       MulticastSocket(null).use { socket ->
         socket.reuseAddress = true
-        socket.bind(InetSocketAddress(0))
+        socket.bind(InetSocketAddress(localAddress, 0))
+        wifiNetwork.bindSocket(socket)
+        socket.networkInterface = wifiInterface
+        socket.timeToLive = 2
         socket.soTimeout = 250
         val group = InetAddress.getByName("239.255.255.250")
-         listOf("ssdp:all", "roku:ecp", "urn:lge-com:service:webos-second-screen:1",
+         val targets = listOf("ssdp:all", "roku:ecp", "urn:lge-com:service:webos-second-screen:1",
            "urn:dial-multiscreen-org:service:dial:1", "urn:samsung.com:device:RemoteControlReceiver:1",
-          "urn:schemas-upnp-org:device:MediaRenderer:1").forEach { target ->
+           "urn:schemas-upnp-org:device:MediaRenderer:1")
+         fun search() { targets.forEach { target ->
           val request = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n" +
-            "MAN: \"ssdp:discover\"\r\nMX: 1\r\nST: $target\r\n\r\n").toByteArray(Charsets.US_ASCII)
+            "MAN: \"ssdp:discover\"\r\nMX: 2\r\nST: $target\r\n\r\n").toByteArray(Charsets.US_ASCII)
           socket.send(DatagramPacket(request, request.size, group, 1900))
-        }
-        val deadline = System.currentTimeMillis() + 4_000
+        } }
+        search()
+        val started = System.nanoTime()
+        var repeated = false
         val buffer = ByteArray(8_192)
-        while (System.currentTimeMillis() < deadline) {
+        while (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 7_000) {
+          if (!repeated && TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) >= 2_500) {
+            repeated = true
+            search()
+          }
           try {
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)

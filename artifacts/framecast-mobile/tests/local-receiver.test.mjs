@@ -267,6 +267,23 @@ test('controls hide after five seconds and return on a remote key', () => {
   assert.equal(r.elements.timer.textContent, '5');
 });
 
+test('local playback answers fresh presence challenges without navigating or restarting media', async () => {
+  const r = receiver();
+  await flush();
+  const loads = r.video.loadCount;
+  r.setMessages([{ sequence: 15, from: 'phone', type: 'ready',
+    payload: { action: 'connection-ping', sessionId: 'fresh-phone-challenge' } }]);
+  r.timers.get(500)();
+  await flush();
+  const replies = r.requests.filter(request => request.method === 'POST')
+    .map(request => JSON.parse(request.body));
+  assert.ok(replies.some(reply => reply.type === 'ready'
+    && reply.payload.action === 'connection-pong'
+    && reply.payload.sessionId === 'fresh-phone-challenge'));
+  assert.equal(r.location.next, undefined);
+  assert.equal(r.video.loadCount, loads);
+});
+
 test('a media-only close returns to the same pairing room without replaying old signals', async () => {
   const r = receiver();
   await flush();
