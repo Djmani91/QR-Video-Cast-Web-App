@@ -12,11 +12,13 @@ const PLAY_SUBSCRIPTIONS_URL = 'https://play.google.com/store/account/subscripti
 
 type GateContextValue = {
   openPaywall: () => void;
+  openExpiredTrialPaywall: () => void;
   openFirstPairChoice: () => void;
   firstPairChoicePending: boolean;
 };
 const GateContext = createContext<GateContextValue>({
   openPaywall: () => undefined,
+  openExpiredTrialPaywall: () => undefined,
   openFirstPairChoice: () => undefined,
   firstPairChoicePending: false,
 });
@@ -38,9 +40,11 @@ function hasThreeDayFreeTrial(pkg: ReturnType<typeof useSubscription>['monthlyPa
 function SubscriptionChoiceScreen({
   onContinueWithAds,
   onPremiumActivated,
+  mode,
 }: {
   onContinueWithAds: () => void;
   onPremiumActivated: () => void;
+  mode: 'offer' | 'expired';
 }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -76,7 +80,9 @@ function SubscriptionChoiceScreen({
       const cancelled = Boolean(purchaseError?.userCancelled)
         || errorCode === String(Purchases.PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR);
       if (cancelled) {
-        setMessage('Purchase cancelled. You can try again or continue with ads.');
+        setMessage(mode === 'expired'
+          ? 'Purchase cancelled. You can try again when you are ready.'
+          : 'Purchase cancelled. You can try again or continue with ads.');
         return;
       }
 
@@ -136,15 +142,19 @@ function SubscriptionChoiceScreen({
         <View style={[styles.trialBadge, { backgroundColor: colors.secondary }]}>
           <Ionicons name="sparkles-outline" size={15} color={colors.primary} />
           <Text style={[styles.badgeText, { color: colors.primary }]}>
-            {trialAvailable ? '3-DAY FREE TRIAL' : 'PREMIUM ACCESS'}
+            {mode === 'expired' ? '30-MINUTE ACCESS USED' : trialAvailable ? '3-DAY FREE TRIAL' : 'PREMIUM ACCESS'}
           </Text>
         </View>
 
-        <Text style={[styles.title, { color: colors.foreground }]}>Choose how to use FrameCast</Text>
+        <Text style={[styles.title, { color: colors.foreground }]}>
+          {mode === 'expired' ? 'Your free casting time is over' : 'Choose how to use FrameCast'}
+        </Text>
         <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-          {trialAvailable
-            ? 'Try Premium free for 3 days, or continue with ads. Cancel before the trial ends to avoid the monthly charge.'
-            : 'Choose Premium for background casting and ad-free access, or continue with ads.'}
+          {mode === 'expired'
+            ? 'Get Premium to keep casting. Your TV stays paired; disconnect whenever you want.'
+            : trialAvailable
+              ? 'Try Premium free for 3 days, or get one 30-minute ad-supported casting session. Cancel before the subscription trial ends to avoid the monthly charge.'
+              : 'Choose Premium for background casting and ad-free access, or start one 30-minute ad-supported casting session.'}
         </Text>
 
         <View style={[styles.planCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -241,17 +251,19 @@ function SubscriptionChoiceScreen({
           </Pressable>
         ) : null}
 
-        <Pressable
-          onPress={onContinueWithAds}
-          accessibilityRole="button"
-          testID="button-continue-with-ads"
-          style={({ pressed }) => [
-            styles.secondaryButton,
-            { borderColor: colors.border, backgroundColor: colors.card, opacity: pressed ? 0.8 : 1 },
-          ]}
-        >
-          <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>Continue with ads</Text>
-        </Pressable>
+        {mode === 'offer' ? (
+          <Pressable
+            onPress={onContinueWithAds}
+            accessibilityRole="button"
+            testID="button-continue-with-ads"
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              { borderColor: colors.border, backgroundColor: colors.card, opacity: pressed ? 0.8 : 1 },
+            ]}
+          >
+            <Text style={[styles.secondaryButtonText, { color: colors.foreground }]}>Continue with ads</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.footerRow}>
           {!purchaseNeedsConfirmation ? (
@@ -279,6 +291,7 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
   const [choice, setChoice] = useState<string | null>(null);
   const [choiceLoaded, setChoiceLoaded] = useState(false);
   const [forcedOpen, setForcedOpen] = useState(false);
+  const [expiredTrialOpen, setExpiredTrialOpen] = useState(false);
   const [firstPairOfferRequested, setFirstPairOfferRequested] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -316,7 +329,16 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
   }, [saving]);
 
   const openPaywall = useCallback(() => {
-    if (!isPremium) setForcedOpen(true);
+    if (!isPremium) {
+      setExpiredTrialOpen(false);
+      setForcedOpen(true);
+    }
+  }, [isPremium]);
+  const openExpiredTrialPaywall = useCallback(() => {
+    if (!isPremium) {
+      setExpiredTrialOpen(true);
+      setForcedOpen(true);
+    }
   }, [isPremium]);
   const openFirstPairChoice = useCallback(() => {
     setFirstPairOfferRequested(true);
@@ -328,8 +350,8 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
     && choice === null
     && firstPairOfferRequested;
   const gateValue = useMemo(
-    () => ({ openPaywall, openFirstPairChoice, firstPairChoicePending }),
-    [openPaywall, openFirstPairChoice, firstPairChoicePending],
+    () => ({ openPaywall, openExpiredTrialPaywall, openFirstPairChoice, firstPairChoicePending }),
+    [openExpiredTrialPaywall, openPaywall, openFirstPairChoice, firstPairChoicePending],
   );
 
   if (Platform.OS !== 'android') return <GateContext.Provider value={gateValue}>{children}</GateContext.Provider>;
@@ -354,6 +376,7 @@ export function SubscriptionChoiceGate({ children }: { children: React.ReactNode
             <SubscriptionChoiceScreen
               onContinueWithAds={() => void saveChoice('ads')}
               onPremiumActivated={() => void saveChoice('premium')}
+              mode={expiredTrialOpen ? 'expired' : 'offer'}
             />
           </View>
         ) : null}

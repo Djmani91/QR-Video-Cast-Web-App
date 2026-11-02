@@ -32,7 +32,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createPairingResume } from '@/lib/pairing-resume';
 import { remuxAndSendMp4 } from '@/lib/mp4-remux';
 import { createTvPresence, TV_CONNECTION_CHECK } from '@/lib/tv-presence';
-import { shouldUnlockExtraMedia } from '@/lib/rewarded-media-policy';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
 import {
   BUFFERED_VIDEO_FALLBACK_MAX_BYTES,
@@ -62,17 +61,19 @@ import {
   manageAdPrivacyOptions,
   showBetweenVideoInterstitialAd,
   showPairingInterstitialAd,
-  showSelectionRewardedAd,
 } from '@/lib/ad-monetization';
 import {
-  getRemainingMediaSelectionSlots,
   getRemainingPremiumMediaSelectionSlots,
   MAX_MEDIA_SELECTION_ITEMS,
-  REWARDED_MEDIA_SELECTION_LIMIT,
 } from '@/lib/media-selection';
 import { CastingBannerAd } from '@/components/CastingBannerAd';
 import { SubscriptionChoiceGate, useSubscriptionChoiceGate } from '@/components/SubscriptionChoiceGate';
 import { useSubscription } from '@/lib/revenuecat';
+import {
+  formatFreeCastingTrialTime,
+  FreeCastingTrialProvider,
+  useFreeCastingTrial,
+} from '@/lib/free-casting-trial';
 import { shouldAttemptBetweenVideoInterstitial, shouldShowPairingInterstitial } from '@/lib/pairing-ad';
 import {
   initializeAppAnalytics,
@@ -331,7 +332,8 @@ function FrameCastHomeScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { isPremium, loading: subscriptionLoading } = useSubscription();
-  const { openPaywall, openFirstPairChoice, firstPairChoicePending } = useSubscriptionChoiceGate();
+  const { openPaywall, openExpiredTrialPaywall, openFirstPairChoice, firstPairChoicePending } = useSubscriptionChoiceGate();
+  const trial = useFreeCastingTrial();
   const queryClient = useQueryClient();
   const lookupRoom = useLookupCastRoomByCode();
   const createTvRoom = useCreateCastRoom();
@@ -356,11 +358,8 @@ function FrameCastHomeScreen() {
   const adOverlayActiveRef = useRef(false);
   const [screenMirrorActive, setScreenMirrorActive] = useState(false);
   const [screenMirrorStarting, setScreenMirrorStarting] = useState(false);
-  const [photoSelectionUnlocked, setPhotoSelectionUnlocked] = useState(false);
-  const [videoSelectionUnlocked, setVideoSelectionUnlocked] = useState(false);
   const [photoSelectionCount, setPhotoSelectionCount] = useState(0);
   const [videoSelectionCount, setVideoSelectionCount] = useState(0);
-  const [rewardedAdLoading, setRewardedAdLoading] = useState(false);
   const screenMirrorStreamRef = useRef<ScreenStreamLike | null>(null);
   const screenAudioChannelRef = useRef<DataChannelLike | null>(null);
   const screenAudioSubscriptionRef = useRef<{ remove(): void } | null>(null);
@@ -407,18 +406,17 @@ function FrameCastHomeScreen() {
   const localRuntimeRecoveryRef = useRef<((resumeAt: number) => void) | null>(null);
   const peerRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mediaQueueRef = useRef<SelectedMedia[]>([]);
-  const photoSelectionUnlockRoomRef = useRef('');
-  const videoSelectionUnlockRoomRef = useRef('');
   const premiumStateRef = useRef(isPremium);
   premiumStateRef.current = isPremium;
   const subscriptionLoadingRef = useRef(subscriptionLoading);
   subscriptionLoadingRef.current = subscriptionLoading;
-  adOverlayActiveRef.current = rewardedAdLoading
-    || pairingAdStatus === 'loading'
+  const trialPaywallShownRef = useRef(false);
+  const hasAdSupportedFeatureAccess = Platform.OS !== 'web' && trial.available;
+  const hasMediaFeatureAccess = isPremium || hasAdSupportedFeatureAccess;
+  adOverlayActiveRef.current = pairingAdStatus === 'loading'
     || betweenVideoAdStatus === 'loading';
   const photoSelectionCountRef = useRef(0);
   const videoSelectionCountRef = useRef(0);
-  const rewardedAdInProgressRef = useRef(false);
   const videoThumbnailRunRef = useRef(0);
   const videoThumbnailUrisRef = useRef(new Set<string>());
   const videoThumbnailInProgressRef = useRef(new Set<string>());
@@ -643,6 +641,32 @@ function FrameCastHomeScreen() {
   }, [roomId, sendSignal, firstPairChoicePending, subscriptionLoading, isPremium]);
 
   useEffect(() => {
+    trial.setSessionConnected(
+      Boolean(roomId && tvPresence === 'online' && !subscriptionLoading && !firstPairChoicePending),
+      isPremium || subscriptionLoading,
+    );
+  }, [firstPairChoicePending, isPremium, roomId, subscriptionLoading, trial.setSessionConnected, tvPresence]);
+
+  useEffect(() => {
+    if (isPremium || !trial.expired) {
+      trialPaywallShownRef.current = false;
+      return;
+    }
+    if (!roomId || tvPresence !== 'online' || trialPaywallShownRef.current) return;
+
+    trialPaywallShownRef.current = true;
+    if (screenMirrorActive) {
+      closePeer();
+      setStage('paired');
+      setTransferNotice('');
+    } else if (stage === 'sent' || stage === 'sending') {
+      sendPlaybackControl('pause');
+    }
+    setError('Your 30 minutes of ad-supported casting are used. Get Premium to keep casting.');
+    openExpiredTrialPaywall();
+  }, [closePeer, isPremium, openExpiredTrialPaywall, roomId, screenMirrorActive, sendSignal, stage, trial.expired, tvPresence]);
+
+  useEffect(() => {
     if (!roomId) return;
     const presence = createTvPresence();
     presenceRef.current = presence;
@@ -812,10 +836,6 @@ function FrameCastHomeScreen() {
           clearVideoThumbnailData();
           setVideoEnded(false);
           setRoomId('');
-          photoSelectionUnlockRoomRef.current = '';
-          videoSelectionUnlockRoomRef.current = '';
-          setPhotoSelectionUnlocked(false);
-          setVideoSelectionUnlocked(false);
           photoSelectionCountRef.current = 0;
           videoSelectionCountRef.current = 0;
           setPhotoSelectionCount(0);
@@ -867,10 +887,6 @@ function FrameCastHomeScreen() {
     lastPairingSaveRef.current = 0;
     setTvPresence('checking');
     setRoomId(id);
-    photoSelectionUnlockRoomRef.current = '';
-    videoSelectionUnlockRoomRef.current = '';
-    setPhotoSelectionUnlocked(false);
-    setVideoSelectionUnlocked(false);
     photoSelectionCountRef.current = 0;
     videoSelectionCountRef.current = 0;
     setPhotoSelectionCount(0);
@@ -950,32 +966,6 @@ function FrameCastHomeScreen() {
     autoSendAfterSelectionRef.current = true;
   };
 
-  const showRewardedAdForRoom = async (roomAtPrompt: string) => {
-    if (premiumStateRef.current) return 'earned' as const;
-    if (subscriptionLoadingRef.current) return 'cancelled' as const;
-    if (rewardedAdInProgressRef.current) return 'cancelled' as const;
-    rewardedAdInProgressRef.current = true;
-    setRewardedAdLoading(true);
-    try {
-      return await showSelectionRewardedAd(
-        () => !premiumStateRef.current
-          && !subscriptionLoadingRef.current
-          && currentRoomRef.current === roomAtPrompt
-          && AppState.currentState === 'active',
-        (message) => {
-          if (
-            currentRoomRef.current === roomAtPrompt
-            && !premiumStateRef.current
-            && !subscriptionLoadingRef.current
-          ) setError(message);
-        },
-      );
-    } finally {
-      rewardedAdInProgressRef.current = false;
-      setRewardedAdLoading(false);
-    }
-  };
-
   const prepareVideoThumbnails = async (queue: SelectedMedia[], generation: number) => {
     if (Platform.OS === 'web') return;
     try {
@@ -1009,32 +999,30 @@ function FrameCastHomeScreen() {
   };
 
   const showPremiumRequiredForMedia = (kind: 'image' | 'video') => {
-    const label = kind === 'image' ? 'photos' : 'videos';
-    Alert.alert(
-      'Get FrameCast Premium',
-      `You have used the free and ad-unlocked ${kind === 'image' ? 'photo' : 'video'}. Buy Premium to choose more ${label}.`,
-      [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'Buy Premium', onPress: () => openPaywall() },
-      ],
-    );
+    if (trial.error) {
+      setError(trial.error);
+      return;
+    }
+    if (!hasMediaFeatureAccess) {
+      setError(`Your free casting time is over. Get Premium to choose more ${kind === 'image' ? 'photos' : 'videos'}.`);
+      openExpiredTrialPaywall();
+      return;
+    }
+    openPaywall();
   };
 
   const pickPhotos = async (append = false) => {
     setError('');
-    const unlocked = photoSelectionUnlockRoomRef.current === currentRoomRef.current;
+    if (trial.error) { setError(trial.error); return; }
+    if (Platform.OS !== 'web' && !isPremium && !trial.available) { showPremiumRequiredForMedia('image'); return; }
     const existingPhotos = append ? mediaQueueRef.current.filter((media) => media.kind === 'image') : [];
     const canAppend = append && existingPhotos.length === mediaQueueRef.current.length;
     const existingCount = canAppend ? existingPhotos.length : 0;
     const selectedThisSession = photoSelectionCountRef.current;
-    const remainingSessionSlots = isPremium
-      ? getRemainingPremiumMediaSelectionSlots(selectedThisSession)
-      : getRemainingMediaSelectionSlots(unlocked, selectedThisSession);
+    const remainingSessionSlots = getRemainingPremiumMediaSelectionSlots(selectedThisSession);
     const selectionLimit = Math.min(remainingSessionSlots, MAX_MEDIA_SELECTION_ITEMS - existingCount);
     if (selectionLimit < 1) {
-      if (isPremium) setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} photos in this TV session.`);
-      else if (unlocked) showPremiumRequiredForMedia('image');
-      else void requestMoreMedia('image');
+      setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} photos in this TV session.`);
       return;
     }
     try {
@@ -1084,19 +1072,16 @@ function FrameCastHomeScreen() {
 
   const pickVideo = async (append = false) => {
     setError('');
-    const unlocked = videoSelectionUnlockRoomRef.current === currentRoomRef.current;
+    if (trial.error) { setError(trial.error); return; }
+    if (Platform.OS !== 'web' && !isPremium && !trial.available) { showPremiumRequiredForMedia('video'); return; }
     const existingVideos = append ? mediaQueueRef.current.filter((media) => media.kind === 'video') : [];
     const canAppend = append && existingVideos.length === mediaQueueRef.current.length;
     const existingCount = canAppend ? existingVideos.length : 0;
     const selectedThisSession = videoSelectionCountRef.current;
-    const remainingSessionSlots = isPremium
-      ? getRemainingPremiumMediaSelectionSlots(selectedThisSession)
-      : getRemainingMediaSelectionSlots(unlocked, selectedThisSession);
+    const remainingSessionSlots = getRemainingPremiumMediaSelectionSlots(selectedThisSession);
     const remainingSlots = Math.min(remainingSessionSlots, MAX_MEDIA_SELECTION_ITEMS - existingCount);
     if (remainingSlots < 1) {
-      if (isPremium) setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} videos in this TV session.`);
-      else if (unlocked) showPremiumRequiredForMedia('video');
-      else void requestMoreMedia('video');
+      setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} videos in this TV session.`);
       return;
     }
     try {
@@ -1149,83 +1134,25 @@ function FrameCastHomeScreen() {
   };
 
   const requestMoreMedia = (kind: 'image' | 'video') => {
-    if (rewardedAdLoading || preparingMedia) return;
+    if (preparingMedia) return;
     const roomAtPrompt = currentRoomRef.current;
     if (!roomAtPrompt) {
       setError('Connect to the TV before adding more media.');
       return;
     }
-    const unlockedRoom = kind === 'image'
-      ? photoSelectionUnlockRoomRef.current
-      : videoSelectionUnlockRoomRef.current;
-    const selectedThisSession = kind === 'image' ? photoSelectionCountRef.current : videoSelectionCountRef.current;
-    if (isPremium) {
-      if (getRemainingPremiumMediaSelectionSlots(selectedThisSession) < 1) {
-        setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${kind === 'image' ? 'photos' : 'videos'} in this TV session.`);
-        return;
-      }
-      if (kind === 'image') void pickPhotos(true);
-      else void pickVideo(true);
-      return;
-    }
-    if (unlockedRoom === roomAtPrompt) {
-      if (getRemainingMediaSelectionSlots(true, selectedThisSession) < 1) {
-        showPremiumRequiredForMedia(kind);
-      } else if (kind === 'image') {
-        void pickPhotos(true);
-      } else {
-        void pickVideo(true);
-      }
-      return;
-    }
-
-    if (getRemainingMediaSelectionSlots(false, selectedThisSession) > 0) {
-      if (kind === 'image') void pickPhotos(true);
-      else void pickVideo(true);
-      return;
-    }
-    if (selectedThisSession >= REWARDED_MEDIA_SELECTION_LIMIT) {
+    if (trial.error) { setError(trial.error); return; }
+    if (Platform.OS !== 'web' && !isPremium && !trial.available) {
       showPremiumRequiredForMedia(kind);
       return;
     }
-
-    const singular = kind === 'image' ? 'photo' : 'video';
-    const mediaLabel = kind === 'image' ? 'photos' : 'videos';
-    Alert.alert(
-      `Add one more ${singular}`,
-      `One ${singular} is free. Watch a rewarded ad to choose one more ${singular}. If no ad is available, that one extra ${singular} is still allowed. After that, Premium is needed for more ${mediaLabel}. This applies only to ${mediaLabel}.`,
-      [
-        { text: 'Not now', style: 'cancel' },
-        {
-          text: 'Watch ad',
-          onPress: () => {
-            void (async () => {
-              const result = await showRewardedAdForRoom(roomAtPrompt);
-              if (shouldUnlockExtraMedia(result)) {
-                const activeRoom = currentRoomRef.current;
-                if (!activeRoom || activeRoom !== roomAtPrompt) {
-                  setError('The TV connection ended before the selection could be unlocked.');
-                  return;
-                }
-                setError('');
-                if (kind === 'image') {
-                  photoSelectionUnlockRoomRef.current = activeRoom;
-                  setPhotoSelectionUnlocked(true);
-                  await pickPhotos(true);
-                } else {
-                  videoSelectionUnlockRoomRef.current = activeRoom;
-                  setVideoSelectionUnlocked(true);
-                  await pickVideo(true);
-                }
-              } else if (result === 'cancelled' && currentRoomRef.current) {
-                setError(`The ad was not completed. Your selected ${singular} is still available.`);
-              }
-            })();
-          },
-        },
-        { text: 'Buy Premium', onPress: () => openPaywall() },
-      ],
-    );
+    const selectedThisSession = kind === 'image' ? photoSelectionCountRef.current : videoSelectionCountRef.current;
+    if (getRemainingPremiumMediaSelectionSlots(selectedThisSession) < 1) {
+      setError(`You can choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${kind === 'image' ? 'photos' : 'videos'} in this TV session.`);
+      return;
+    }
+    if (currentRoomRef.current !== roomAtPrompt) return;
+    if (kind === 'image') void pickPhotos(true);
+    else void pickVideo(true);
   };
 
   const castVideoLink = async () => {
@@ -1265,6 +1192,17 @@ function FrameCastHomeScreen() {
     requestedQueueIndex?: number,
     forceCompatibilityTransfer = false,
   ) => {
+    if (!isPremium && Platform.OS !== 'web' && trial.error) {
+      screenStream?.getTracks().forEach(track => track.stop());
+      setError(trial.error);
+      return;
+    }
+    if (!isPremium && Platform.OS !== 'web' && !trial.available) {
+      screenStream?.getTracks().forEach(track => track.stop());
+      if (trial.loaded) openExpiredTrialPaywall();
+      else setError('Preparing your free casting time. Try again in a moment.');
+      return;
+    }
     const receiverStatus = presenceRef.current?.status();
     if (!receiverStatus || receiverStatus === 'reconnecting' || receiverStatus === 'lost') {
       screenStream?.getTracks().forEach(track => track.stop());
@@ -1823,6 +1761,10 @@ function FrameCastHomeScreen() {
   }, [roomId, preparingMedia, selectedMedia]);
 
   const sendPlaybackControl = (action: string) => {
+    if (!isPremium && Platform.OS !== 'web' && trial.expired && action !== 'pause') {
+      openExpiredTrialPaywall();
+      return;
+    }
     if (action === 'video:fullscreen') {
       if (fullscreenAckTimerRef.current) clearTimeout(fullscreenAckTimerRef.current);
       setFullscreenNotice('Requesting full screen on the TV…');
@@ -1852,6 +1794,10 @@ function FrameCastHomeScreen() {
   };
 
   const showQueuePhoto = (index: number) => {
+    if (!isPremium && Platform.OS !== 'web' && !trial.available) {
+      openExpiredTrialPaywall();
+      return;
+    }
     if (index < 0 || index >= sentQueueCount) return;
     queueIndexRef.current = index;
     setQueueIndex(index);
@@ -1860,6 +1806,10 @@ function FrameCastHomeScreen() {
   };
 
   const playQueuedItem = (index: number) => {
+    if (!isPremium && Platform.OS !== 'web' && !trial.available) {
+      openExpiredTrialPaywall();
+      return;
+    }
     const item = mediaQueueRef.current[index];
     if (!item || preparingMedia || (item.kind === 'video' && (stage === 'connecting' || stage === 'sending'))) return;
     if (item.kind === 'image' && stage === 'sending' && index >= sentQueueCount) return;
@@ -1981,10 +1931,6 @@ function FrameCastHomeScreen() {
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     setRoomId('');
-    photoSelectionUnlockRoomRef.current = '';
-    videoSelectionUnlockRoomRef.current = '';
-    setPhotoSelectionUnlocked(false);
-    setVideoSelectionUnlocked(false);
     photoSelectionCountRef.current = 0;
     videoSelectionCountRef.current = 0;
     setPhotoSelectionCount(0);
@@ -2188,7 +2134,7 @@ function FrameCastHomeScreen() {
     ) {
       stopFreeCastingForBackground();
     }
-  }, [betweenVideoAdStatus, isPremium, pairingAdStatus, rewardedAdLoading, stage, stopFreeCastingForBackground]);
+  }, [betweenVideoAdStatus, isPremium, pairingAdStatus, stage, stopFreeCastingForBackground]);
 
   const startScreenMirror = async () => {
     const receiverStatus = presenceRef.current?.status();
@@ -2251,13 +2197,16 @@ function FrameCastHomeScreen() {
       return;
     }
     if (screenMirrorStarting || screenMirrorActive) return;
-    if (!isPremium) {
+    if (!isPremium && !trial.available) {
+      if (trial.error) { setError(trial.error); return; }
       Alert.alert(
-        'Screen mirroring needs Premium',
-        'Mirroring another app requires FrameCast to run in the background. Free casting stops when FrameCast is not open.',
+        trial.expired ? 'Your free casting time is over' : 'Screen mirroring needs Premium',
+        trial.expired
+          ? 'Your 30-minute ad-supported access has ended. Get Premium to keep casting.'
+          : 'Your 30-minute ad-supported access is available while FrameCast stays open. Premium lets you keep casting while using other apps.',
         [
           { text: 'Not now', style: 'cancel' },
-          { text: 'View Premium', onPress: openPaywall },
+          { text: 'View Premium', onPress: trial.expired ? openExpiredTrialPaywall : openPaywall },
         ],
       );
       return;
@@ -2276,27 +2225,18 @@ function FrameCastHomeScreen() {
   const progress = totalBytes ? Math.min(100, Math.round((sentBytes / totalBytes) * 100)) : 0;
   const activeColors = colors;
   const mediaSelectionTitle = (kind: 'image' | 'video') => {
-    const noun = kind === 'image' ? 'photo' : 'video';
     const plural = kind === 'image' ? 'photos' : 'videos';
-    const count = kind === 'image' ? photoSelectionCount : videoSelectionCount;
-    const rewardAvailable = kind === 'image' ? photoSelectionUnlocked : videoSelectionUnlocked;
     if (preparingMedia) return 'Preparing media on this phone…';
-    if (rewardedAdLoading) return 'Loading rewarded ad…';
-    if (isPremium) return `Choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${plural}`;
-    if (count >= REWARDED_MEDIA_SELECTION_LIMIT) return `Get Premium for more ${plural}`;
-    if (count === 1 && rewardAvailable) return `Choose one more ${noun}`;
-    if (count === 1) return `Add one more ${noun}`;
-    return `Choose one ${noun} free`;
+    if (!isPremium && !hasMediaFeatureAccess) return `Get Premium for ${plural}`;
+    return `Choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${plural}`;
   };
   const mediaSelectionSubtitle = (kind: 'image' | 'video') => {
     const plural = kind === 'image' ? 'photos' : 'videos';
-    const count = kind === 'image' ? photoSelectionCount : videoSelectionCount;
-    const rewardAvailable = kind === 'image' ? photoSelectionUnlocked : videoSelectionUnlocked;
     if (preparingMedia) return 'Keeping temporary access so the transfer can finish';
     if (isPremium) return `Premium lets you choose up to ${MAX_MEDIA_SELECTION_ITEMS} ${plural} per TV session`;
-    if (count >= REWARDED_MEDIA_SELECTION_LIMIT) return 'Buy Premium to choose more';
-    if (count === 1 && rewardAvailable) return 'Your one ad-unlocked selection is ready';
-    return 'One is free; watch an ad for one more. Premium unlocks more.';
+    if (trial.error) return 'Free access could not be saved. Reopen FrameCast and try again.';
+    if (!trial.available) return 'Your 30-minute free access has ended. Get Premium to continue.';
+    return 'One 30-minute ad-supported session includes up to 20 items.';
   };
 
   if (videoBrowserOpen && Platform.OS === 'android') {
@@ -2437,6 +2377,22 @@ function FrameCastHomeScreen() {
               <View style={[styles.connectedDot, { backgroundColor: stage === 'paired' ? activeColors.accent : activeColors.primary }]} />
               <Text style={[styles.connectedBadgeText, { color: activeColors.foreground }]}>{tvPresence !== 'online' ? tvPresence === 'reconnecting' ? 'Reconnecting to TV…' : 'Checking TV connection…' : stage === 'paired' ? 'TV paired' : stage === 'connecting' ? 'Connecting directly' : localPlayback ? videoStreaming ? 'Connected · Playing on TV' : 'Connected · Opening video' : stage === 'sending' ? 'Sending to TV' : 'Sent to TV'}</Text>
             </View>
+            {!isPremium && trial.hasStarted && trial.remainingMs > 0 && Platform.OS !== 'web' ? (
+              <View style={[styles.trialTimerCard, { backgroundColor: activeColors.secondary, borderColor: activeColors.border }]} testID="free-trial-countdown">
+                <Ionicons name="time-outline" size={19} color={activeColors.primary} />
+                <View style={styles.trialTimerCopy}>
+                  <Text style={[styles.trialTimerTitle, { color: activeColors.foreground }]}>
+                    Ad-supported access · {formatFreeCastingTrialTime(trial.remainingMs)} left
+                  </Text>
+                  <Text style={[styles.trialTimerSubtitle, { color: activeColors.mutedForeground }]}>
+                    Up to 20 photos or videos. Time counts while connected and FrameCast is open.
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+            {trial.error && !isPremium ? (
+              <Text style={[styles.errorText, { color: activeColors.destructive }]} accessibilityRole="alert">{trial.error}</Text>
+            ) : null}
             <Text style={[styles.title, { color: activeColors.foreground }]}>{stage === 'sent' ? selectedMedia?.kind === 'video' ? 'Playing on the TV.' : mediaQueue.length > 1 ? 'Your photos are on the TV.' : 'It’s on the TV.' : 'Choose what to play.'}</Text>
             <Text style={[styles.subtitle, { color: activeColors.mutedForeground }]}>
               {stage === 'sent'
@@ -2488,7 +2444,9 @@ function FrameCastHomeScreen() {
                 <Text style={[styles.urlHelp, { color: activeColors.mutedForeground }]}>
                   {isPremium
                     ? 'Premium lets you mirror other apps while FrameCast runs in the background.'
-                    : 'Screen mirroring needs Premium because FrameCast must stay active while another app is on screen.'}
+                    : trial.available
+                      ? 'Screen mirroring is included in your 30-minute ad-supported access while FrameCast stays open. Premium is needed for background casting.'
+                      : 'Your 30-minute ad-supported access has ended. Get Premium to mirror your screen.'}
                 </Text>
                 {screenMirrorActive ? (
                   <>
@@ -2514,7 +2472,7 @@ function FrameCastHomeScreen() {
                   >
                     <Ionicons name="phone-portrait-outline" size={20} color={activeColors.primaryForeground} />
                     <Text style={[styles.primaryButtonText, { color: activeColors.primaryForeground }]}>
-                      {screenMirrorStarting ? 'Waiting for permission…' : !roomId ? 'Connect to the TV first' : isPremium ? 'Start screen mirroring' : 'View Premium to mirror'}
+                      {screenMirrorStarting ? 'Waiting for permission…' : !roomId ? 'Connect to the TV first' : isPremium || trial.available ? 'Start screen mirroring' : 'View Premium to mirror'}
                     </Text>
                   </Pressable>
                 )}
@@ -2530,10 +2488,10 @@ function FrameCastHomeScreen() {
                   ? videoStreaming && !paused && !videoEnded ? 'Playing' : stage === 'sending' ? 'Starting' : 'Ready'
                   : stage === 'sending' ? 'Sending' : 'Ready'}
                 canAdd={stage !== 'sending' && stage !== 'connecting' && mediaQueue.length < MAX_MEDIA_SELECTION_ITEMS}
-                bulkSelectionUnlocked={isPremium}
+                bulkSelectionUnlocked={isPremium || trial.available}
                 adsEnabled={!isPremium && !subscriptionLoading}
-                addBusy={rewardedAdLoading || preparingMedia}
-                canControlVideo={stage === 'sent' || videoStreaming || localPlayback}
+                addBusy={preparingMedia}
+                canControlVideo={!trial.expired && (stage === 'sent' || videoStreaming || localPlayback)}
                 canSelectItem={(index) => mediaQueue[index]?.kind === 'video' || stage !== 'sending' || index < sentQueueCount}
                 colors={{
                   background: activeColors.background,
@@ -2573,7 +2531,7 @@ function FrameCastHomeScreen() {
             ) : (
                 <Pressable
                   onPress={() => void pickVideo()}
-                  disabled={preparingMedia || rewardedAdLoading}
+                  disabled={preparingMedia}
                   style={({ pressed }) => [styles.chooseButton, { backgroundColor: activeColors.card, borderColor: activeColors.border, opacity: pressed ? 0.82 : 1 }]}
                   testID="button-choose-video"
                 >

@@ -11,9 +11,9 @@ import { useSubscriptionChoiceGate } from './SubscriptionChoiceGate';
 import { CastingBannerAd } from './CastingBannerAd';
 import { connectDirect, controlDirect, directMediaMime, disconnectDirect, loadDirect, statusDirect, type DirectStatus, type DirectTarget } from '@/lib/direct-cast';
 import { startLocalStream, stopLocalStream } from '@/lib/local-stream';
-import { showSelectionRewardedAd } from '@/lib/ad-monetization';
-import { shouldUnlockExtraMedia } from '@/lib/rewarded-media-policy';
 import { onBackgroundControl, startBackgroundCasting, stopBackgroundCasting, updateBackgroundCasting } from '@/lib/background-casting';
+import { MAX_MEDIA_SELECTION_ITEMS } from '@/lib/media-selection';
+import { formatFreeCastingTrialTime, useFreeCastingTrial } from '@/lib/free-casting-trial';
 
 type Item = { uri: string; name: string; mime: string; kind: 'image' | 'video'; temporary: boolean };
 type Props = { target: DirectTarget; onClose(): void };
@@ -25,7 +25,8 @@ const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.flo
 export default function DirectCastPanel({ target, onClose }: Props) {
   const colors = useColors();
   const { isPremium, loading: subscriptionLoading } = useSubscription();
-  const { openPaywall, openFirstPairChoice } = useSubscriptionChoiceGate();
+  const { openPaywall, openExpiredTrialPaywall, openFirstPairChoice, firstPairChoicePending } = useSubscriptionChoiceGate();
+  const trial = useFreeCastingTrial();
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState(`Connecting to ${target.name}…`);
@@ -40,12 +41,10 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   const busyRef = useRef(true);
   const premiumRef = useRef(isPremium);
   const loadingRef = useRef(subscriptionLoading);
-  const adRef = useRef(false);
   const connectedRef = useRef(false);
   const queueRef = useRef<Item[]>([]);
   const indexRef = useRef(-1);
   const countRef = useRef({ image: 0, video: 0 });
-  const unlockedRef = useRef({ image: false, video: false });
   const temporaryFiles = useRef(new Set<string>());
   const playedRef = useRef(false);
   const pausedForBackground = useRef(false);
@@ -55,6 +54,20 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   const operations = useRef(Promise.resolve());
   premiumRef.current = isPremium;
   loadingRef.current = subscriptionLoading;
+
+  useEffect(() => {
+    trial.setSessionConnected(
+      connected && !firstPairChoicePending && !subscriptionLoading,
+      isPremium || subscriptionLoading,
+    );
+  }, [connected, firstPairChoicePending, isPremium, subscriptionLoading, trial.setSessionConnected]);
+
+  useEffect(() => {
+    if (!connected || isPremium || !trial.expired) return;
+    void ordered(() => controlDirect('pause')).catch(() => undefined);
+    setMessage('Your 30 minutes of ad-supported casting are used. Get Premium to keep casting.');
+    openExpiredTrialPaywall();
+  }, [connected, isPremium, openExpiredTrialPaywall, trial.expired]);
 
   // One ordered native/media operation at a time, including disconnect cleanup.
   const ordered = <T,>(operation: () => Promise<T>): Promise<T> => {
@@ -270,31 +283,13 @@ export default function DirectCastPanel({ target, onClose }: Props) {
 
   const allowance = async (kind: 'image' | 'video') => {
     if (loadingRef.current) throw new Error('Please wait while your Premium status is checked.');
+    if (trial.error) throw new Error(trial.error);
     const count = countRef.current[kind];
-    if (premiumRef.current) return Math.max(0, 20 - count);
-    if (count === 0) return 1;
-    if (count >= 2) { openPaywall(); return 0; }
-    if (unlockedRef.current[kind]) return 1;
-    const choice = await new Promise<'ad' | 'premium' | 'cancel'>(resolve => Alert.alert(
-      'Add one more',
-      'Watch an ad for one extra item, or get Premium for up to 20 photos and 20 videos plus background casting. If no ad is available, you can still add that extra item.',
-      [
-        { text: 'Cancel', style: 'cancel', onPress: () => resolve('cancel') },
-        { text: 'Watch ad', onPress: () => resolve('ad') },
-        { text: 'Buy Premium', onPress: () => resolve('premium') },
-      ], { cancelable: true, onDismiss: () => resolve('cancel') },
-    ));
-    if (choice === 'premium') { openPaywall(); return 0; }
-    if (choice !== 'ad') return 0;
-    adRef.current = true;
-    try {
-      const result = await showSelectionRewardedAd(
-        () => live.current && connectedRef.current && !premiumRef.current,
-        text => { if (live.current) setMessage(text); },
-      );
-      if (shouldUnlockExtraMedia(result)) { unlockedRef.current[kind] = true; return 1; }
+    if (!premiumRef.current && !trial.available) {
+      openExpiredTrialPaywall();
       return 0;
-    } finally { adRef.current = false; }
+    }
+    return Math.max(0, MAX_MEDIA_SELECTION_ITEMS - count);
   };
 
   const choose = async (kind: 'image' | 'video') => {
