@@ -10,6 +10,17 @@ export type NearbySamsungTv = {
 };
 
 export type NearbyTv = NearbySamsungTv & { type: 'samsung' | 'chromecast' | 'firetv' | 'webos' | 'roku' | 'dlna' | 'appletv'; rendererId?: string };
+export type NearbyTvAction = 'samsung-browser' | 'direct-media' | 'instructions';
+
+/**
+ * Samsung TVs may advertise both their browser remote and a DLNA renderer.
+ * The selected action must favor the browser because DLNA does not open the
+ * FrameCast TV page. Other devices may use an explicitly discovered renderer.
+ */
+export function getNearbyTvAction(tv: NearbyTv, hasDirectReceiver: boolean): NearbyTvAction {
+  if (tv.type === 'samsung') return 'samsung-browser';
+  return hasDirectReceiver ? 'direct-media' : 'instructions';
+}
 
 type FrameCastTvDiscoveryModule = {
   discoverNearbyTvs?: () => Promise<NearbyTv[]>;

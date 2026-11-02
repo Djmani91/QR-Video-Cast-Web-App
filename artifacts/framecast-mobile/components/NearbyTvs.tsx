@@ -7,6 +7,7 @@ import { getDirectTarget, type DirectTarget } from '@/lib/direct-cast';
 import {
   connectSamsungTv,
   discoverNearbyTvs,
+  getNearbyTvAction,
   nearbyDiscoveryAvailable,
   type NearbyTv,
 } from '@/lib/tv-discovery';
@@ -222,15 +223,16 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
                 testID={`nearby-tv-${key}`}
                 accessibilityRole="button"
                 accessibilityLabel={`${tv.name}, ${TYPE_LABEL[tv.type]}${tv.model ? `, ${tv.model}` : ''}`}
-                accessibilityHint={tv.type === 'samsung' ? 'Starts opening FrameCast on this TV' : 'Shows why this TV cannot be connected automatically'}
+                accessibilityHint={tv.type === 'samsung' ? 'Tries to open FrameCast in the Samsung TV browser' : getDirectTarget(tv) ? 'Opens direct media controls; the TV browser does not open' : 'Shows why this TV cannot be connected automatically'}
                 accessibilityState={{ selected: isSel, disabled: busy, busy: isConn }}
                 disabled={busy}
                 onPress={() => {
                   setSelected(key);
                   setConnectError(null);
                   const direct = getDirectTarget(tv);
-                  if (direct && onDirectTarget) onDirectTarget(direct);
-                  else if (tv.type === 'samsung') startSamsung(tv);
+                  const action = getNearbyTvAction(tv, Boolean(direct && onDirectTarget));
+                  if (action === 'samsung-browser') startSamsung(tv);
+                  else if (action === 'direct-media' && direct && onDirectTarget) onDirectTarget(direct);
                 }}
                 style={({ pressed }) => [
                   styles.row,
@@ -249,7 +251,11 @@ function NearbyTvsInner({ onPaired, onDirectTarget, scanRequest = 0 }: NearbyTvs
                   <Text numberOfLines={1} style={[styles.name, { color: colors.foreground }]}>{tv.name}</Text>
                   <Text numberOfLines={1} style={[styles.meta, { color: colors.mutedForeground }]}>
                     {TYPE_LABEL[tv.type]}{tv.model ? ` · ${tv.model}` : ''}
-                    {getDirectTarget(tv) ? ' · direct playback' : tv.type !== 'samsung' ? ' · detected only' : ''}
+                    {tv.type === 'samsung'
+                      ? ' · open TV browser'
+                      : getDirectTarget(tv)
+                        ? ' · direct media'
+                        : ' · detected only'}
                   </Text>
                 </View>
                 {isConn ? <ActivityIndicator color={colors.primary} /> : <Feather name="chevron-right" size={18} color={colors.mutedForeground} />}

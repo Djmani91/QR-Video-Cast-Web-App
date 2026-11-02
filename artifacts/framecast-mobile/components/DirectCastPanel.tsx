@@ -116,7 +116,9 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         if (!live.current || closingRef.current) return;
         connectedRef.current = true;
         setConnected(true);
-        setMessage('Receiver connected. Choose a photo or video to play.');
+        setMessage(target.protocol === 'dlna'
+          ? 'DLNA media receiver ready. The TV browser will not open; start media below to show it on the TV.'
+          : 'Receiver connected. Choose a photo or video to play.');
         openFirstPairChoice();
       } catch (e) {
         if (live.current) { setError(detail(e)); setMessage('Could not connect to the receiver.'); }
@@ -406,7 +408,11 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         {trial.error && !isPremium ? <Text style={[styles.text, { color: colors.foreground }]} accessibilityRole="alert">{trial.error}</Text> : null}
         {!!error && <Text style={[styles.text, { color: colors.foreground }]} accessibilityLiveRegion="assertive">{error}</Text>}
         {connected && <>
-          <Text style={[styles.text, { color: colors.mutedForeground }]}>Media goes directly from your phone or original source to this receiver. No TV browser code is needed. The receiver decides which formats it can play.</Text>
+        <Text style={[styles.text, { color: colors.mutedForeground }]}>
+          {target.protocol === 'dlna'
+            ? 'This controls the TV’s DLNA media player; it does not open FrameCast in the TV browser. The TV may stay on its current screen until you start a photo or video. Media goes directly from your phone to the receiver.'
+            : 'Media goes directly from your phone or original source to this receiver. No TV browser code is needed. The receiver decides which formats it can play.'}
+        </Text>
           <View style={styles.row}>
             {button('Photos', () => void choose('image'), false)}
             {button('Videos', () => void choose('video'), true)}

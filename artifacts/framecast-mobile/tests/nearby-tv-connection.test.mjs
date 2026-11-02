@@ -59,6 +59,13 @@ test('expanded scan retains TV platforms and rejects unknown or public-IP device
   assert.deepEqual(Array.from(found, tv => tv.type), types);
 });
 
+test('Samsung browser launch takes priority over an advertised DLNA renderer', () => {
+  const { discovery } = load();
+  assert.equal(discovery.getNearbyTvAction({ ...samsung, rendererId: 'dlna-renderer' }, true), 'samsung-browser');
+  assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv' }, true), 'direct-media');
+  assert.equal(discovery.getNearbyTvAction({ ...samsung, type: 'firetv' }, false), 'instructions');
+});
+
 test('discovery rejects malformed/public entries and deduplicates by protocol and IP', async () => {
   const { discovery } = load({ native: { discoverNearbyTvs: async () => [
     samsung, samsung, { ...samsung, type: 'chromecast' },

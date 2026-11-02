@@ -126,3 +126,9 @@ TV discovery must be checked against Android's release network-security policy, 
 **Why:** Debug networking can permit HTTP while a target-SDK release blocks it, leaving a scan with many LAN replies but no readable descriptions. Protocol-parser tests cannot catch that difference.
 
 **How to apply:** Verify the release merged manifest permits the required local protocol. Keep discovery HTTP restricted in code to the advertising private peer, without redirects or credentials, and keep cloud traffic HTTPS. Do not interpret unread descriptions as proof that no TV advertised.
+
+When a discovered Samsung TV also exposes a DLNA renderer, tapping it must prioritize opening the FrameCast page in the TV browser rather than opening DLNA controls.
+
+**Why:** DLNA can acknowledge a media-control connection while leaving the TV's current screen unchanged; that looked like a successful browser connection but never opened FrameCast.
+
+**How to apply:** Select the Samsung browser-launch route by verified Samsung type even when a renderer ID is present. Reserve DLNA direct playback for other explicitly compatible devices, and label that mode as media control rather than browser pairing.
