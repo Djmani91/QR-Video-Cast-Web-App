@@ -27,6 +27,28 @@ import okhttp3.Request
 internal object TvDiscovery {
   fun scan(context: Context): List<DiscoveredTv> = scanNearby(context).filter { it.type == "samsung" }
 
+  /**
+   * Return the address on the physical Wi-Fi network, never whichever
+   * interface Android happens to enumerate first (VPN, mobile data, etc.).
+   * The phone media server must advertise the same reachable interface used
+   * for TV discovery.
+   */
+  fun wifiLocalIpv4Address(context: Context): String {
+    val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+      ?: throw IllegalStateException("Android could not access Wi-Fi network information.")
+    @Suppress("DEPRECATION")
+    val wifiNetwork = connectivity.allNetworks.firstOrNull { network ->
+      val caps = connectivity.getNetworkCapabilities(network)
+      caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true &&
+        !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    } ?: throw IllegalStateException("Connect this phone to your home Wi-Fi before playing on the TV.")
+    val links = connectivity.getLinkProperties(wifiNetwork)
+      ?: throw IllegalStateException("The Wi-Fi connection is not ready. Try again.")
+    return links.linkAddresses.map { it.address }.firstOrNull {
+      it is Inet4Address && isPrivateIpv4(it.hostAddress ?: "")
+    }?.hostAddress ?: throw IllegalStateException("This Wi-Fi has no supported local IPv4 address. Connect both devices to your home Wi-Fi and try again.")
+  }
+
   fun scanNearby(context: Context): List<DiscoveredTv> {
     val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
       ?: throw IllegalStateException("Android could not access Wi-Fi network information.")

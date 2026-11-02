@@ -47,6 +47,20 @@ test('LAN discovery binds its own sockets to Wi-Fi rather than changing the app 
   assert.doesNotMatch(native, /bindProcessToNetwork|setProcessDefaultNetwork/);
 });
 
+test('local media server binds to the same physical Wi-Fi address used for TV discovery', () => {
+  const native = fs.readFileSync(new URL('../native/android/TvDiscovery.kt', import.meta.url), 'utf8');
+  assert.match(native, /fun wifiLocalIpv4Address\(context: Context\): String/);
+  assert.match(native, /TRANSPORT_WIFI/);
+  assert.match(native, /wifiNetwork\.getLinkProperties|connectivity\.getLinkProperties\(wifiNetwork\)/);
+  assert.match(native, /!caps\.hasTransport\(NetworkCapabilities\.TRANSPORT_VPN\)/);
+  const module = fs.readFileSync(new URL('../native/android/BackgroundCastingModule.kt', import.meta.url), 'utf8');
+  assert.match(module, /fun getWifiLocalIpv4Address\(promise: Promise\)/);
+  assert.match(module, /TvDiscovery\.wifiLocalIpv4Address\(reactApplicationContext\)/);
+  const client = fs.readFileSync(new URL('../lib/local-stream.ts', import.meta.url), 'utf8');
+  assert.match(client, /getWifiLocalIpv4Address\(\)/);
+  assert.match(client, /new Server\(\{[\s\S]*?\.\.\.\(hostname \? \{ hostname \} : \{\}\)/);
+});
+
 test('nearby TV launch URL joins the room created by the phone', () => {
   const url = new URL(buildTvRoomUrl({
     id: 'a4acb99b-6291-46dd-a412-6725109f7441',

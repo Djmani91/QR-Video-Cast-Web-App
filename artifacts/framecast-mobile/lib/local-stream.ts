@@ -2,6 +2,8 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { LOCAL_RECEIVER_HTML } from './local-receiver';
 import { localServerConfig } from './local-server-config';
 import { LatestOperationQueue, SupersededOperationError } from './latest-operation-queue';
+import { Platform } from 'react-native';
+import { getWifiLocalIpv4Address } from './tv-discovery';
 
 type RunningStream = {
   sessionId: string;
@@ -36,6 +38,10 @@ export async function startLocalStream(uri: string, name: string, googleCast = f
   return lifecycle.run(version, async () => {
     await stopActiveStream();
     if (!lifecycle.isCurrent(version)) throw new SupersededOperationError();
+    // The static-server library otherwise binds its first enumerated IPv4
+    // address; that may be VPN/cellular while discovery correctly finds Wi-Fi.
+    const hostname = Platform.OS === 'android' ? await getWifiLocalIpv4Address() : undefined;
+    if (!lifecycle.isCurrent(version)) throw new SupersededOperationError();
 
     let Server;
     try {
@@ -57,6 +63,7 @@ export async function startLocalStream(uri: string, name: string, googleCast = f
     // exposure of the phone's photo library/cache directory.
     const server = new Server({
       fileDir: path(directory.uri),
+      ...(hostname ? { hostname } : {}),
       nonLocal: true,
       stopInBackground: false,
       extraConfig: localServerConfig(prefix, extension, path(receiver.uri), path(source.uri), [...receiverOrigins], googleCast),

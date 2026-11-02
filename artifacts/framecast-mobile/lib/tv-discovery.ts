@@ -14,6 +14,7 @@ export type NearbyTv = NearbySamsungTv & { type: 'samsung' | 'chromecast' | 'fir
 type FrameCastTvDiscoveryModule = {
   discoverNearbyTvs?: () => Promise<NearbyTv[]>;
   discoverSamsungTvs?: () => Promise<NearbySamsungTv[]>;
+  getWifiLocalIpv4Address?: () => Promise<string>;
   openSamsungTvBrowser?: (ip: string, url: string) => Promise<void>;
 };
 
@@ -24,6 +25,22 @@ const PRIVATE_IPV4 = /^(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}
 function isPrivateIpv4(ip: string) {
   if (!PRIVATE_IPV4.test(ip)) return false;
   return ip.split('.').every((octet) => Number(octet) <= 255);
+}
+
+/**
+ * Use the phone's Wi-Fi interface for its media server too. The static-server
+ * library's default address lookup returns the first interface Android
+ * enumerates, which can be mobile data or a VPN even during Wi-Fi TV discovery.
+ */
+export async function getWifiLocalIpv4Address(): Promise<string> {
+  if (Platform.OS !== 'android' || !nativeDiscovery?.getWifiLocalIpv4Address) {
+    throw new Error('Direct Wi-Fi playback needs the updated Android FrameCast app.');
+  }
+  const address = await nativeDiscovery.getWifiLocalIpv4Address();
+  if (typeof address !== 'string' || !isPrivateIpv4(address)) {
+    throw new Error('Android did not provide a valid home Wi-Fi address. Reconnect both devices to the same Wi-Fi and try again.');
+  }
+  return address;
 }
 
 export async function discoverNearbyTvs(): Promise<NearbyTv[]> {

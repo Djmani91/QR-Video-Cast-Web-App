@@ -99,6 +99,18 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
   }
 
   @ReactMethod
+  fun getWifiLocalIpv4Address(promise: Promise) {
+    Thread({
+      try {
+        promise.resolve(TvDiscovery.wifiLocalIpv4Address(reactApplicationContext))
+      } catch (error: Exception) {
+        promise.reject("WIFI_LOCAL_ADDRESS_FAILED",
+          error.message ?: "Connect this phone to the same Wi-Fi as your TV, then try again.", error)
+      }
+    }, "FrameCastWifiAddress").start()
+  }
+
+  @ReactMethod
   fun openSamsungTvBrowser(ip: String, url: String, promise: Promise) {
     Thread({
       try {
