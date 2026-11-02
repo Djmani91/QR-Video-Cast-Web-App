@@ -19,7 +19,7 @@ Run full Android release-bundle builds as background shell jobs with Gradle work
 
 **Why:** A foreground release build was cut off during the long native CMake compilation, while the background build completed successfully.
 
-**How to apply:** Use a monitored background shell for full AAB builds and retain its log; do not interpret a foreground command ending mid-CMake as a source failure.
+**How to apply:** Use a monitored background shell for full AAB builds and retain its log; do not interpret a foreground command ending mid-CMake as a source failure. Treat the background job's completion as authoritative, not a process-name search: Gradle's wrapper invocation can change.
 
 Verify permissions in the generated and merged Android manifests, not just Expo's configuration.
 
@@ -49,7 +49,13 @@ The Gradle-cached `bundletool` artifact is a thin library JAR, not the standalon
 
 **Why:** Running it with `java -jar` fails because it has no main manifest, and using only that JAR on the classpath misses runtime dependencies such as protobuf.
 
-**How to apply:** For local AAB validation, use the official `bundletool-all` distribution or invoke `BundleToolMain` with the bundletool JAR and its cached runtime dependencies on the classpath.
+**How to apply:** For local AAB validation, use the official `bundletool-all` distribution or invoke `BundleToolMain` with the bundletool JAR and its cached runtime dependencies on the classpath. Prefer the JRE Guava variant ahead of Android/transitively bundled variants; mixed variants can cause `Predicate` interface errors unrelated to the AAB.
+
+Library asset attachments have a 100 MiB upload limit. A full multi-architecture Android bundle can exceed it.
+
+**Why:** A valid signed four-architecture AAB was larger than the attachment service accepts; the limit is separate from Google Play's bundle validation.
+
+**How to apply:** Preserve the signed AAB and supported architectures. Host it in App Storage and provide a verified versioned download route; identify development links as temporary rather than changing the bundle just to fit the attachment limit.
 
 Do not identify an AAB signer by grepping `jarsigner -verify -certs` output; it may verify the bundle without printing the certificate subject.
 
