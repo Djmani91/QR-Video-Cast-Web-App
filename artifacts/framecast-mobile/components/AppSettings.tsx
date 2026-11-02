@@ -55,6 +55,15 @@ export function AppSettings({
     setError('');
   };
 
+  const openSubscription = () => {
+    if (busyRef.current) return;
+    // Settings is a native Modal; the paywall is an in-app overlay. Dismiss
+    // the Modal first so it cannot cover the offer after a Premium tap.
+    close();
+    if (premiumActive) onManagePremium();
+    else onOpenPremium();
+  };
+
   const confirm = async () => {
     if (busyRef.current || clearDisabled) return;
     busyRef.current = true;
@@ -139,7 +148,7 @@ export function AppSettings({
                     </Text>
                   </View>
                   <Pressable
-                    onPress={premiumActive ? onManagePremium : onOpenPremium}
+                    onPress={openSubscription}
                     accessibilityRole="button"
                     testID="button-premium-settings"
                     style={({ pressed }) => [styles.tutorialButton, { backgroundColor: colors.secondary, opacity: pressed ? 0.75 : 1 }]}
@@ -172,7 +181,7 @@ export function AppSettings({
                         </View>
                       ) : (
                         <Pressable
-                          onPress={onOpenPremium}
+                          onPress={openSubscription}
                           accessibilityRole="button"
                           accessibilityLabel="View Premium for background casting"
                           testID="button-background-casting-premium"
