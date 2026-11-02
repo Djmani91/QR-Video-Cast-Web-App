@@ -2,7 +2,7 @@
   "expo": {
     "name": "FrameCast Mobile",
     "slug": "framecast-mobile",
-    "version": "1.1.27",
+    "version": "1.1.28",
     "orientation": "portrait",
     "icon": "./assets/images/icon-purple-yellow-white.png",
     "splash": {
@@ -20,7 +20,7 @@
     "android": {
       "package": "com.tvcast.com",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 38,
+      "versionCode": 39,
       "blockedPermissions": ["android.permission.CAMERA"],
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
