@@ -254,7 +254,7 @@ test('controls hide after five seconds and return on a remote key', () => {
   assert.equal(r.elements.timer.textContent, '5');
 });
 
-test('a phone disconnect returns to the same pairing room without replaying old signals', async () => {
+test('a media-only close returns to the same pairing room without replaying old signals', async () => {
   const r = receiver();
   await flush();
   r.setMessages([{ sequence: 15, from: 'phone', type: 'close', payload: {} }]);
@@ -264,6 +264,45 @@ test('a phone disconnect returns to the same pairing room without replaying old 
   assert.equal(target.origin, 'https://framecast.example');
   assert.equal(target.searchParams.get('resume'), '1');
   assert.equal(target.searchParams.get('after'), '15');
+});
+
+test('an explicit phone disconnect requests a fresh pairing room instead of resuming', async () => {
+  const r = receiver();
+  await flush();
+  r.setMessages([{ sequence: 15, from: 'phone', type: 'close', payload: { action: 'disconnect' } }]);
+  r.timers.get(500)();
+  await flush();
+  const target = new URL(r.location.next);
+  assert.equal(target.origin, 'https://framecast.example');
+  assert.equal(target.searchParams.get('fresh'), '1');
+  assert.equal(target.searchParams.has('resume'), false);
+  assert.equal(target.searchParams.has('after'), false);
+});
+
+test('playing status queued behind an opening acknowledgement is sent without a three-second wait', async () => {
+  const requests = [];
+  let finishFirst;
+  const context = vm.createContext({
+    exiting: false, stateBusy: false, stateAgain: false, session: 'session1',
+    playback: 'opening', problem: '', fullscreenFeedback: '',
+    isFinite, video: { currentTime: 0, duration: 10, muted: false, volume: 1, paused: true },
+    post: (type, payload) => {
+      requests.push({ type, payload });
+      return requests.length === 1 ? new Promise(resolve => { finishFirst = resolve; }) : Promise.resolve();
+    },
+  });
+  const start = LOCAL_RECEIVER_HTML.indexOf('function state(){');
+  const end = LOCAL_RECEIVER_HTML.indexOf('function leave(', start);
+  vm.runInContext(LOCAL_RECEIVER_HTML.slice(start, end), context);
+  context.state();
+  context.playback = 'playing';
+  context.video.paused = false;
+  context.state();
+  assert.equal(requests.length, 1);
+  finishFirst();
+  await flush();
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].payload.playback, 'playing');
 });
 
 test('switching back to photos preserves the pending WebRTC offer', async () => {

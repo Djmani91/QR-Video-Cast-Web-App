@@ -73,6 +73,10 @@ type MediaKind = 'video' | 'image';
 
 function readInitialTvRoom() {
   const params = new URLSearchParams(window.location.search);
+  if (params.get('fresh') === '1') {
+    sessionStorage.removeItem('framecast-tv-resume');
+    return null;
+  }
   if (params.get('resume') === '1') {
     try {
       const saved = JSON.parse(sessionStorage.getItem('framecast-tv-resume') || 'null') as {
@@ -1940,6 +1944,10 @@ function TvPage() {
           if (queuedCandidates.current.length > 100) queuedCandidates.current.shift();
         }
       } else if (signal.type === 'close') {
+        if (signal.payload.action === 'disconnect') {
+          startRoom();
+          return;
+        }
         if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
         finishPlaylistTransition();
         const fullscreenDocument = document as Document & {
@@ -1980,6 +1988,7 @@ function TvPage() {
     setNeedsStandbyFullscreen(false);
     const cleanUrl = new URL(window.location.href);
     cleanUrl.searchParams.delete('resume');
+    cleanUrl.searchParams.delete('fresh');
     cleanUrl.searchParams.delete('after');
     cleanUrl.searchParams.delete('join');
     cleanUrl.searchParams.delete('code');
@@ -2373,7 +2382,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
   const messages = messagesQuery.data?.messages ?? [];
   const fileSupported = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function';
 
-  const stopPeer = useCallback((sendClose = false) => {
+  const stopPeer = useCallback((sendClose = false, disconnectRoom = false) => {
     qualityMonitorRef.current?.stop();
     qualityMonitorRef.current = null;
     setStreamHealth(null);
@@ -2407,7 +2416,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
     setVideoSeekDraft(null);
     mediaAckResolverRef.current?.('interrupted');
     mediaAckResolverRef.current = null;
-    if (sendClose) send('phone', 'close', { sessionId: sessionId ?? undefined });
+    if (sendClose) send('phone', 'close', { sessionId: sessionId ?? undefined, ...(disconnectRoom ? { action: 'disconnect' } : {}) });
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
     mediaChannelRef.current = null;
@@ -3374,7 +3383,7 @@ function PhonePage({ roomId }: { roomId?: string }) {
     pairingActiveRef.current = false;
     recoveryWantedRef.current = false;
     recoveryRef.current?.cancel();
-    stopPeer(true);
+    stopPeer(true, true);
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
     fileQueueRef.current = [];

@@ -111,20 +111,26 @@ function readVideoOrientation(){
 }
 video.addEventListener('loadedmetadata',fitVideoToScreen);
 if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',fitVideoToScreen);
-  var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,lastCommand=0,playback='opening',problem='',fullscreenFeedback='',videoOutputTimer=0;
+  var cursor=Number(config.after)||0,seconds=5,exiting=false,polling=false,stateBusy=false,stateAgain=false,lastCommand=0,playback='opening',problem='',fullscreenFeedback='',videoOutputTimer=0;
 var session=config.sessionId,fullscreenAttempted=false,fullscreenDenied=false;
 function post(type,payload){
  return fetch(endpoint.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'tv',type:type,payload:payload})}).then(function(r){if(!r.ok)throw Error('Connection failed');return r.json();});
 }
 function state(){
- if(stateBusy||exiting)return;
+ if(exiting)return;
+ if(stateBusy){stateAgain=true;return;}
+ stateAgain=false;
  stateBusy=true;
  post('player-state',{sessionId:session,currentTime:video.currentTime||0,duration:isFinite(video.duration)?video.duration:0,
- volume:video.muted?0:video.volume,paused:video.paused,playback:playback,message:problem||fullscreenFeedback}).catch(function(){}).then(function(){stateBusy=false;});
+ volume:video.muted?0:video.volume,paused:video.paused,playback:playback,message:problem||fullscreenFeedback}).catch(function(){}).then(function(){stateBusy=false;if(stateAgain)state();});
 }
-function leave(after){
+function leave(after,freshRoom){
  exiting=true;video.pause();
- var target=new URL(config.returnUrl);target.searchParams.set('resume','1');target.searchParams.set('after',String(after));
+ var target=new URL(config.returnUrl);
+ if(freshRoom){
+  ['resume','after','join','code','expiresAt'].forEach(function(key){target.searchParams.delete(key);});
+  target.searchParams.set('fresh','1');
+ }else{target.searchParams.set('resume','1');target.searchParams.set('after',String(after));}
  location.replace(target.href);
 }
 function reveal(){seconds=5;bar.style.display='flex';document.getElementById('timer').textContent='5';}
@@ -214,7 +220,7 @@ function poll(){
   for(var i=0;i<messages.length;i++){
    var m=messages[i];if(m.sequence<=cursor)continue;cursor=m.sequence;
    if(m.from!=='phone')continue;
-   if(m.type==='close'){leave(cursor);return;}
+   if(m.type==='close'){leave(cursor,m.payload&&m.payload.action==='disconnect');return;}
    if(m.type==='offer'){leave(m.sequence-1);return;}
     if(m.type==='local-video'&&m.payload.sessionId!==session){
     var next=new URL(m.payload.receiverUrl);

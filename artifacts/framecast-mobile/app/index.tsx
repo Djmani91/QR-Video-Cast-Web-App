@@ -48,6 +48,7 @@ import { useColors } from '@/hooks/useColors';
 import { CastTabs, type CastTab } from '@/components/CastTabs';
 import { MediaPlaylist, type SelectedMedia } from '@/components/MediaPlaylist';
 import { AppSettings } from '@/components/AppSettings';
+import CastingLoadingOverlay from '@/components/CastingLoadingOverlay';
 import { VideoBrowser } from '@/components/VideoBrowser';
 import { clearFrameCastCache } from '@/lib/local-data-policy';
 import { getTemporaryMediaUris, getUnsupportedTvVideoHelp, isUnsupportedTvVideoError } from '@/lib/video-compatibility';
@@ -533,11 +534,14 @@ function FrameCastHomeScreen() {
     if (!roomId) return;
     sendSignalRef.current(
       { roomId, data: { from: 'phone', type, payload } },
-      { onError: () => setError('The TV connection signal could not be sent. Check both devices are online and try again.') },
+      { onError: () => {
+        setError('The TV connection signal could not be sent. Check both devices are online and try again.');
+        setStage(current => current === 'connecting' || current === 'sending' ? 'paired' : current);
+      } },
     );
   }, [roomId]);
 
-  const closePeer = useCallback((notifyTv = false) => {
+  const closePeer = useCallback((notifyTv = false, disconnectRoom = false) => {
     if (peerRecoveryTimerRef.current) clearTimeout(peerRecoveryTimerRef.current);
     peerRecoveryTimerRef.current = null;
     setLocalPlayback(false);
@@ -557,7 +561,7 @@ function FrameCastHomeScreen() {
     setVideoStreaming(false);
     setRemoteVideoPosition({ currentTime: 0, duration: 0, volume: 0 });
     setVideoSeekDraft(null);
-    if (notifyTv && roomId) sendSignal('close', {});
+    if (notifyTv && roomId) sendSignal('close', disconnectRoom ? { action: 'disconnect' } : {});
     transferComplete.current = true;
     mediaChannelRef.current?.close();
     controlChannelRef.current?.close();
@@ -1873,7 +1877,7 @@ function FrameCastHomeScreen() {
 
   const playQueuedItem = (index: number) => {
     const item = mediaQueueRef.current[index];
-    if (!item || preparingMedia) return;
+    if (!item || preparingMedia || (item.kind === 'video' && (stage === 'connecting' || stage === 'sending'))) return;
     if (item.kind === 'image' && stage === 'sending' && index >= sentQueueCount) return;
 
     queueIndexRef.current = index;
@@ -1983,7 +1987,7 @@ function FrameCastHomeScreen() {
     currentRoomRef.current = '';
     setBackgroundEnabled(false);
     void stopBackgroundCasting().catch(() => setError('Android could not stop background casting. Close FrameCast to end its service.'));
-    closePeer(true);
+    closePeer(true, true);
     cleanupTemporaryCopies();
     setIsUrlPlayback(false);
     urlCastActiveRef.current = false;
@@ -2554,7 +2558,9 @@ function FrameCastHomeScreen() {
                 onSelect={playQueuedItem}
                 onAdd={() => requestMoreMedia(selectedMedia.kind)}
                 onChange={() => void (selectedMedia.kind === 'video' ? pickVideo() : pickPhotos())}
-                onPlayPause={() => sendPlaybackControl(paused || videoEnded ? 'play' : 'pause')}
+                onPlayPause={() => {
+                  if (stage !== 'connecting' && stage !== 'sending') sendPlaybackControl(paused || videoEnded ? 'play' : 'pause');
+                }}
                 onPrevious={() => playQueuedItem(queueIndex - 1)}
                 onNext={() => playQueuedItem(queueIndex + 1)}
               />
@@ -2833,7 +2839,7 @@ function FrameCastHomeScreen() {
               </Pressable>
             )}
 
-            {(stage === 'sending' || stage === 'connecting') && (
+            {(stage === 'sending' || stage === 'connecting') && selectedMedia?.kind !== 'video' && !isUrlPlayback && (
               <View style={styles.loadingRow}>
                 <ActivityIndicator color={activeColors.primary} />
                 <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{localPlayback ? 'Opening the video over Wi-Fi…' : stage === 'connecting' ? 'Creating a direct connection…' : 'Sending directly to the TV…'}</Text>
@@ -2859,7 +2865,7 @@ function FrameCastHomeScreen() {
           </Text>
         </View>
 
-        {transferNotice ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
+        {transferNotice && stage !== 'connecting' && stage !== 'sending' ? <Text style={[styles.progressCopy, { color: activeColors.mutedForeground }]}>{transferNotice}</Text> : null}
         {error && (!selectedMedia || isUrlPlayback || castTab !== (selectedMedia.kind === 'video' ? 'videos' : 'images')) ? (
           <View style={[styles.errorBox, { backgroundColor: activeColors.secondary }]} testID="text-error">
             <Ionicons name="alert-circle-outline" size={18} color={activeColors.destructive} />
@@ -2891,6 +2897,12 @@ function FrameCastHomeScreen() {
           <Text style={[styles.errorText, { color: activeColors.destructive }]}>Could not reach the TV. Check that its FrameCast page is still open.</Text>
         ) : null}
       </ScrollView>
+      <CastingLoadingOverlay
+        visible={Boolean(roomId) && (selectedMedia?.kind === 'video' || isUrlPlayback) && (stage === 'connecting' || stage === 'sending')}
+        title={localPlayback ? 'Opening your video on the TV…' : stage === 'connecting' ? 'Connecting to your TV…' : 'Loading your video…'}
+        detail={transferNotice || 'Keep FrameCast open while your TV prepares the video. Your media is not uploaded to our servers.'}
+        onDisconnect={leaveRoom}
+      />
       {Boolean(roomId) && !isPremium && !subscriptionLoading && Platform.OS === 'android' && pairingAdStatus !== 'loading' && (
         <CastingBannerAd
           backgroundColor={activeColors.background}

@@ -69,6 +69,12 @@ When a playlist video ends, keep the TV on its full-screen player while the next
 
 **How to apply:** Notify the TV before switching the phone connection, preserve the immersive TV layout through the next-video transfer, and clear the loading state when playback starts. Validate on the real Samsung TV.
 
+An explicit customer Disconnect must return the TV to a newly created pairing room with a fresh QR/code. Media-only stops, playlist handoffs, and temporary connection recovery must not rotate the room.
+
+**Why:** The user explicitly asked for a new TV code after disconnecting from the phone, while also requiring uninterrupted video handoffs and recoverable connections.
+
+**How to apply:** Distinguish a room disconnect from a transport/media close, including when the TV is on the phone-hosted local receiver. Discard resume markers on an explicit disconnect, not during ordinary playback recovery.
+
 Do not diagnose Samsung's “This function is not supported” dialog as a fullscreen failure from the wording alone. Fullscreen capability does not establish video-decoder compatibility, and MP4 is a container, not a codec.
 
 **Why:** The user's supplied phone footage includes HEVC/H.265 inside MP4. Repeated fullscreen changes did not resolve the reported playback failure. Repackaging that video does not turn it into H.264.
