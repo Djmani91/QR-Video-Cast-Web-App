@@ -8,6 +8,11 @@ module.exports = function withBackgroundCasting(config) {
   const service = `${appPackage}.casting.BackgroundCastingService`;
   config = withAndroidManifest(config, result => {
     const application = result.modResults.manifest.application[0];
+    // SSDP/DIAL device descriptions are served by TVs over local HTTP.
+    // Android's release default blocks these requests before OkHttp connects.
+    // Discovery validates the exact private peer IP and disallows redirects;
+    // the FrameCast cloud API continues to use HTTPS.
+    application.$['android:usesCleartextTraffic'] = 'true';
     application.service ??= [];
     if (!application.service.some(item => item.$['android:name'] === service)) {
       application.service.push({ $: {

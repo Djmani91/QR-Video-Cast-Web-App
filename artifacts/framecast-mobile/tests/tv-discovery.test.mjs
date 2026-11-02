@@ -3,6 +3,28 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildTvRoomUrl } from '../lib/tv-room-url.ts';
 
+test('release manifest plugin permits the local HTTP descriptions used by TVs', async () => {
+  const { createRequire } = await import('node:module');
+  const require = createRequire(import.meta.url);
+  const withBackgroundCasting = require('../plugins/with-background-casting.cjs');
+  const config = withBackgroundCasting({ name: 'FrameCast', slug: 'framecast', android: { package: 'com.tvcast.com' } });
+  const result = await config.mods.android.manifest({
+    modResults: { manifest: { application: [{ $: {}, service: [] }] } },
+    modRequest: { introspect: true },
+  });
+  assert.equal(result.modResults.manifest.application[0].$['android:usesCleartextTraffic'], 'true');
+});
+
+test('empty scans distinguish rejected URLs, HTTP failures, and unrecognized devices', () => {
+  const native = fs.readFileSync(new URL('../native/android/TvDiscovery.kt', import.meta.url), 'utf8');
+  assert.match(native, /rejected addresses.*descriptionRejected\.get\(\)/);
+  assert.match(native, /description failures.*descriptionFailed\.get\(\)/);
+  assert.match(native, /unrecognized descriptions.*descriptionUnrecognized\.get\(\)/);
+  assert.match(native, /HTTP blocked.*cleartextBlocked\.get\(\)/);
+  assert.match(native, /\.followRedirects\(false\)/);
+  assert.match(native, /TvDiscoveryProtocol\.descriptionUrl\(response, ip\)/);
+});
+
 test('discovery reads distinct descriptions and checks all resolved addresses', () => {
   const native = fs.readFileSync(new URL('../native/android/TvDiscovery.kt', import.meta.url), 'utf8');
   assert.match(native, /described\.add\(location\)/);

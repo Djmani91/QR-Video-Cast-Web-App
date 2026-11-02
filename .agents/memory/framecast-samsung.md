@@ -114,3 +114,9 @@ Repeated empty scans need stage-level diagnostics, not another assumption about 
 **Why:** The customer confirmed same-Wi-Fi operation without VPN/proxy, yet the Wi-Fi-bound release still found none of their devices. Routing changes and passing software tests did not establish a hardware fix.
 
 **How to apply:** Expose reply, description and resolution/error counts locally when no TV is identified. Do not upload device inventories or claim the physical scan works until actual receiver evidence is available.
+
+TV discovery must be checked against Android's release network-security policy, not only debug networking. SSDP/DIAL metadata commonly uses local plain HTTP.
+
+**Why:** Debug networking can permit HTTP while a target-SDK release blocks it, leaving a scan with many LAN replies but no readable descriptions. Protocol-parser tests cannot catch that difference.
+
+**How to apply:** Verify the release merged manifest permits the required local protocol. Keep discovery HTTP restricted in code to the advertising private peer, without redirects or credentials, and keep cloud traffic HTTPS. Do not interpret unread descriptions as proof that no TV advertised.

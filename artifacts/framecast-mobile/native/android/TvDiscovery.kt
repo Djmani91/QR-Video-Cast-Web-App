@@ -52,6 +52,10 @@ internal object TvDiscovery {
     val dnsFailed = AtomicInteger()
     val resolveFailed = AtomicInteger()
     val descriptionsRead = AtomicInteger()
+    val descriptionRejected = AtomicInteger()
+    val descriptionFailed = AtomicInteger()
+    val descriptionUnrecognized = AtomicInteger()
+    val cleartextBlocked = AtomicInteger()
     val resolving = ConcurrentHashMap.newKeySet<String>()
     val resolveBusy = AtomicBoolean(false)
     val resolveQueue = ConcurrentLinkedQueue<Pair<NsdServiceInfo, String>>()
@@ -67,7 +71,8 @@ internal object TvDiscovery {
       .socketFactory(wifiNetwork.socketFactory)
       .followRedirects(false).followSslRedirects(false).build()
     fun describe(ip: String, response: String) {
-      val location = TvDiscoveryProtocol.descriptionUrl(response, ip) ?: return
+      val location = TvDiscoveryProtocol.descriptionUrl(response, ip)
+        ?: run { descriptionRejected.incrementAndGet(); return }
       // One TV advertises several distinct descriptions. Its first response may
       // describe an unrelated service; do not suppress the TV/DIAL URL by IP.
       if (described.size >= 24 || !described.add(location)) return
@@ -77,8 +82,8 @@ internal object TvDiscovery {
           // LOCATION is untrusted LAN input. Exact peer-IP validation, no redirects,
           // no credentials, bounded bytes/time and no entity resolution are mandatory.
           http.newCall(Request.Builder().url(location).build()).execute().use { reply ->
-            if (!reply.isSuccessful) return@use
-            val body = reply.body ?: return@use
+            if (!reply.isSuccessful) { descriptionFailed.incrementAndGet(); return@use }
+            val body = reply.body ?: run { descriptionFailed.incrementAndGet(); return@use }
             val output = ByteArrayOutputStream()
             body.byteStream().use { stream ->
               val buffer = ByteArray(4096)
@@ -88,12 +93,15 @@ internal object TvDiscovery {
                 output.write(buffer, 0, count)
               }
             }
-            if (output.size() > 65_536) return@use
+            if (output.size() > 65_536) { descriptionFailed.incrementAndGet(); return@use }
             descriptionsRead.incrementAndGet()
             val device = TvDiscoveryProtocol.fromDescription(ip, output.toString("UTF-8"), response)
+            if (device == null) descriptionUnrecognized.incrementAndGet()
             if (device != null && active.get() && results.size < 32) results["${device.type}:$ip"] = device
           }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+          descriptionFailed.incrementAndGet()
+          if (error.message?.contains("CLEARTEXT", ignoreCase = true) == true) cleartextBlocked.incrementAndGet()
           // Metadata is optional; a verified protocol advertisement remains listed.
         }
       }
@@ -213,7 +221,9 @@ internal object TvDiscovery {
        if (snapshot.isEmpty()) {
          throw IllegalStateException(
            "No supported TV identified. Scan details: LAN replies ${ssdpReplies.get()}, " +
-             "device descriptions ${descriptionsRead.get()}, DNS services ${dnsFound.get()}, " +
+             "device descriptions ${descriptionsRead.get()}, rejected addresses ${descriptionRejected.get()}, " +
+             "description failures ${descriptionFailed.get()}, unrecognized descriptions ${descriptionUnrecognized.get()}, " +
+             "HTTP blocked ${cleartextBlocked.get()}, DNS services ${dnsFound.get()}, " +
              "DNS start errors ${dnsFailed.get()}, address errors ${resolveFailed.get()}. " +
              "TV browser code pairing is still available."
          )
