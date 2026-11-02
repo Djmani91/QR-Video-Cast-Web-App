@@ -1,5 +1,5 @@
 - [FrameCast privacy](framecast-privacy.md) — video must remain peer-to-peer; do not persist user data or media.
-- [Samsung TV target](framecast-samsung.md) — use the TV browser address plus QR/code pairing; omit Wi-Fi device discovery from the phone UI.
+- [TV discovery](framecast-samsung.md) — scan common Europe/US platforms; finding a device is not proof of browser launch or connection.
 - [FrameCast native companion](framecast-mobile.md) — preserve native build constraints and apply phone-video rotation metadata before fitting direct TV playback.
 - [FrameCast iOS build tools](framecast-mobile.md) — Expo Launch skips EAS lifecycle hooks; provision host tools in the native build step itself.
 - [FrameCast Android test APK signing](framecast-mobile.md) — preserve the debug signing certificate on test APKs so existing installs can update in place.

@@ -78,13 +78,33 @@ class BackgroundCastingModule(context: ReactApplicationContext) : ReactContextBa
   }
 
   @ReactMethod
+  fun discoverNearbyTvs(promise: Promise) {
+    Thread({
+      try {
+        val result = Arguments.createArray()
+        TvDiscovery.scanNearby(reactApplicationContext).forEach { device ->
+          val item = Arguments.createMap()
+          item.putString("ip", device.ip)
+          item.putString("name", device.name)
+          item.putString("model", device.model)
+          item.putString("type", device.type)
+          result.pushMap(item)
+        }
+        promise.resolve(result)
+      } catch (error: Exception) {
+        promise.reject("TV_DISCOVERY_FAILED", "FrameCast could not scan this Wi-Fi network. Use the TV QR/code instead.", error)
+      }
+    }, "FrameCastNearbyTvs").start()
+  }
+
+  @ReactMethod
   fun openSamsungTvBrowser(ip: String, url: String, promise: Promise) {
     Thread({
       try {
-        TvDiscovery.openBrowser(ip, url)
+        TvDiscovery.openBrowser(reactApplicationContext, ip, url)
         promise.resolve(null)
       } catch (error: Exception) {
-        promise.reject("TV_BROWSER_LAUNCH_FAILED", "The TV did not accept the automatic browser launch.", error)
+        promise.reject("TV_BROWSER_LAUNCH_FAILED", error.message ?: "The TV did not accept the automatic browser launch.", error)
       }
     }, "FrameCastTvBrowserLaunch").start()
   }

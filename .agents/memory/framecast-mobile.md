@@ -21,7 +21,7 @@ For FrameCast's Android screen-mirroring feature, the user wants direct-feeling 
 
 **Why:** The user explicitly requested under-one-second screen-mirroring delay after clarifying that the problem is in this app.
 
-**How to apply:** Keep mirroring on a low-latency live WebRTC path rather than the TV's movie-player/buffered-file path. Measure end-to-end delay on the real Android phone and Samsung TV before claiming the target is met.
+**How to apply:** Keep mirroring on a low-latency live WebRTC path rather than the TV's movie-player/buffered-file path. Measure end-to-end delay on the real Android phone and Samsung TV before claiming the target is met. The user also requests smooth, clear motion matching the phone; never promise exact simultaneous frames or zero wireless latency.
 
 For the phone website, do not clear a populated file input while its selected files are still needed. Browser provider-backed files can become unreadable even though their filename and size remain available.
 

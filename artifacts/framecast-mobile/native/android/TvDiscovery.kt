@@ -1,199 +1,173 @@
 package __PACKAGE__
 
 import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
-import android.util.Base64
-import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.MulticastSocket
-import java.net.Socket
-import java.net.URL
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.util.Locale
-
-internal data class DiscoveredSamsungTv(
-  val ip: String,
-  val name: String,
-  val model: String,
-)
+import java.net.Proxy
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 internal object TvDiscovery {
-  private const val SSDP_ADDRESS = "239.255.255.250"
-  private const val SSDP_PORT = 1900
-  private const val SCAN_WINDOW_MS = 3_500L
+  fun scan(context: Context): List<DiscoveredTv> = scanNearby(context).filter { it.type == "samsung" }
 
-  fun scan(context: Context): List<DiscoveredSamsungTv> {
+  fun scanNearby(context: Context): List<DiscoveredTv> {
+    val results = ConcurrentHashMap<String, DiscoveredTv>()
+    val active = AtomicBoolean(true)
+    val resolving = ConcurrentHashMap.newKeySet<String>()
+    val resolveBusy = AtomicBoolean(false)
+    val resolveQueue = ConcurrentLinkedQueue<Pair<NsdServiceInfo, String>>()
+    val nsd = context.getSystemService(Context.NSD_SERVICE) as? NsdManager
+    val listeners = mutableListOf<NsdManager.DiscoveryListener>()
     val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-    val multicastLock = wifi?.createMulticastLock("framecast-tv-discovery")
+    val lock = wifi?.createMulticastLock("framecast-tv-discovery")
+    val descriptions = Executors.newFixedThreadPool(2)
+    val described = ConcurrentHashMap.newKeySet<String>()
+    val http = OkHttpClient.Builder().connectTimeout(600, TimeUnit.MILLISECONDS)
+      .readTimeout(800, TimeUnit.MILLISECONDS).callTimeout(1200, TimeUnit.MILLISECONDS)
+      .proxy(Proxy.NO_PROXY)
+      .followRedirects(false).followSslRedirects(false).build()
+    fun describe(ip: String, response: String) {
+      val location = TvDiscoveryProtocol.descriptionUrl(response, ip) ?: return
+      if (described.size >= 24 || !described.add(ip)) return
+      descriptions.submit {
+        if (!active.get()) return@submit
+        try {
+          // LOCATION is untrusted LAN input. Exact peer-IP validation, no redirects,
+          // no credentials, bounded bytes/time and no entity resolution are mandatory.
+          http.newCall(Request.Builder().url(location).build()).execute().use { reply ->
+            if (!reply.isSuccessful) return@use
+            val body = reply.body ?: return@use
+            val output = ByteArrayOutputStream()
+            body.byteStream().use { stream ->
+              val buffer = ByteArray(4096)
+              while (output.size() <= 65_536) {
+                val count = stream.read(buffer)
+                if (count == -1) break
+                output.write(buffer, 0, count)
+              }
+            }
+            if (output.size() > 65_536) return@use
+            val device = TvDiscoveryProtocol.fromDescription(ip, output.toString("UTF-8"), response)
+            if (device != null && active.get() && results.size < 32) results["${device.type}:$ip"] = device
+          }
+        } catch (_: Exception) {
+          // Metadata is optional; a verified protocol advertisement remains listed.
+        }
+      }
+    }
+    fun resolveNext() {
+      if (!active.get() || !resolveBusy.compareAndSet(false, true)) return
+      val pending = resolveQueue.poll()
+      if (pending == null) { resolveBusy.set(false); return }
+      @Suppress("DEPRECATION")
+      try {
+        nsd?.resolveService(pending.first, object : NsdManager.ResolveListener {
+          private fun finished() { resolveBusy.set(false); resolveNext() }
+          override fun onResolveFailed(service: NsdServiceInfo, error: Int) { finished() }
+          override fun onServiceResolved(service: NsdServiceInfo) {
+            try {
+              if (!active.get()) return
+              @Suppress("DEPRECATION")
+              val ip = service.host?.hostAddress ?: return
+              if (!isPrivateIpv4(ip)) return
+               val attributes = service.attributes.mapValues { it.value.toString(Charsets.UTF_8).take(100) }
+               val device = TvDiscoveryProtocol.fromDns(ip, pending.second, service.serviceName, attributes) ?: return
+               results["${device.type}:$ip"] = device
+            } finally { finished() }
+          }
+        })
+      } catch (_: Exception) {
+        resolveBusy.set(false)
+        resolveNext()
+      }
+    }
     try {
-      multicastLock?.setReferenceCounted(false)
-      multicastLock?.acquire()
-
-      val candidates = linkedMapOf<String, String>()
+      lock?.setReferenceCounted(false)
+      lock?.acquire()
+      // DNS-SD discovers Google Cast and older Amazon advertisements. No subnet
+      // sweep, cloud device registry, debug bridge, or remote launches on discovery.
+       listOf("_googlecast._tcp.", "_amzn-wplay._tcp.", "_airplay._tcp.").forEach { serviceType ->
+        val listener = object : NsdManager.DiscoveryListener {
+          override fun onDiscoveryStarted(type: String) {}
+          override fun onDiscoveryStopped(type: String) {}
+          override fun onStartDiscoveryFailed(type: String, error: Int) {}
+          override fun onStopDiscoveryFailed(type: String, error: Int) {}
+          override fun onServiceLost(info: NsdServiceInfo) {}
+          override fun onServiceFound(info: NsdServiceInfo) {
+            val key = "$serviceType:${info.serviceName}"
+            if (!active.get() || results.size >= 32 || resolving.size >= 32 || !resolving.add(key)) return
+            // Older Android releases permit only one resolver at a time.
+            resolveQueue.add(info to serviceType)
+            resolveNext()
+          }
+        }
+        try {
+          nsd?.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+          listeners.add(listener)
+        } catch (_: Exception) {
+          // SSDP remains available if the platform rejects a DNS-SD service.
+        }
+      }
       MulticastSocket(null).use { socket ->
         socket.reuseAddress = true
         socket.bind(InetSocketAddress(0))
         socket.soTimeout = 250
-        val group = InetAddress.getByName(SSDP_ADDRESS)
-        val targets = listOf(
-          "ssdp:all",
-          "urn:samsung.com:device:RemoteControlReceiver:1",
-          "urn:schemas-upnp-org:device:MediaRenderer:1",
-        )
-        targets.forEach { target ->
-          val request = (
-            "M-SEARCH * HTTP/1.1\r\n" +
-              "HOST: $SSDP_ADDRESS:$SSDP_PORT\r\n" +
-              "MAN: \"ssdp:discover\"\r\n" +
-              "MX: 1\r\n" +
-              "ST: $target\r\n\r\n"
-            ).toByteArray(Charsets.US_ASCII)
-          socket.send(DatagramPacket(request, request.size, group, SSDP_PORT))
+        val group = InetAddress.getByName("239.255.255.250")
+         listOf("ssdp:all", "roku:ecp", "urn:lge-com:service:webos-second-screen:1",
+           "urn:dial-multiscreen-org:service:dial:1", "urn:samsung.com:device:RemoteControlReceiver:1",
+          "urn:schemas-upnp-org:device:MediaRenderer:1").forEach { target ->
+          val request = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\n" +
+            "MAN: \"ssdp:discover\"\r\nMX: 1\r\nST: $target\r\n\r\n").toByteArray(Charsets.US_ASCII)
+          socket.send(DatagramPacket(request, request.size, group, 1900))
         }
-
-        val deadline = System.currentTimeMillis() + SCAN_WINDOW_MS
+        val deadline = System.currentTimeMillis() + 4_000
         val buffer = ByteArray(8_192)
         while (System.currentTimeMillis() < deadline) {
           try {
             val packet = DatagramPacket(buffer, buffer.size)
             socket.receive(packet)
-            val ip = packet.address?.hostAddress?.substringBefore('%') ?: continue
-            if (!isPrivateIpv4(ip)) continue
-            val response = String(packet.data, packet.offset, packet.length, Charsets.US_ASCII)
-            candidates[ip] = response
+            val ip = packet.address.hostAddress ?: continue
+            if (!isPrivateIpv4(ip) || results.size >= 32) continue
+            val response = String(packet.data, packet.offset, packet.length, Charsets.UTF_8)
+             val device = TvDiscoveryProtocol.fromAdvertisement(ip, response)
+            if (device != null) results.putIfAbsent("${device.type}:$ip", device)
+             describe(ip, response)
           } catch (_: java.net.SocketTimeoutException) {
-            // Keep listening until the bounded scan window ends.
+            // The bounded receive window also gives DNS-SD time to resolve names.
           }
         }
       }
-
-      return candidates.entries
-        .filter { (_, response) -> response.contains("samsung", ignoreCase = true) }
-        .map { (ip, _) -> ip }
-        .sorted()
-        .take(16)
-        .map { ip ->
-          DiscoveredSamsungTv(ip, "Samsung TV", "Samsung Smart TV")
-        }
+       descriptions.shutdown()
+       descriptions.awaitTermination(750, TimeUnit.MILLISECONDS)
+       val snapshot = results.values.toList()
+       val namedPlatforms = snapshot.filter { it.type != "dlna" }.map { it.ip }.toSet()
+       return snapshot.filterNot { it.type == "dlna" && it.ip in namedPlatforms }
+         .sortedWith(compareBy({ it.type }, { it.name }, { it.ip })).take(32)
     } finally {
-      try {
-        if (multicastLock?.isHeld == true) multicastLock.release()
-      } catch (_: Exception) {
-        // A scan result should not be lost because the Wi-Fi lock was already released.
-      }
+      active.set(false)
+       http.dispatcher.cancelAll()
+       descriptions.shutdownNow()
+       http.connectionPool.evictAll()
+      listeners.forEach { try { nsd?.stopServiceDiscovery(it) } catch (_: Exception) {} }
+      if (lock?.isHeld == true) lock.release()
     }
   }
 
-  fun openBrowser(ip: String, targetUrl: String) {
-    if (!isPrivateIpv4(ip)) throw IllegalArgumentException("The TV address is not on a private Wi-Fi network.")
-    val target = URL(targetUrl)
-    if (target.protocol != "https" || target.host.lowercase(Locale.US) != "2tx1.com") {
-      throw IllegalArgumentException("FrameCast can only open its own TV website.")
-    }
+  fun openBrowser(context: Context, ip: String, targetUrl: String) =
+    SamsungBrowserRemote.open(context, ip, targetUrl)
 
-    Socket().use { socket ->
-      socket.connect(InetSocketAddress(ip, 8001), 2_500)
-      socket.soTimeout = 4_000
-      val keyBytes = ByteArray(16)
-      SecureRandom().nextBytes(keyBytes)
-      val wsKey = Base64.encodeToString(keyBytes, Base64.NO_WRAP)
-      val path = "/api/v2/channels/samsung.remote.control?name=RnJhbWVDYXN0"
-      val request = (
-        "GET $path HTTP/1.1\r\n" +
-          "Host: $ip:8001\r\n" +
-          "Upgrade: websocket\r\n" +
-          "Connection: Upgrade\r\n" +
-          "Sec-WebSocket-Key: $wsKey\r\n" +
-          "Sec-WebSocket-Version: 13\r\n" +
-          "Origin: http://localhost\r\n\r\n"
-        ).toByteArray(Charsets.US_ASCII)
-      socket.getOutputStream().write(request)
-      socket.getOutputStream().flush()
-
-      val handshake = ByteArrayOutputStream()
-      var matched = 0
-      while (handshake.size() < 8_192 && matched < 4) {
-        val next = socket.getInputStream().read()
-        if (next < 0) break
-        handshake.write(next)
-        matched = when {
-          matched == 0 && next == '\r'.code -> 1
-          matched == 1 && next == '\n'.code -> 2
-          matched == 2 && next == '\r'.code -> 3
-          matched == 3 && next == '\n'.code -> 4
-          next == '\r'.code -> 1
-          else -> 0
-        }
-      }
-      val response = handshake.toString(Charsets.US_ASCII.name())
-      if (!response.startsWith("HTTP/1.1 101") && !response.startsWith("HTTP/1.0 101")) {
-        throw IllegalStateException("The TV refused the remote-control connection. Check for an approval prompt on the TV.")
-      }
-      val expectedAccept = Base64.encodeToString(
-        MessageDigest.getInstance("SHA-1")
-          .digest((wsKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toByteArray(Charsets.US_ASCII)),
-        Base64.NO_WRAP,
-      )
-      val accept = response.lineSequence()
-        .firstOrNull { it.startsWith("Sec-WebSocket-Accept:", ignoreCase = true) }
-        ?.substringAfter(':')
-        ?.trim()
-      if (accept != expectedAccept) {
-        throw IllegalStateException("The TV did not confirm its remote-control connection.")
-      }
-
-      val output = socket.getOutputStream()
-      sendRemoteMessage(output, browserLaunchMessage(target.toString()))
-      Thread.sleep(1_200)
-    }
-  }
-
-  private fun browserLaunchMessage(targetUrl: String): String {
-    val appData = JSONObject()
-      .put("action_type", "NATIVE_LAUNCH")
-      .put("appId", "org.tizen.browser")
-      .put("metaTag", targetUrl)
-    val params = JSONObject()
-      .put("event", "ed.apps.launch")
-      .put("to", "host")
-      .put("data", appData)
-    return JSONObject()
-      .put("method", "ms.channel.emit")
-      .put("params", params)
-      .toString()
-  }
-
-  private fun sendRemoteMessage(output: java.io.OutputStream, message: String) {
-    val payload = message.toByteArray(Charsets.UTF_8)
-    val mask = ByteArray(4)
-    SecureRandom().nextBytes(mask)
-    output.write(0x81)
-    when {
-      payload.size < 126 -> output.write(0x80 or payload.size)
-      payload.size <= 65_535 -> {
-        output.write(0x80 or 126)
-        output.write((payload.size shr 8) and 0xff)
-        output.write(payload.size and 0xff)
-      }
-      else -> throw IllegalArgumentException("Remote-control command is too long.")
-    }
-    output.write(mask)
-    val masked = ByteArray(payload.size) { index -> (payload[index].toInt() xor mask[index % 4].toInt()).toByte() }
-    output.write(masked)
-    output.flush()
-  }
-
-  private fun isPrivateIpv4(value: String): Boolean {
-    val parts = value.split('.')
-    if (parts.size != 4) return false
-    val octets = parts.map { it.toIntOrNull() ?: return false }
-    if (octets.any { it !in 0..255 }) return false
-    return octets[0] == 10 ||
-      (octets[0] == 192 && octets[1] == 168) ||
-      (octets[0] == 172 && octets[1] in 16..31)
+  internal fun isPrivateIpv4(value: String): Boolean {
+    return TvDiscoveryProtocol.isPrivateIpv4(value)
   }
 }

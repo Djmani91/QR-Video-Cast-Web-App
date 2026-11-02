@@ -1,5 +1,6 @@
 // Served by the phone, not our cloud. Keeping the receiver and media on the
 // same HTTP origin avoids HTTPS-to-private-HTTP mixed-content restrictions.
+import { LOCAL_CINEMA_WAITING_CSS, LOCAL_CINEMA_WAITING_MARKUP } from './local-cinema-waiting';
 export const LOCAL_RECEIVER_HTML = `<!doctype html>
 <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FrameCast TV</title><style>
@@ -8,7 +9,10 @@ html,body{margin:0;width:100%;height:100%;background:#000;color:#fff;font:20px s
 #bar{position:absolute;bottom:0;left:0;right:0;padding:24px;background:linear-gradient(transparent,rgba(84,36,143,.92));display:flex;gap:20px;align-items:center}
 button{font:inherit;padding:12px;border:1px solid #ffdf4f;background:#ffdf4f;color:#54248f;border-radius:8px}
 #notice{position:absolute;top:12%;left:10%;right:10%;text-align:center;pointer-events:none}
-</style></head><body>
+${LOCAL_CINEMA_WAITING_CSS}
+#bar,#notice{z-index:30}
+</style></head><body class="cinema-waiting">
+${LOCAL_CINEMA_WAITING_MARKUP}
 <video id="video" autoplay controls playsinline webkit-playsinline preload="auto"></video>
 <div id="notice">Connected. Opening video directly from your phone…</div>
 <div id="bar"><button id="play">Play / pause</button><button id="mute">Sound / mute</button>
@@ -116,6 +120,13 @@ var session=config.sessionId,fullscreenAttempted=false,fullscreenDenied=false;
 function post(type,payload){
  return fetch(endpoint.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({from:'tv',type:type,payload:payload})}).then(function(r){if(!r.ok)throw Error('Connection failed');return r.json();});
 }
+function cinemaWaiting(visible,title,detail){
+ if(document.body)document.body.className=visible?'cinema-waiting':'';
+ var heading=document.getElementById('cinema-title'),description=document.getElementById('cinema-detail');
+ if(heading)heading.textContent=title||'Your phone is connected';
+ if(description)description.textContent=detail||'Choose your next photo or video on your phone.';
+}
+cinemaWaiting(true,'Opening your video…','Keep FrameCast open on your phone.');
 function state(){
  if(exiting)return;
  if(stateBusy){stateAgain=true;return;}
@@ -178,6 +189,7 @@ function command(action){
 }
   var localOpenVersion=0;
   function openNextLocalVideo(message,target){
+   cinemaWaiting(true,'Preparing your next video…','Your phone is connected. Keep FrameCast open.');
    var attempts=0,version=++localOpenVersion;
   function probe(){
     if(exiting||version!==localOpenVersion)return;
@@ -263,7 +275,7 @@ function checkVideoOutput(){
   notice.textContent=problem;video.pause();state();reveal();
  },2500);
 }
-video.onplaying=function(){playedAtLeastOnce=true;networkRetryDeadline=0;clearTimeout(networkRetryTimer);playback='playing';problem='';notice.textContent='';checkVideoOutput();state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
+video.onplaying=function(){cinemaWaiting(false);playedAtLeastOnce=true;networkRetryDeadline=0;clearTimeout(networkRetryTimer);playback='playing';problem='';notice.textContent='';checkVideoOutput();state();if(!fullscreenAttempted){fullscreenAttempted=true;fullscreen();}};
  video.addEventListener('loadedmetadata',function(){
   startupRetryCount=0;clearTimeout(startupRetryTimer);
   if(resumePosition>0){video.currentTime=resumePosition;resumePosition=0;}
@@ -271,7 +283,7 @@ video.onplaying=function(){playedAtLeastOnce=true;networkRetryDeadline=0;clearTi
 video.onwebkitendfullscreen=function(){fullscreenDenied=false;fullscreenFeedback='FULLSCREEN_EXITED';reveal();state();};
 video.onpause=function(){clearTimeout(videoOutputTimer);state();};
 video.onwaiting=function(){notice.textContent='Buffering from your phone…';};
-video.onended=function(){clearTimeout(videoOutputTimer);playback='ended';state();reveal();};
+video.onended=function(){cinemaWaiting(true,'Your phone is connected','Ready for your next photo or video.');clearTimeout(videoOutputTimer);playback='ended';state();reveal();};
 video.onerror=function(){
   clearTimeout(videoOutputTimer);
   var errorCode=video.error?video.error.code:0;

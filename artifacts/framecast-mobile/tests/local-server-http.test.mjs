@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import net from 'node:net';
 import { localServerConfig } from '../lib/local-server-config.ts';
-import { LOCAL_RECEIVER_HTML } from '../lib/local-receiver.ts';
+import { LOCAL_RECEIVER_HTML } from './helpers/local-receiver.mjs';
 
 test('real phone-server config serves the player as HTML and supports private media byte ranges', async () => {
   const root = await mkdtemp('/tmp/framecast-http-test-');

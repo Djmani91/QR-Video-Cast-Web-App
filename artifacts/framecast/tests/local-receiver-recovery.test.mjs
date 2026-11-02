@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { LOCAL_RECEIVER_HTML } from '../../framecast-mobile/lib/local-receiver.ts';
+import { LOCAL_RECEIVER_HTML } from '../../framecast-mobile/tests/helpers/local-receiver.mjs';
 
 function setup() {
   const start = LOCAL_RECEIVER_HTML.indexOf('var networkRetryDeadline=');
@@ -14,6 +14,8 @@ function setup() {
   let loads = 0;
   let plays = 0;
   const context = {
+    // This harness isolates retries; full receiver tests exercise the cinema UI.
+    cinemaWaiting() {},
     config: { resumeAt: 0 },
     video: {
       currentTime: 23, error: { code: 2 },

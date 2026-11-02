@@ -28,6 +28,8 @@ import { createPeerProbe, createSessionRecovery, matchesSession, peerIsOpening, 
 import { startReceiverVideo, tvVideoPresentation, waitForVideoStartup, type VideoStartup } from './lib/video-startup';
 import { createPhoneAudioGraph, startPhoneVideoStream, type PhoneAudioGraph, type PhoneVideoState, type PhoneVideoStream } from './lib/phone-video-stream';
 import { createScreenMirrorAudioPlayer, type ScreenMirrorAudioPlayer } from './lib/screen-mirror-audio';
+import { configureScreenMirrorReceiver } from './lib/screen-mirror-latency';
+import { shouldShowTvCinema } from './lib/tv-cinema-state';
 import { configureVideoSender, preferHardwareVideoCodec } from './lib/video-stream-quality';
 import { monitorVideoStream, readVideoStats, type StreamHealth } from './lib/video-stream-health';
 import { MAX_PLAYLIST_ITEMS, movePlaylistItem, playlistNeighbour } from './lib/video-playlist';
@@ -510,6 +512,9 @@ function TvPage() {
   createRoomRef.current = createRoomMutation;
   const [room, setRoom] = useState<{ id: string; code: string; expiresAt: string } | null>(readInitialTvRoom);
   const [launchedFromPhone, setLaunchedFromPhone] = useState(() => parseDirectTvRoom(window.location.search) !== null);
+  const [phonePaired, setPhonePaired] = useState(() =>
+    Boolean(room && new URLSearchParams(window.location.search).get('resume') === '1'));
+  const [waitingForPlayback, setWaitingForPlayback] = useState(false);
   const resumeAfterRef = useRef(Number(new URLSearchParams(window.location.search).get('after')) || 0);
   const [status, setStatus] = useState<PeerStatus>('idle');
   const [mediaKind, setMediaKind] = useState<MediaKind>('video');
@@ -847,15 +852,18 @@ function TvPage() {
     void player;
     setPlaying(state === 1);
     if (state === 1) {
+      setWaitingForPlayback(false);
+      finishPlaylistTransition();
       setError('');
       if (youtubeMediaChannelRef.current?.readyState === 'open') {
         youtubeMediaChannelRef.current.send(JSON.stringify({ framecast: 'streaming' }));
       }
     }
     sendVideoState();
-  }, [sendVideoState]);
+  }, [sendVideoState, finishPlaylistTransition]);
 
   const handleYouTubeError = useCallback((code: number) => {
+    setWaitingForPlayback(false);
     const message = code === 101 || code === 150
       ? 'This YouTube video does not allow playback in an embedded player.'
       : 'YouTube could not play this video. It may be unavailable, private, or restricted.';
@@ -866,6 +874,7 @@ function TvPage() {
   }, []);
 
   const handleYouTubeAutoplayBlocked = useCallback(() => {
+    setWaitingForPlayback(false);
     setError('The TV browser blocked automatic YouTube playback. Press Play in the YouTube player on the TV.');
     if (youtubeMediaChannelRef.current?.readyState === 'open') {
       youtubeMediaChannelRef.current.send(JSON.stringify({ framecast: 'streaming' }));
@@ -887,6 +896,7 @@ function TvPage() {
     if (!video) return;
     const onPlaying = () => {
       if (video.readyState < 2 || !video.videoWidth || !video.videoHeight || video.paused) return;
+      setWaitingForPlayback(false);
       if (playlistTransitioningRef.current) {
         setVideoReturnedInline(false);
         finishPlaylistTransition();
@@ -900,6 +910,19 @@ function TvPage() {
         return;
       }
       const source = video.srcObject || video.currentSrc || video.src;
+      const fullscreenPage = document as Document & {
+        webkitFullscreenElement?: Element | null;
+        webkitCurrentFullScreenElement?: Element | null;
+        webkitIsFullScreen?: boolean;
+      };
+      if (document.fullscreenElement === document.documentElement
+        || fullscreenPage.webkitFullscreenElement === document.documentElement
+        || fullscreenPage.webkitCurrentFullScreenElement === document.documentElement
+        || fullscreenPage.webkitIsFullScreen) {
+        setNeedsVideoFullscreen(false);
+        sendVideoState();
+        return;
+      }
       if (isVideoFullscreen(video)) { autoFullscreen.observe(true); sendVideoState(); return; }
       void autoFullscreen.start(source, {
         ready: () => video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0 && !video.paused,
@@ -1176,6 +1199,22 @@ function TvPage() {
 
   const serverExpiry = messagesQuery.data?.expiresAt;
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auto') !== '1' || !roomId || !messagesQuery.isSuccess) return;
+    const acknowledged = messagesQuery.data?.messages.some(message => message.from === 'tv'
+      && message.type === 'ready' && message.payload.action === 'tv-browser-ready'
+      && message.payload.sessionId === roomId);
+    if (acknowledged) {
+      params.delete('auto');
+      window.history.replaceState(null, '', `${window.location.pathname}?${params}${window.location.hash}`);
+      return;
+    }
+    // Retry on the next successful poll until stored by signaling. The phone
+    // must observe this before saying paired, not merely a WebSocket handshake.
+    send('tv', 'ready', { action: 'tv-browser-ready', sessionId: roomId });
+  }, [roomId, messagesQuery.isSuccess, messagesQuery.data, messagesQuery.dataUpdatedAt, send]);
+
+  useEffect(() => {
     if (!roomId || !serverExpiry) return;
     setRoom((current) => current?.id === roomId && current.expiresAt !== serverExpiry
       ? { ...current, expiresAt: serverExpiry }
@@ -1213,6 +1252,7 @@ function TvPage() {
           setError('The phone supplied an invalid local playback address. Reconnect it to your home Wi-Fi and try again.');
         }
       } else if (signal.type === 'ready') {
+        setPhonePaired(true);
         finishPlaylistTransition();
         const connectionState = peerRef.current?.connectionState;
         if (!peerRef.current || connectionState === 'failed' || connectionState === 'disconnected' || connectionState === 'closed') {
@@ -1223,6 +1263,8 @@ function TvPage() {
           setStatus('paired');
         }
       } else if (signal.type === 'offer') {
+        setPhonePaired(true);
+        setWaitingForPlayback(true);
         void (async () => {
           let offerPeer: RTCPeerConnection | null = null;
           try {
@@ -1861,6 +1903,9 @@ function TvPage() {
             };
             peer.ontrack = (event) => {
               if (peerRef.current !== peer) return;
+              if (screenMirroringRef.current && event.track.kind === 'video') {
+                configureScreenMirrorReceiver(event.receiver);
+              }
               if (videoRef.current) {
                 phoneRenderedVideoRef.current = true;
                 orientationSourceRef.current = null;
@@ -1876,7 +1921,11 @@ function TvPage() {
                 videoRef.current.setAttribute('webkit-playsinline', '');
                 const stream = event.streams[0] ?? new MediaStream([event.track]);
                 if (videoRef.current.srcObject !== stream) videoRef.current.srcObject = stream;
-                void videoRef.current.play().catch(() => setPlaying(false));
+                void videoRef.current.play().catch(() => {
+                  setWaitingForPlayback(false);
+                  setPlaying(false);
+                  setError('Press Play using the TV remote to allow playback.');
+                });
               }
             };
             peer.onicecandidate = (event) => {
@@ -1950,27 +1999,14 @@ function TvPage() {
         }
         if (!matchesSession(signal.payload.sessionId, activeSessionRef.current)) continue;
         finishPlaylistTransition();
-        const fullscreenDocument = document as Document & {
-          webkitFullscreenElement?: Element | null;
-          webkitCurrentFullScreenElement?: Element | null;
-          webkitIsFullScreen?: boolean;
-          webkitExitFullscreen?: () => void | Promise<void>;
-          webkitCancelFullScreen?: () => void | Promise<void>;
-        };
-        const pageIsFullscreen = Boolean(document.fullscreenElement || fullscreenDocument.webkitFullscreenElement
-          || fullscreenDocument.webkitCurrentFullScreenElement || fullscreenDocument.webkitIsFullScreen);
-        if (videoRef.current && isVideoFullscreen(videoRef.current)) {
-          void exitVideoFullscreen(videoRef.current);
-        } else if (pageIsFullscreen) {
-          const exit = document.exitFullscreen ?? fullscreenDocument.webkitExitFullscreen ?? fullscreenDocument.webkitCancelFullScreen;
-          if (exit) void Promise.resolve(exit.call(document)).catch(() => undefined);
-        }
-        autoCinemaFullscreenRoomRef.current = null;
-        setNeedsStandbyFullscreen(false);
+        // A media-only close is a playlist/transport handoff, NOT unpairing.
+        // Preserve the page fullscreen and connected cinema instead of flashing QR.
+        setPhonePaired(true);
+        setWaitingForPlayback(false);
         stopPeer();
         setScreenMirroring(false);
         setError('');
-        setStatus('idle');
+        setStatus('connected');
       }
     }
   }, [messages, roomId, send, stopPeer, beginPlaylistTransition, finishPlaylistTransition]);
@@ -1995,6 +2031,8 @@ function TvPage() {
     cleanUrl.searchParams.delete('expiresAt');
     window.history.replaceState(null, '', cleanUrl.href);
     setLaunchedFromPhone(false);
+    setPhonePaired(false);
+    setWaitingForPlayback(false);
     if (room) send('tv', 'close', { reason: 'new-room' });
     stopPeer();
     queuedCandidates.current = [];
@@ -2031,12 +2069,17 @@ function TvPage() {
               : 'Ready when you are. Scan the code with your phone camera.'
             : 'Create a private room to pair your phone with this screen.';
 
-  const showCinemaStandby = Boolean(room && !roomExpired && status !== 'idle' && !hasActiveTvMedia);
+  const cinemaLoading = waitingForPlayback || playlistTransitioning;
+  const showCinemaStandby = shouldShowTvCinema({
+    roomLive: Boolean(room && !roomExpired), paired: phonePaired, launchedFromPhone,
+    status, hasActiveMedia: hasActiveTvMedia && !(mediaKind === 'video' && !screenMirroring && !youtubeVideoId && videoRef.current?.ended),
+    waitingForPlayback, switchingVideo: playlistTransitioning,
+  });
   const cinemaConnectionLabel = status === 'disconnected' || status === 'failed'
     ? 'Phone reconnecting'
-    : status === 'connecting'
+    : status === 'connecting' && !phonePaired
       ? 'Connecting to phone'
-      : 'Phone paired';
+      : phonePaired ? 'Phone connected' : 'Waiting for phone';
   const cinemaReadyMessage = status === 'disconnected' || status === 'failed'
     ? 'Keep this room open; the same phone can reconnect.'
     : 'Ready for your next photo or video';
@@ -2067,8 +2110,10 @@ function TvPage() {
       {showCinemaStandby && (
         <div className="tv-cinema-overlay">
         <TvCinemaWaitingScreen
+          loading={cinemaLoading}
           connectionLabel={cinemaConnectionLabel}
-          connectionMessage={statusCopy}
+          connectionMessage={cinemaLoading ? 'Your phone is preparing the next media. Keep FrameCast open.'
+            : phonePaired ? 'Choose Photos, Videos or Mirror on your phone.' : statusCopy}
           readyMessage={cinemaReadyMessage}
           errorMessage={cinemaErrorMessage}
           isFullscreen={browserFullscreen}
@@ -2153,6 +2198,7 @@ function TvPage() {
                   className="image-preview"
                   src={receivedImages[currentImageIndex].url}
                   onLoad={() => {
+                    setWaitingForPlayback(false);
                     if (photoFullscreenAttemptedRef.current || !playbackStageRef.current) return;
                     photoFullscreenAttemptedRef.current = true;
                     setPhotoReturnedInline(false);

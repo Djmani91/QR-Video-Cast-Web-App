@@ -16,13 +16,13 @@ test('nearby TV launch URL joins the room created by the phone', () => {
 });
 
 test('Samsung browser launch uses the native Tizen app launch event', () => {
-  const sourcePath = new URL('../native/android/TvDiscovery.kt', import.meta.url);
+  const sourcePath = new URL('../native/android/SamsungBrowserRemote.kt', import.meta.url);
   const nativeSource = fs.readFileSync(
     sourcePath,
     'utf8',
   );
   const generatedSource = fs.readFileSync(
-    new URL('../android/app/src/main/java/com/tvcast/com/casting/TvDiscovery.kt', import.meta.url),
+    new URL('../android/app/src/main/java/com/tvcast/com/casting/SamsungBrowserRemote.kt', import.meta.url),
     'utf8',
   );
   for (const source of [nativeSource, generatedSource]) {
@@ -30,7 +30,7 @@ test('Samsung browser launch uses the native Tizen app launch event', () => {
     assert.match(source, /\.put\("event",\s*"ed\.apps\.launch"\)/);
     assert.match(source, /\.put\("appId",\s*"org\.tizen\.browser"\)/);
     assert.match(source, /\.put\("action_type",\s*"NATIVE_LAUNCH"\)/);
-    assert.match(source, /\.put\("metaTag",\s*targetUrl\)/);
+    assert.match(source, /\.put\("metaTag",\s*url\)/);
     assert.doesNotMatch(source, /KEY_BROWSER/);
   }
 });

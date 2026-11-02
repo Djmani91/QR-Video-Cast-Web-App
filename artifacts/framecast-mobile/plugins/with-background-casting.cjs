@@ -46,7 +46,7 @@ module.exports = function withBackgroundCasting(config) {
     const source = path.join(result.modRequest.projectRoot, 'native', 'android');
     const target = path.join(result.modRequest.platformProjectRoot, 'app', 'src', 'main', 'java', ...appPackage.split('.'), 'casting');
     await fs.mkdir(target, { recursive: true });
-    for (const name of ['BackgroundCastingService.kt', 'BackgroundCastingModule.kt', 'BackgroundCastingPackage.kt', 'TvDiscovery.kt']) {
+    for (const name of ['BackgroundCastingService.kt', 'BackgroundCastingModule.kt', 'BackgroundCastingPackage.kt', 'TvDiscovery.kt', 'TvDiscoveryProtocol.kt', 'SamsungBrowserRemote.kt']) {
       const text = await fs.readFile(path.join(source, name), 'utf8');
       await fs.writeFile(path.join(target, name), text.replaceAll('__PACKAGE__', `${appPackage}.casting`));
     }

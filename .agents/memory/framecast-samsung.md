@@ -9,13 +9,29 @@ For Samsung TVs, target the built-in TV browser using the existing web app; do n
 
 **How to apply:** Keep the Samsung browser receiver and native phone companion. Prioritize playback that starts before a full video transfer; verify the real TV before claiming compatibility.
 
-For phone-to-TV pairing, show the short TV browser address, QR scanner, and five-digit code. Do not show Wi-Fi TV discovery or a Samsung “Connect” button in the phone UI.
+For phone-to-TV pairing, always retain the short TV browser address, QR scanner, and five-digit code. Nearby-TV discovery is now allowed alongside this reliable manual route.
 
-**Why:** The user reports that tapping the discovered Samsung TV and continuing did not open the TV browser, and explicitly asked to keep QR scanning and code entry instead.
+**Why:** The user previously removed discovery because Samsung “Connect” did not open the browser, then explicitly asked to restore it with a properly audited launch/approval flow on 2026-11-02.
 
-**How to apply:** Keep pairing manual and clear: the user opens 2tx1.com on the TV, then scans its QR code or enters the displayed code on the phone. Only reconsider discovery if the user asks to restore it.
+**How to apply:** This removal was superseded by the customer's explicit request on 2026-11-02 to restore nearby-device scanning and assisted Samsung browser launch. Preserve QR/code as the reliable fallback; do not label discovery or command dispatch as a connected TV.
 
-The desired fullscreen behavior is video-only fullscreen: the browser starts in its normal view, playing a video fills the TV screen, and Back returns to the normal browser view.
+Scan automatically on the Android pairing screen, but request remote control/browser launch only after the customer selects a TV. Finish automatic pairing only after the TV webpage itself confirms that it loaded.
+
+**Why:** The customer asked again for same-Wi-Fi Samsung, Chromecast and Fire TV discovery and automatic browser setup. Earlier attempts found Samsung devices but did not open their browsers; a detected device is not a connected receiver.
+
+**How to apply:** Samsung browser launch depends on model support and TV approval. Chromecast needs a registered Cast receiver; Fire TV's supported route requires Matter/content-app integration. Be explicit about detection-only entries until those actual connection paths exist. Do not silently switch to unsupported legacy casting or claim hardware verification from software tests.
+
+The user wants automatic nearby scanning across common European and American TV/streaming platforms, not a list restricted to Samsung, Chromecast and Amazon; those were examples.
+
+**Why:** The user explicitly clarified that the three named platforms were not the limit of the product's discovery scope.
+
+**How to apply:** Discover by advertised capabilities/protocols, not just brand-name matching. A detected device must not be represented as connected, nor should browser launch be promised for unsupported platforms. Preserve QR/code pairing for TVs with a browser.
+
+The current desired default is whole-browser fullscreen after phone pairing, with an animated connected cinema screen (photos, movie cards and popcorn) while waiting and between videos. This supersedes the earlier video-only fullscreen request.
+
+**Why:** The user repeatedly reported a distracting QR-page flash and fullscreen changes between videos, and explicitly requested a full-screen animated connected page instead.
+
+**How to apply:** Treat ending/replacing media separately from unpairing. Keep the connected waiting page and page fullscreen during media handoffs; show a fresh QR/code only on actual disconnect/new-room flow. Request fullscreen best-effort and retain a clear TV-remote fallback; browser restrictions still apply.
 
 The user previously confirmed video fullscreen on their Samsung TV; the model was not supplied. Only use a native-video fullscreen path when source support is explicitly confirmed. Otherwise use container fullscreen for videos and photos.
 

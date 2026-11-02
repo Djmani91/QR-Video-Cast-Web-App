@@ -47,6 +47,7 @@
       "./plugins/with-firebase-android-only.cjs",
       "./plugins/with-background-casting.cjs",
       "./plugins/with-screen-audio-capture.cjs",
+      "./plugins/with-screen-mirror-performance.cjs",
       "./plugins/with-android-upload-signing.cjs",
       "expo-router",
       "expo-camera",

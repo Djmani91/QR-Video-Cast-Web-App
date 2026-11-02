@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import vm from 'node:vm';
-import { LOCAL_RECEIVER_HTML } from '../lib/local-receiver.ts';
+import { LOCAL_RECEIVER_HTML } from './helpers/local-receiver.mjs';
 
 function mp4WithRotationMatrix() {
   const box = (type, payload) => {
@@ -33,7 +33,7 @@ function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, 
   let messages = [];
   let headCount = 0;
   let now = 1_000;
-  const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back'].map((id) => [id, { style: {}, textContent: '' }]));
+  const elements = Object.fromEntries(['bar', 'notice', 'timer', 'play', 'mute', 'full', 'back', 'cinema-title', 'cinema-detail'].map((id) => [id, { style: {}, textContent: '' }]));
   const video = {
     currentTime: 12, duration: 3600, volume: 1, muted: false, paused: true,
     readyState: 0, videoWidth: videoSize.width, videoHeight: videoSize.height, error: null, style: {}, listeners: {}, loadCount: 0,
@@ -53,6 +53,7 @@ function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, 
     replace(url) { this.next = url; },
   };
   const document = {
+    body: { className: '' },
     getElementById(id) { return elements[id]; },
     documentElement: {},
   };
@@ -96,6 +97,18 @@ function receiver({ headResponses = [], mediaBytes, windowSize = { width: 1920, 
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test('local TV shows animated cinema until playing and again after ending or changing videos', async () => {
+  const r = receiver();
+  assert.equal(r.document.body.className, 'cinema-waiting');
+  assert.match(r.elements['cinema-title'].textContent, /Opening/);
+  r.video.onplaying();
+  assert.equal(r.document.body.className, '');
+  r.video.onended();
+  assert.equal(r.document.body.className, 'cinema-waiting');
+  assert.match(r.elements['cinema-title'].textContent, /connected/);
+  assert.match(LOCAL_RECEIVER_HTML, /lc-popcorn|lc-tub/);
+});
 
 test('starts the original local video immediately, without fetching or uploading its bytes in JS', async () => {
   const r = receiver();

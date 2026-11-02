@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import NearbyTvs from '@/components/NearbyTvs';
+import { configureLowLatencyScreenSender, type ScreenSenderLike } from '@/lib/screen-mirror-performance';
 import {
   ActivityIndicator,
   AppState,
@@ -152,38 +154,10 @@ type ScreenTrackLike = {
   getSettings?: () => { width?: number; height?: number; frameRate?: number };
   onended?: (() => void) | null;
 };
-type ScreenSenderEncoding = {
-  active?: boolean;
-  maxBitrate?: number;
-  maxFramerate?: number;
-  scaleResolutionDownBy?: number;
-};
-type ScreenSenderParameters = {
-  encodings?: ScreenSenderEncoding[];
-  degradationPreference?: string | null;
-};
-type ScreenSenderLike = {
-  getParameters(): ScreenSenderParameters;
-  setParameters(parameters: ScreenSenderParameters): Promise<void>;
-};
 type ScreenStreamLike = {
   getTracks(): ScreenTrackLike[];
   getVideoTracks(): ScreenTrackLike[];
 };
-
-async function configureLowLatencyScreenSender(sender: ScreenSenderLike, track: ScreenTrackLike) {
-  const parameters = sender.getParameters();
-  const encoding = parameters.encodings?.[0];
-  if (!encoding) return;
-
-  const settings = track.getSettings?.();
-  const longestSide = Math.max(settings?.width ?? 0, settings?.height ?? 0);
-  encoding.maxFramerate = 30;
-  encoding.maxBitrate = 3_000_000;
-  encoding.scaleResolutionDownBy = longestSide > 1280 ? longestSide / 1280 : 1;
-  parameters.degradationPreference = 'maintain-framerate';
-  await sender.setParameters(parameters);
-}
 
 function decodeBase64AudioFrame(encoded: string): Uint8Array {
   const input = encoded.replace(/[^A-Za-z0-9+/=]/g, '');
@@ -2360,6 +2334,8 @@ function FrameCastHomeScreen() {
                 testID="tv-browser-address"
               >{TV_BROWSER_ADDRESS}</Text>
             </View>
+
+            <NearbyTvs onPaired={joinRoom} />
 
             <View style={[styles.pairCard, { backgroundColor: activeColors.card, borderColor: activeColors.border }]}>
               {scanning ? (
