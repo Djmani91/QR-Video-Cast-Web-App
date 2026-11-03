@@ -96,6 +96,9 @@ test('native direct receiver requires acknowledgment and preserves connection bo
   const fling = readFileSync(new URL('../native/android/AmazonFlingCasting.kt', import.meta.url), 'utf8');
   assert.match(fling, /amzn\.thin\.pl/);
   assert.match(fling, /setMediaSource/);
+  assert.match(fling, /awaitVideoPlayback\(player\)/);
+  assert.match(fling, /MediaPlayerStatus\.MediaState\.Playing/);
+  assert.match(fling, /did not confirm that playback started/);
   const flingConnect = fling.match(/fun connect\(receiverId: String\)\s*\{([\s\S]*?)\n  \}/)?.[1] ?? '';
   assert.doesNotMatch(flingConnect, /getStatus/);
   assert.match(fling, /player\.play\(\)\.get\(8, TimeUnit\.SECONDS\)/);

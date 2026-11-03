@@ -18,6 +18,7 @@ import org.json.JSONObject
 internal object AmazonFlingCasting {
   private const val TAG = "FrameCastFling"
   private const val BUILT_IN_RECEIVER_SID = "amzn.thin.pl"
+  private const val PLAYBACK_CONFIRM_TIMEOUT_MS = 18_000L
   private val lock = Any()
   private val players = ConcurrentHashMap<String, RemoteMediaPlayer>()
   private val lastSeen = ConcurrentHashMap<String, Long>()
@@ -131,9 +132,48 @@ internal object AmazonFlingCasting {
     mediaLoaded = true
     // Fire TV's built-in Fling receiver ignores the setMediaSource autoPlay
     // option, so videos need an explicit Play command after the source is set.
+    // A successful command future only means that the request was sent; do not
+    // tell the phone playback started until the receiver reports Playing.
     if (mime.startsWith("video/") || mime in setOf("application/x-mpegURL", "application/dash+xml")) {
       player.play().get(8, TimeUnit.SECONDS)
+      awaitVideoPlayback(player)
     }
+  }
+
+  private fun awaitVideoPlayback(player: RemoteMediaPlayer) {
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(PLAYBACK_CONFIRM_TIMEOUT_MS)
+    var lastState = "no playback status"
+    var lastStatusError: String? = null
+    while (System.nanoTime() < deadline) {
+      try {
+        val status = player.getStatus().get(3, TimeUnit.SECONDS)
+        when (status?.state) {
+          MediaPlayerStatus.MediaState.Playing -> return
+          MediaPlayerStatus.MediaState.Error -> throw IllegalStateException(
+            "Fire TV reported that it could not play this media. Try an MP4 using H.264 video and AAC audio.",
+          )
+          null -> lastState = "empty playback status"
+          else -> lastState = status?.state?.toString() ?: "unknown playback state"
+        }
+        lastStatusError = null
+      } catch (error: IllegalStateException) {
+        throw error
+      } catch (error: Exception) {
+        lastStatusError = error.message?.take(160)
+      }
+      try {
+        Thread.sleep(500)
+      } catch (error: InterruptedException) {
+        Thread.currentThread().interrupt()
+        throw IllegalStateException("Fire TV playback confirmation was interrupted.", error)
+      }
+    }
+    val detail = lastStatusError?.let { " Last receiver response: $it." }.orEmpty()
+    throw IllegalStateException(
+      "Fire TV received the media request but did not confirm that playback started. " +
+        "Its built-in Fling receiver may be unavailable or may not support this video format " +
+        "(last state: $lastState). Try an H.264/AAC MP4 or use TV browser pairing.$detail",
+    )
   }
 
   fun status(): Map<String, Any> {
