@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import Slider from '@react-native-community/slider';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { File, Paths } from 'expo-file-system';
@@ -28,6 +29,8 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   const { openPaywall, openExpiredTrialPaywall, openFirstPairChoice, firstPairChoicePending } = useSubscriptionChoiceGate();
   const trial = useFreeCastingTrial();
   const [connected, setConnected] = useState(false);
+  const [receiverSelected, setReceiverSelected] = useState(false);
+  const [nowPlayingVisible, setNowPlayingVisible] = useState(false);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState(`Connecting to ${target.name}…`);
   const [error, setError] = useState('');
@@ -42,6 +45,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   const premiumRef = useRef(isPremium);
   const loadingRef = useRef(subscriptionLoading);
   const connectedRef = useRef(false);
+  const receiverSelectedRef = useRef(false);
   const queueRef = useRef<Item[]>([]);
   const indexRef = useRef(-1);
   const countRef = useRef({ image: 0, video: 0 });
@@ -114,13 +118,17 @@ export default function DirectCastPanel({ target, onClose }: Props) {
       try {
         await connectDirect(target);
         if (!live.current || closingRef.current) return;
-        connectedRef.current = true;
-        setConnected(true);
-        setMessage(target.protocol === 'dlna'
-          ? 'DLNA media-only receiver ready. Choose a photo or video to play.'
-          : target.protocol === 'amazonfling'
-            ? 'Fire TV built-in media receiver ready. Choose a photo or video to play.'
+        if (target.protocol === 'amazonfling') {
+          receiverSelectedRef.current = true;
+          setReceiverSelected(true);
+          setMessage('Fire TV selected. Choose a photo or video to send over Wi-Fi.');
+        } else {
+          connectedRef.current = true;
+          setConnected(true);
+          setMessage(target.protocol === 'dlna'
+            ? 'DLNA media-only receiver ready. Choose a photo or video to play.'
             : 'Google Cast media receiver ready. Choose a photo or video to play.');
+        }
         openFirstPairChoice();
       } catch (e) {
         if (live.current) { setError(detail(e)); setMessage('Could not connect to the receiver.'); }
@@ -134,7 +142,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   }, []); // A selected target owns this panel for its lifetime.
 
   const play = async (nextIndex: number) => {
-    if (!connectedRef.current || busyRef.current || !queueRef.current[nextIndex]) return;
+    if ((!connectedRef.current && !receiverSelectedRef.current) || busyRef.current || !queueRef.current[nextIndex]) return;
     if (!premiumRef.current && !trial.available) {
       openExpiredTrialPaywall();
       return;
@@ -157,11 +165,18 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         if (!live.current || closingRef.current) return;
         await loadDirect(source, item.mime, item.name);
         if (!live.current || closingRef.current) return;
+        if (target.protocol === 'amazonfling' && receiverSelectedRef.current) {
+          receiverSelectedRef.current = false;
+          setReceiverSelected(false);
+          connectedRef.current = true;
+          setConnected(true);
+        }
         indexRef.current = nextIndex;
         statusRef.current = emptyStatus;
         setStatus(emptyStatus);
         setIndex(nextIndex);
         setMessage('The TV accepted the media. Waiting for playback…');
+        setNowPlayingVisible(item.kind === 'video');
         // A picker/ad is allowed in the foreground; playback itself is not allowed
         // to start after a free user leaves FrameCast while a request is pending.
         if (AppState.currentState !== 'active' && !premiumRef.current) {
@@ -173,7 +188,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     } catch (e) {
       if (live.current && !closingRef.current) {
         const code = e && typeof e === 'object' && 'code' in e ? e.code : undefined;
-        if (code === 'CAST_LOAD_TIMEOUT') {
+        if (code === 'CAST_LOAD_TIMEOUT' && target.protocol !== 'amazonfling') {
           connectedRef.current = false;
           setConnected(false);
           setMessage('The TV did not confirm playback. Disconnect and reconnect before trying again.');
@@ -256,6 +271,13 @@ export default function DirectCastPanel({ target, onClose }: Props) {
     }).catch(e => { if (live.current) setError(detail(e)); }).finally(() => busyState(false));
   };
   controlRef.current = control;
+  const seek = (position: number) => {
+    if (!connectedRef.current || busyRef.current) return;
+    busyState(true);
+    void ordered(() => controlDirect('seek', Math.round(position)))
+      .catch(e => { if (live.current) setError(detail(e)); })
+      .finally(() => busyState(false));
+  };
 
   useEffect(() => {
     if (!connected) return;
@@ -318,7 +340,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   };
 
   const choose = async (kind: 'image' | 'video') => {
-    if (busyRef.current || !connectedRef.current) return;
+    if (busyRef.current || (!connectedRef.current && !receiverSelectedRef.current)) return;
     busyState(true);
     setError('');
     try {
@@ -362,7 +384,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
   };
 
   const playUrl = async () => {
-    if (busyRef.current || !connectedRef.current) return;
+    if (busyRef.current || (!connectedRef.current && !receiverSelectedRef.current)) return;
     busyState(true);
     setError('');
     try {
@@ -403,8 +425,8 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         <Text style={[styles.title, { color: colors.foreground }]}>{target.name}</Text>
         <Text style={[styles.text, { color: colors.mutedForeground }]}>
           {target.protocol === 'googlecast' ? 'Google Cast'
-            : target.protocol === 'dlna' ? 'DLNA media receiver'
-              : 'Amazon Fire TV built-in receiver'} · {connected ? 'Media-only ready' : busy ? 'Preparing media receiver…' : 'Not connected'}
+          : target.protocol === 'dlna' ? 'DLNA media receiver'
+              : 'Amazon Fire TV built-in receiver'} · {connected ? 'Media-only ready' : receiverSelected ? 'TV selected' : busy ? 'Preparing media receiver…' : 'Not connected'}
         </Text>
         <View style={[styles.notice, { backgroundColor: colors.secondary }]}>
           <View style={styles.noticeRow}>
@@ -434,7 +456,7 @@ export default function DirectCastPanel({ target, onClose }: Props) {
         ) : null}
         {trial.error && !isPremium ? <Text style={[styles.text, { color: colors.foreground }]} accessibilityRole="alert">{trial.error}</Text> : null}
         {!!error && <Text style={[styles.text, { color: colors.foreground }]} accessibilityLiveRegion="assertive">{error}</Text>}
-        {connected && <>
+        {(connected || receiverSelected) && <>
         <Text style={[styles.text, { color: colors.mutedForeground }]}>
           {target.protocol === 'amazonfling'
             ? 'FrameCast sends selected media to Fire TV’s built-in player over Wi-Fi. It does not open a browser or control the TV home screen.'
@@ -456,6 +478,16 @@ export default function DirectCastPanel({ target, onClose }: Props) {
             <Text style={[styles.name, { color: colors.foreground }]}>{queue[index]?.name}</Text>
             {queue[index]?.kind === 'video' && <>
               <Text style={[styles.text, { color: colors.mutedForeground }]}>{time(status.position)} / {time(status.duration)}</Text>
+              {!nowPlayingVisible && (
+                <Pressable
+                  onPress={() => setNowPlayingVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Show video controls"
+                  style={[styles.button, { backgroundColor: colors.secondary }]}
+                >
+                  <Text style={[styles.buttonText, { color: colors.foreground }]}>Show video controls</Text>
+                </Pressable>
+              )}
               <View style={styles.row}>
                 {button('−10 sec', () => control('back10'))}
                 {button(status.state === 'PLAYING' ? 'Pause' : 'Play', () => control('toggle'), true)}
@@ -478,6 +510,117 @@ export default function DirectCastPanel({ target, onClose }: Props) {
           <Text style={[styles.buttonText, { color: colors.primaryForeground }]}>Disconnect · return to scan</Text>
         </Pressable>
       </ScrollView>
+      <Modal
+        visible={nowPlayingVisible && connected && index >= 0 && queue[index]?.kind === 'video'}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => setNowPlayingVisible(false)}
+      >
+        <View style={styles.playerBackdrop} testID="direct-video-controls">
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setNowPlayingVisible(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Hide video controls"
+          />
+          <View style={[styles.nowPlaying, { backgroundColor: colors.background, borderColor: colors.border }]}>
+            <View style={[styles.sheetHandle, { backgroundColor: colors.secondary }]} />
+            <View style={styles.overlayHeader}>
+              <View style={styles.overlayHeading}>
+                <Text style={[styles.overlayEyebrow, { color: colors.primary }]}>NOW PLAYING ON TV</Text>
+                <Text style={[styles.overlayTitle, { color: colors.foreground }]} numberOfLines={1}>{queue[index]?.name}</Text>
+                <Text style={[styles.text, { color: colors.mutedForeground }]}>{target.name}</Text>
+              </View>
+              <Pressable
+                onPress={() => setNowPlayingVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Hide video controls"
+                testID="direct-video-controls-close"
+                hitSlop={12}
+                style={styles.closeOverlay}
+              >
+                <Feather name="x" size={25} color={colors.foreground} />
+              </Pressable>
+            </View>
+            <View style={styles.seekBlock}>
+              <Slider
+                minimumValue={0}
+                maximumValue={Math.max(1, status.duration)}
+                value={Math.min(Math.max(0, status.duration), status.position)}
+                step={1}
+                disabled={busy || status.duration <= 0}
+                minimumTrackTintColor={colors.primary}
+                maximumTrackTintColor={colors.secondary}
+                thumbTintColor={colors.primary}
+                onSlidingComplete={seek}
+                accessibilityLabel="Seek video on TV"
+                testID="direct-video-seek"
+              />
+              <View style={styles.seekTimes}>
+                <Text style={[styles.overlayTime, { color: colors.mutedForeground }]}>{time(status.position)}</Text>
+                <Text style={[styles.overlayTime, { color: colors.mutedForeground }]}>{time(status.duration)}</Text>
+              </View>
+            </View>
+            <View style={styles.overlayControls}>
+              <Pressable
+                onPress={() => control('previous')}
+                disabled={busy || index <= 0}
+                accessibilityRole="button"
+                accessibilityLabel="Play previous video"
+                style={[styles.overlaySideButton, { backgroundColor: colors.secondary, opacity: busy || index <= 0 ? 0.4 : 1 }]}
+              >
+                <Feather name="skip-back" size={21} color={colors.foreground} />
+              </Pressable>
+              <Pressable
+                onPress={() => control('back10')}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Go back 10 seconds"
+                style={[styles.overlaySideButton, { backgroundColor: colors.secondary, opacity: busy ? 0.45 : 1 }]}
+              >
+                <Feather name="rotate-ccw" size={22} color={colors.foreground} />
+                <Text style={[styles.skipLabel, { color: colors.foreground }]}>10</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => control('toggle')}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel={status.state === 'PLAYING' ? 'Pause video on TV' : 'Play video on TV'}
+                testID="direct-video-play-pause"
+                style={[styles.playButton, { backgroundColor: colors.primary, opacity: busy ? 0.55 : 1 }]}
+              >
+                {busy ? <ActivityIndicator color={colors.primaryForeground} /> : <Feather name={status.state === 'PLAYING' ? 'pause' : 'play'} size={25} color={colors.primaryForeground} />}
+              </Pressable>
+              <Pressable
+                onPress={() => control('forward10')}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Skip forward 10 seconds"
+                style={[styles.overlaySideButton, { backgroundColor: colors.secondary, opacity: busy ? 0.45 : 1 }]}
+              >
+                <Feather name="rotate-cw" size={22} color={colors.foreground} />
+                <Text style={[styles.skipLabel, { color: colors.foreground }]}>10</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => control('next')}
+                disabled={busy || index >= queue.length - 1}
+                accessibilityRole="button"
+                accessibilityLabel="Play next video"
+                style={[styles.overlaySideButton, { backgroundColor: colors.secondary, opacity: busy || index >= queue.length - 1 ? 0.4 : 1 }]}
+              >
+                <Feather name="skip-forward" size={21} color={colors.foreground} />
+              </Pressable>
+            </View>
+            <Text style={[styles.overlayStatus, { color: error ? colors.primary : colors.mutedForeground }]} accessibilityLiveRegion={error ? 'assertive' : 'polite'}>
+              {error || (status.state === 'PLAYING' ? 'Playing on your TV' : status.state === 'PAUSED_PLAYBACK' ? 'Paused on your TV' : message)}
+            </Text>
+            <Text style={[styles.overlayHint, { color: colors.mutedForeground }]}>
+              Hide these controls at any time; playback continues on the TV.
+            </Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -501,4 +644,21 @@ const styles = StyleSheet.create({
   input: { borderWidth: 1, borderRadius: 16, padding: 16, fontSize: 15 },
   preview: { height: 210, width: '100%' },
   queueItem: { borderWidth: 1, borderRadius: 14, padding: 14 },
+  playerBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(17, 10, 26, 0.62)' },
+  nowPlaying: { borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, paddingHorizontal: 24, paddingTop: 14, paddingBottom: 32, gap: 22 },
+  sheetHandle: { alignSelf: 'center', width: 44, height: 4, borderRadius: 2 },
+  overlayHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 18 },
+  overlayHeading: { flex: 1, gap: 6 },
+  overlayEyebrow: { fontSize: 11, fontFamily: 'Inter_700Bold', letterSpacing: 1.4 },
+  overlayTitle: { fontSize: 24, fontFamily: 'Inter_700Bold' },
+  closeOverlay: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
+  seekBlock: { gap: 4 },
+  seekTimes: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 2 },
+  overlayTime: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  overlayControls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  overlaySideButton: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
+  skipLabel: { position: 'absolute', fontSize: 9, fontFamily: 'Inter_700Bold', top: 25 },
+  playButton: { width: 66, height: 66, borderRadius: 33, alignItems: 'center', justifyContent: 'center' },
+  overlayStatus: { textAlign: 'center', fontSize: 14 },
+  overlayHint: { textAlign: 'center', fontSize: 12, lineHeight: 17 },
 });

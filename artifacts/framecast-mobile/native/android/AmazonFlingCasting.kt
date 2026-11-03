@@ -24,6 +24,7 @@ internal object AmazonFlingCasting {
   @Volatile private var controller: DiscoveryController? = null
   @Volatile private var started = false
   @Volatile private var selectedId: String? = null
+  @Volatile private var mediaLoaded = false
 
   data class Receiver(val id: String, val name: String)
 
@@ -45,7 +46,10 @@ internal object AmazonFlingCasting {
         val id = player.uniqueIdentifier ?: return
         players.remove(id)
         lastSeen.remove(id)
-        if (selectedId == id) selectedId = null
+        if (selectedId == id) {
+          selectedId = null
+          mediaLoaded = false
+        }
       } catch (error: Exception) {
         Log.w(TAG, "Could not remove a lost Fire TV receiver", error)
       }
@@ -101,11 +105,12 @@ internal object AmazonFlingCasting {
   }
 
   fun connect(receiverId: String) {
-    val player = players[receiverId] ?: throw IllegalStateException("That Fire TV receiver is no longer available. Scan again.")
-    // A discovery result alone is not a connection: confirm the receiver responds.
-    player.getStatus().get(6, TimeUnit.SECONDS)
-      ?: throw IllegalStateException("Fire TV did not confirm its media receiver.")
+    players[receiverId]
+      ?: throw IllegalStateException("That Fire TV receiver is no longer available. Scan again.")
+    // The built-in player may have no active media status while idle. Select it
+    // here and use the first media request as the real playback acknowledgement.
     selectedId = receiverId
+    mediaLoaded = false
   }
 
   fun load(url: String, mime: String, title: String) {
@@ -123,6 +128,12 @@ internal object AmazonFlingCasting {
       .put("title", title.take(200))
       .toString()
     player.setMediaSource(url, metadata, true, false).get(20, TimeUnit.SECONDS)
+    mediaLoaded = true
+    // Fire TV's built-in Fling receiver ignores the setMediaSource autoPlay
+    // option, so videos need an explicit Play command after the source is set.
+    if (mime.startsWith("video/") || mime in setOf("application/x-mpegURL", "application/dash+xml")) {
+      player.play().get(8, TimeUnit.SECONDS)
+    }
   }
 
   fun status(): Map<String, Any> {
@@ -163,11 +174,16 @@ internal object AmazonFlingCasting {
   }
 
   fun disconnect() {
-    val id = selectedId ?: return
+    val id = selectedId
+    if (id == null) {
+      mediaLoaded = false
+      return
+    }
     try {
-      players[id]?.stop()?.get(4, TimeUnit.SECONDS)
+      if (mediaLoaded) players[id]?.stop()?.get(4, TimeUnit.SECONDS)
     } finally {
       selectedId = null
+      mediaLoaded = false
     }
   }
 

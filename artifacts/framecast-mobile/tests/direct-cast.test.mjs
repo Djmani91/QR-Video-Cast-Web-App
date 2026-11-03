@@ -96,8 +96,15 @@ test('native direct receiver requires acknowledgment and preserves connection bo
   const fling = readFileSync(new URL('../native/android/AmazonFlingCasting.kt', import.meta.url), 'utf8');
   assert.match(fling, /amzn\.thin\.pl/);
   assert.match(fling, /setMediaSource/);
-  assert.match(fling, /getStatus\(\)\.get/);
+  const flingConnect = fling.match(/fun connect\(receiverId: String\)\s*\{([\s\S]*?)\n  \}/)?.[1] ?? '';
+  assert.doesNotMatch(flingConnect, /getStatus/);
+  assert.match(fling, /player\.play\(\)\.get\(8, TimeUnit\.SECONDS\)/);
   assert.match(fling, /PlayerSeekMode\.Relative/);
+  const nowPlayingPanel = readFileSync(new URL('../components/DirectCastPanel.tsx', import.meta.url), 'utf8');
+  assert.match(nowPlayingPanel, /target\.protocol === 'amazonfling' && receiverSelectedRef\.current/);
+  assert.match(nowPlayingPanel, /setNowPlayingVisible\(item\.kind === 'video'\)/);
+  assert.match(nowPlayingPanel, /onRequestClose=\{\(\) => setNowPlayingVisible\(false\)\}/);
+  assert.match(nowPlayingPanel, /Hide these controls at any time; playback continues on the TV\./);
   const google = readFileSync(new URL('../native/android/GoogleCasting.kt', import.meta.url), 'utf8');
   assert.match(google, /setReceiverApplicationId\(CastMediaControlIntent\.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID\)/);
   assert.match(google, /onSessionStarted/);
